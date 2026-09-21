@@ -21,6 +21,29 @@
 
 kit 不取代它们：Matt 出方案和票，kit 管状态流转，Superpowers 保实现质量。接口就是 `.scratch/` 票据 + `state.yaml` + CLI。详见 [docs/users/adopting-existing.md](docs/users/adopting-existing.md)。
 
+## 获取本 kit
+
+本 kit 不是 pip 包——零依赖（[ADR-0002](docs/adr/0002-restricted-yaml-subset-parser-over-pyyaml.md)）+ 协议 repo-native（[ADR-0001](docs/adr/0001-repo-native-protocol-over-harness-skills.md)）决定它只能 clone 使用。CLI 从 kit 仓库自身读协议源（`_kit_root()` 按 `__file__` 定位），所以 **kit 仓库必须本地存在**，`pip install` 到 site-packages 会找不到协议。
+
+```bash
+# clone（或作为 submodule 接进已有仓库）
+git clone https://github.com/kevinke/agent-workflow.git
+cd agent-workflow
+
+# 可选：让 ai-workflow 成为命令名，免去每次写 python .../main.py
+alias ai-workflow="python $(pwd)/scripts/ai-workflow/main.py"
+```
+
+之后在**目标仓库**里调用（`target` 参数默认是 `cwd`）：
+
+```bash
+cd <目标仓库>
+python /path/to/agent-workflow/scripts/ai-workflow/main.py init --with-skills
+# 装好后，alias 生效即可直接用 ai-workflow status / validate / advance ...
+```
+
+> **dogfood 隔离**：`init --with-skills` 把协议+模板+技能全装进目标仓库，不依赖也不写 harness 全局 skill 库，删仓库即清理干净，不影响其他仓库。两种技能放置方式的取舍见 [docs/users/adopting-existing.md](docs/users/adopting-existing.md)。
+
 ## 快速上手（绿色字段新仓库）
 
 ```bash
