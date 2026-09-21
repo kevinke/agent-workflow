@@ -69,3 +69,56 @@ Unknown fields are silently ignored — never an error, never deleted. A harness
 ## Updating
 
 Every save stamps `updated_at` with the current ISO-8601 timestamp.
+
+## Migration blocks (adopted repos only)
+
+Adopted repos (`ai-workflow adopt`, spec §10) may carry three additional top-level
+blocks. They are **optional and adoption-only**: the fixed template and every
+greenfield `start` ticket omit them. They are within the same restricted YAML
+subset but, like all optional fields, are currently **not enforced by
+`validate`**. The unknown-fields rule above still applies to any field not listed
+here.
+
+### `migration`
+
+Records that this ticket came from an existing repo and at which phase.
+
+```yaml
+migration:
+  adopted_existing_repo: true
+  adopted_at_phase: implementation
+```
+
+### `historical_phases`
+
+For each phase (`requirement` … `done`), how the phase is known to have occurred
+prior to adoption. Values: `confirmed` (evidence-anchored), `inferred`,
+`existing` (artifact present, unverified), `not_performed` (never executed).
+`adopt` scaffolds every phase as `not_performed`; a senior marks the true value
+with anchors during phase reconstruction (see `MIGRATION.md`).
+
+```yaml
+historical_phases:
+  requirement: {status: inferred}
+  evidence_collection: {status: not_performed}
+```
+
+### `adoption_checkpoint`
+
+Gates whether the ticket may be handed to a cheap executor. All six fields stay
+`false` until a senior confirms them; `continuation_safe: true` is required
+before any `ticket-executor` may proceed (see `MIGRATION.md`).
+
+```yaml
+adoption_checkpoint:
+  repository_understood: true
+  active_ticket_identified: true
+  current_phase_identified: true
+  remaining_work_identified: true
+  critical_invariants_identified: true
+  continuation_safe: true
+```
+
+The `next_action.role` on an adopted-but-unconfirmed ticket is `workflow-bootstrap`,
+never `ticket-executor`, so a cheap executor cannot read an execution instruction
+until `continuation_safe: true`.
