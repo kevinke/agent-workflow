@@ -56,6 +56,30 @@ class InitTest(unittest.TestCase):
         self.assertTrue(sentinel in self._read_agents())
         self.assertEqual(_count_marker(self._read_agents(), init.BEGIN_MARKER), 1)
 
+    def test_managed_block_appended_with_blank_line_separator(self):
+        # A file ending with a single newline must get a blank line between the
+        # last user line and the appended managed block (dogfood finding).
+        with open(os.path.join(self.target, "AGENTS.md"), "w", encoding="utf-8") as fh:
+            fh.write("## Agent skills\n\nSome content.\n")
+        init.init(self.target)
+        text = self._read_agents()
+        self.assertIn("Some content.\n\n" + init.BEGIN_MARKER, text)
+
+    def test_managed_block_appended_cleanly_when_file_has_no_trailing_newline(self):
+        with open(os.path.join(self.target, "AGENTS.md"), "w", encoding="utf-8") as fh:
+            fh.write("## Agent skills\n\nSome content.")
+        init.init(self.target)
+        text = self._read_agents()
+        self.assertIn("Some content.\n\n" + init.BEGIN_MARKER, text)
+
+    def test_managed_block_not_doubled_when_file_ends_with_blank_line(self):
+        with open(os.path.join(self.target, "AGENTS.md"), "w", encoding="utf-8") as fh:
+            fh.write("## Agent skills\n\nSome content.\n\n")
+        init.init(self.target)
+        text = self._read_agents()
+        self.assertIn("Some content.\n\n" + init.BEGIN_MARKER, text)
+        self.assertNotIn("Some content.\n\n\n\n" + init.BEGIN_MARKER, text)
+
     def test_never_overwrites_existing_protocol_file(self):
         os.makedirs(os.path.join(self.target, ".ai", "workflow"), exist_ok=True)
         proto = os.path.join(self.target, ".ai", "workflow", "PROTOCOL.md")

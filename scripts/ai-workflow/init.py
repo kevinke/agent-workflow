@@ -76,10 +76,16 @@ def _apply_managed_block(text):
     begin = text.find(BEGIN_MARKER)
     end = text.find(END_MARKER)
     if begin == -1 and end == -1:
-        # Append the block, ensuring a separating newline.
-        sep = "" if text.endswith("\n") or text == "" else "\n"
-        if text and not text.endswith("\n"):
+        # Append the block after a blank-line separator so it never merges with
+        # the last line of user content (dogfood finding).
+        if text == "":
+            sep = ""
+        elif text.endswith("\n\n"):
+            sep = ""
+        elif text.endswith("\n"):
             sep = "\n"
+        else:
+            sep = "\n\n"
         return text + sep + MANAGED_BLOCK + "\n", True
     if begin == -1 or end == -1 or end < begin:
         raise ManagedBlockError(
