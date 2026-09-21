@@ -1,7 +1,7 @@
 # TICKET-003: Role Skills
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: 01
 
 ## Goal
@@ -33,3 +33,5 @@ Under `.agents/skills/`:
 - Skills do not invent phases, roles, or fields beyond the spec.
 
 ## Comments
+
+- 2026-09-21 — TICKET-003 complete. Authored seven thin `SKILL.md` files under `.agents/skills/<role>/` (Codex repo-skill convention; TRAE compatibility is TICKET-004): `repo-scout`, `evidence-auditor`, `technical-decision`, `executor-plan`, `ticket-executor`, `checkpoint-handoff`, `workflow-bootstrap`. Each skill is an operational procedure only (23–36 lines): read state.yaml → confirm next_action.role → read the relevant `.ai/workflow/` protocol file(s) by reference → perform the role's phase work → write the artifact per its contract → update state.yaml (claim/provenance/phase/evidence.gate as appropriate) → write handoff.md → commit. No protocol body copied (ADR-0001: adapters, not copies); role-to-model tier guidance matches ROLES.md (cheap: scout/ticket-executor; senior: evidence-auditor/technical-decision/executor-plan/workflow-bootstrap; any: checkpoint-handoff). No phases, roles, or state.yaml fields invented beyond the spec. `workflow-bootstrap` routes to `.ai/workflow/MIGRATION.md` and, because MIGRATION.md is delivered by TICKET-005, instructs the reader to report if it is absent rather than improvise. Frontmatter uses `name` + `description` for harness discovery.
