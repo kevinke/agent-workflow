@@ -115,10 +115,14 @@ def validate_ticket(root, ticket, findings):
             bad("illegal escalation.scope %r (machine|human)" % scope)
 
     next_action = data.get("next_action") or {}
-    next_role = next_action.get("role")
-    if next_role not in ROLES:
-        bad("illegal next_action.role %r" % next_role)
-    has_next = bool(next_action.get("action")) or bool(next_action.get("task")) or bool(next_role)
+    # `done` clears next_action; an emptied block must not trip the role enum
+    # check. Only validate the role when there is actually a next action.
+    has_next = bool(next_action.get("action")) or bool(next_action.get("task")) \
+        or bool(next_action.get("role"))
+    if has_next:
+        next_role = next_action.get("role")
+        if next_role not in ROLES:
+            bad("illegal next_action.role %r" % next_role)
 
     # --- gate-violating transition ------------------------------------------
     if phase in _DECISIONWARDS and gate == "insufficient":

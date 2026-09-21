@@ -95,6 +95,18 @@ class ValidateTest(unittest.TestCase):
         self._write_handoff()
         self.assertTrue(any("phase=done" in m for m in self._errors()))
 
+    def test_done_with_cleared_next_action_passes(self):
+        data = _valid_state()
+        data["phase"] = "done"
+        data["evidence"]["gate"] = "sufficient"
+        data["next_action"] = {"role": None, "action": None, "task": None}
+        self._write_state(data)
+        self._write_handoff()
+        for name in ("evidence.md", "evidence-audit.md", "decision.md"):
+            with open(os.path.join(self.work, name), "w", encoding="utf-8") as fh:
+                fh.write("x\n")
+        self.assertEqual(self._errors(), [])
+
     def test_illegal_enums(self):
         for field, bad, marker in (
             ("phase", "bogus", "illegal phase"),
