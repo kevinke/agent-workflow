@@ -18,7 +18,8 @@ import parser
 import state
 from status import list_tickets
 
-__all__ = ["validate_ticket", "validate_repo", "PHASES", "STATUSES", "GATES", "SCOPES"]
+__all__ = ["validate_ticket", "validate_repo", "PHASES", "STATUSES", "GATES",
+           "SCOPES", "ROLES", "DECISIONWARDS"]
 
 
 PHASES = {
@@ -34,7 +35,8 @@ ROLES = {
 }
 
 # Phases that require a sufficient evidence gate before they may be entered.
-_DECISIONWARDS = {"technical_decision", "planning", "implementation", "review", "done"}
+# Public: shared with the `mutate` module so write-time checks use one rule.
+DECISIONWARDS = {"technical_decision", "planning", "implementation", "review", "done"}
 
 _HANDOFF_SECTIONS = [
     "What was done",
@@ -125,7 +127,7 @@ def validate_ticket(root, ticket, findings):
             bad("illegal next_action.role %r" % next_role)
 
     # --- gate-violating transition ------------------------------------------
-    if phase in _DECISIONWARDS and gate == "insufficient":
+    if phase in DECISIONWARDS and gate == "insufficient":
         bad("gate-violating transition: phase=%s but evidence.gate=insufficient" % phase)
 
     # --- implementation counters --------------------------------------------

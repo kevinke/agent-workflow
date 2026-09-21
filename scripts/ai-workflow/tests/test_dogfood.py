@@ -72,6 +72,12 @@ class DogfoodE2ETest(unittest.TestCase):
         code, out = self._validate()
         self.assertEqual(code, 0, "%s\n%s" % (msg, out))
 
+    def _cli_ok(self, *args):
+        """Run the real CLI and require exit 0; return its stdout."""
+        code, out, err = self._cli(*args)
+        self.assertEqual(code, 0, "%s: %s" % (" ".join(args), err))
+        return out
+
     def _write(self, name, content):
         with open(os.path.join(self.work, name), "w", encoding="utf-8") as fh:
             fh.write(content)
@@ -91,15 +97,12 @@ class DogfoodE2ETest(unittest.TestCase):
     # -- the lifecycle ----------------------------------------------------------
 
     def test_full_lifecycle_passes_validate_at_every_phase(self):
-        # requirement: as scaffolded from the template.
+        # requirement: as scaffolded by `start`.
         self._assert_validate_ok("requirement")
 
         # evidence_collection (scout collects evidence.md)
         self._write("evidence.md", "## Facts\n- FACT source artifact spec section\n")
-        self._set(phase="evidence_collection",
-                  next_action={"role": "scout",
-                               "action": "collect evidence into evidence.md",
-                               "task": None})
+        self._cli_ok("advance", TICKET, "--to", "evidence_collection")
         self._assert_validate_ok("evidence_collection")
         code, out, _ = self._cli("status", TICKET)
         self.assertEqual(code, 0)
@@ -107,63 +110,41 @@ class DogfoodE2ETest(unittest.TestCase):
 
         # evidence_audit — verdict insufficient opens the evidence loop.
         self._write("evidence-audit.md", "## Sufficiency\n- gate: insufficient\n")
-        self._set(phase="evidence_audit",
-                  evidence={"round": 1, "gate": "insufficient"},
-                  next_action={"role": "evidence-auditor",
-                               "action": "audit evidence sufficiency",
-                               "task": None})
+        self._cli_ok("advance", TICKET, "--to", "evidence_audit")
+        self._cli_ok("set-gate", TICKET, "--gate", "insufficient", "--round", "1")
         self._assert_validate_ok("evidence_audit (insufficient)")
 
-        # followup_evidence — loop back for more evidence.
-        self._set(phase="followup_evidence",
-                  next_action={"role": "scout",
-                               "action": "collect the missing evidence",
-                               "task": None})
+        # followup_evidence — gate insufficient makes the loop-back branch legal.
+        self._cli_ok("advance", TICKET, "--to", "followup_evidence")
         self._assert_validate_ok("followup_evidence")
 
         # evidence_audit — now sufficient, gate opens the decisionward phases.
-        self._set(phase="evidence_audit",
-                  evidence={"round": 2, "gate": "sufficient"},
-                  next_action={"role": "evidence-auditor",
-                               "action": "audit evidence sufficiency",
-                               "task": None})
+        self._cli_ok("advance", TICKET, "--to", "evidence_audit")
+        self._cli_ok("set-gate", TICKET, "--gate", "sufficient", "--round", "2")
         self._assert_validate_ok("evidence_audit (sufficient)")
 
         # technical_decision (senior: decision.md is NOT yet required here).
-        self._set(phase="technical_decision",
-                  next_action={"role": "technical-decision",
-                               "action": "write decision.md",
-                               "task": None})
+        self._cli_ok("advance", TICKET, "--to", "technical_decision")
         self._assert_validate_ok("technical_decision")
 
         # planning (senior: decision.md now required).
         self._write("decision.md", "## Decision\n- approach: build it\n")
-        self._set(phase="planning",
-                  next_action={"role": "executor-plan",
-                               "action": "write the implementation plan",
-                               "task": None})
+        self._cli_ok("advance", TICKET, "--to", "planning")
         self._assert_validate_ok("planning")
 
         # implementation (cheap executor: task counters progress).
         self._write("progress.md", "## Progress\n- task 1..3 complete\n")
-        self._set(phase="implementation",
-                  implementation={"current_task": 3, "total_tasks": 3,
-                                  "completed_tasks": [1, 2, 3]},
-                  next_action={"role": "ticket-executor",
-                               "action": "implement current task",
-                               "task": 3})
+        self._cli_ok("advance", TICKET, "--to", "implementation")
+        for _ in range(3):
+            self._cli_ok("complete-task", TICKET, "--total", "3")
         self._assert_validate_ok("implementation")
 
         # review (checkpoint-handoff).
-        self._set(phase="review",
-                  next_action={"role": "checkpoint-handoff",
-                               "action": "review and hand off",
-                               "task": None})
+        self._cli_ok("advance", TICKET, "--to", "review")
         self._assert_validate_ok("review")
 
-        # done — next_action must be cleared.
-        self._set(phase="done",
-                  next_action={"role": None, "action": None, "task": None})
+        # done — `advance` clears next_action automatically.
+        self._cli_ok("advance", TICKET, "--to", "done")
         self._assert_validate_ok("done")
 
     # -- install / idempotency --------------------------------------------------
