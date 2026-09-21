@@ -1,7 +1,7 @@
 # TICKET-005: Legacy Adoption
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: 01, 02
 
 ## Goal
@@ -29,3 +29,7 @@ Adopt existing/legacy repos into the workflow without fabricating history. This 
 - A cheap executor cannot read an execution instruction until continuation_safe is true.
 
 ## Comments
+
+- 2026-09-21 — TICKET-005 complete. Authored `.ai/workflow/MIGRATION.md` (English) — the adoption procedure (discovery → migration report → phase reconstruction → retroactive minimum evidence → decision reconstruction → adoption checkpoint), matching spec §10 exactly and matching the section names the `workflow-bootstrap` skill routes to. Implemented `scripts/ai-workflow/adopt.py` (zero-dep, non-destructive, idempotent) + wired `adopt` into `main.py` (`ai-workflow adopt <ticket-id> [--phase --title --spec --ticket --plan]`). `adopt` runs mechanical discovery, writes `.ai/migration-report.md`, and scaffolds `.ai/work/<ticket>/`: state.yaml carrying the `migration` / `historical_phases` (scaffolded `not_performed`, senior fills with anchors) / `adoption_checkpoint` (all false, `continuation_safe: false`) blocks per spec §10, plus evidence/handoff/progress scaffolds. It does not fabricate history and does not start a decision.md (senior reconstructs it). A cheap executor is gated: `next_action.role` is `workflow-bootstrap` and `continuation_safe` is false until a senior confirms the checkpoint.
+Manually verified on throwaway fixture repos (V1 boundary, no test framework): (1) case C (old repo with half-done ticket) — `adopt --phase implementation` produced the migration report and the state migration blocks; pre-existing AGENTS.md/README left byte-for-byte untouched; a second `adopt` was a no-op (idempotent). (2) Completed the senior adoption per MIGRATION.md on the fixture (retroactive `evidence.md` with Migration Notice, `evidence-audit.md`, `decision.md` reconstruction with Provenance, set `evidence.gate=sufficient` and all six checkpoint items true) → `validate` passed (exit 0, only benign WARNs). (3) case A (fresh repo, no `--phase`) → scaffolded at `requirement`, `continuation_safe: false`, validate clean immediately. Fixtures removed after verification; kit files unaffected beyond the three new/changed files.
+- **Discovered parser quirk (TICKET-002 code, not fixed here):** the restricted parser's `_is_flowlike` guard rejects any inline scalar containing `,` as flow-style, even inside a double-quoted string, and `dump` will quote a string containing commas — so `dump`/`parse` are not round-trip-consistent for a quoted scalar with a comma. The fixed schema/template never produce one (template `next_action.action` has no comma). `adopt.py` deliberately writes its `next_action` prose without commas/parens to stay clear of it. Recommend a follow-up fix to `_is_flowlike` (drop `,`, keep only `{ } [ ]` delimiters) in a later ticket if round-tripping arbitrary comma-bearing strings is needed.

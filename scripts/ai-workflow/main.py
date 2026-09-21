@@ -6,26 +6,31 @@ Usage:
     ai-workflow validate [ticket-id]
 
 Subcommands implement the workflow state machine (spec §9 / TICKET-002).
-`start`, `adopt`, and `upgrade` are delivered by later tickets.
+`start` and `upgrade` are delivered by later tickets.
 """
 
 import os
 import sys
 
+import adopt
 import init
 import status
 import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "upgrade"}
 
-USAGE = """ai-workflow — repo-native agent workflow protocol (TICKET-002 subset)
+USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
 commands:
   init [target]       install protocol + templates + AGENTS.md managed block
   status [ticket-id]  one-screen summary of a ticket (or the active ticket)
   validate [ticket-id] validate workflow state; ERROR -> non-zero exit
+  adopt <ticket-id> [opts]  legacy repo adoption: migration report + state scaffold
+      --phase <phase>       adopted phase (default: requirement)
+      --title <title>       ticket title
+      --spec <path> --ticket <path> --plan <path>   source-artifact references
 
-`start`, `adopt`, and `upgrade` are implemented in later tickets.
+`start` and `upgrade` are implemented in later tickets.
 """
 
 
@@ -73,6 +78,42 @@ def cmd_validate(args, root):
     return 1 if has_error else 0
 
 
+def cmd_adopt(args, root):
+    opts = {}
+    rest = args[1:]
+    if not rest:
+        sys.stderr.write("usage: ai-workflow adopt <ticket-id> [opts]\n")
+        return 2
+    ticket_id = rest[0]
+    rest = rest[1:]
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg in ("--phase", "--title", "--spec", "--ticket", "--plan") and i + 1 < len(rest):
+            opts[arg[2:]] = rest[i + 1]
+            i += 2
+        else:
+            sys.stderr.write("unknown adopt option %r\n" % arg)
+            return 2
+    created = adopt.adopt(
+        root, ticket_id,
+        phase=opts.get("phase"),
+        title=opts.get("title"),
+        spec_path=opts.get("spec"),
+        ticket_path=opts.get("ticket"),
+        plan_path=opts.get("plan"),
+    )
+    if not created:
+        print("nothing to do: %s already adopted (idempotent)." % ticket_id)
+        return 0
+    print("adopted %s into the workflow:" % ticket_id)
+    for p in created:
+        print("  %s" % os.path.relpath(p, root))
+    print("next: a senior completes adoption per MIGRATION.md "
+          "(continuation_safe starts false).")
+    return 0
+
+
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -89,7 +130,9 @@ def main(argv=None):
         return cmd_status(argv, root)
     if cmd == "validate":
         return cmd_validate(argv, root)
-    # start / adopt / upgrade — future tickets.
+    if cmd == "adopt":
+        return cmd_adopt(argv, root)
+    # start / upgrade — future tickets.
     sys.stderr.write("%s is not implemented yet (later ticket).\n" % cmd)
     return 2
 
