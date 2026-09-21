@@ -1,7 +1,7 @@
 # TICKET-004: Harness Adapters
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: 01, 02
 
 ## Goal
@@ -33,3 +33,5 @@ Make each harness able to enter the workflow. Adapters are thin pointers to the 
 - TRAE project rule fragment exists and is under the `adapters/` directory (or documented location).
 
 ## Comments
+
+- 2026-09-21 — TICKET-004 complete. Finalized the Codex/ZCode managed block in `scripts/ai-workflow/init.py` (installer logic from TICKET-002): wording is the final thin pointer per spec §12 — read `.ai/work/<ticket>/state.yaml` first (authoritative), follow phase/role in `PROTOCOL.md`/`ROLES.md`, read only needed artifacts, never redo completed phases, update state.yaml + handoff.md before stopping; no protocol body copied (ADR-0001). Created `adapters/trae/project_rules.md` — TRAE thin project-rule fragment: read `PROTOCOL.md`, treat `state.yaml` as authoritative, follow phase/role, write back to `.ai/work/<ticket>/`; does not copy protocol body. Manual integration verification on a scratch repo (V1 boundary, no test framework): (1) `init` on an existing AGENTS.md preserved all user content verbatim (sentinel intact) and appended exactly one block; (2) second `init` was a no-op ("nothing to do: protocol already installed"), still exactly one BEGIN/END block, user content untouched; (3) protocol docs + all six templates installed. Readability check: Codex/ZCode can enter a ticket from the block alone (it names the entry files, the phase/role to follow, and the pre-stop writebacks). Scratch repo removed after verification; kit AGENTS.md untouched (managed block is for target repos, applied by `init`).

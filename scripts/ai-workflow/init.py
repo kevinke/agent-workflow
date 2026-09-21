@@ -19,8 +19,10 @@ __all__ = ["init", "ManagedBlockError"]
 BEGIN_MARKER = "<!-- BEGIN AI-WORKFLOW -->"
 END_MARKER = "<!-- END AI-WORKFLOW -->"
 
-# Thumbnail pointer body. Full per-harness adapter wording is TICKET-004; this
-# block only points the harness at the protocol (ADR-0001: never copy the body).
+# Managed adapter block for Codex/ZCode (spec §12, TICKET-004). Final wording:
+# a thin pointer only — read state.yaml, follow phase/role in the protocol,
+# read only what you need, never redo completed phases, update state + handoff
+# before stopping. Adapters never copy the protocol body (ADR-0001).
 MANAGED_BLOCK = BEGIN_MARKER + """
 
 On entering this repo, read `.ai/work/<ticket>/state.yaml` first: it is the
