@@ -1,7 +1,7 @@
 # TICKET-002: Workflow CLI
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: 01
 
 ## Goal
@@ -35,3 +35,7 @@ Under `scripts/ai-workflow/`:
 - Manual verification only (no test framework yet, per V1 boundary); note what was run in progress.md.
 
 ## Comments
+
+- 2026-09-21 — TICKET-002 complete. Implemented under `scripts/ai-workflow/` (Python 3 stdlib, zero deps, cross-platform): `parser.py` (restricted YAML subset: block nested maps, dash lists, `[]` empty list, scalars, null; rejects `&`/`*`/`!`, flow `{}`/`[,]`, block scalars `|`/`>`, multi-doc `---`/`...`; roundtrips template exactly), `state.py` (load/save, unknown fields preserved, `updated_at` stamped on save), `init.py` (idempotent install of protocol+templates; AGENTS.md managed-block create/append/update-in-place, never touches user content), `status.py` (one-screen: ticket/phase/status/task N-M/evidence gate/escalation/next role+action), `validate.py` (ERROR: illegal phase/status/gate/scope, gate-violating transition e.g. insufficient→technical_decision, current_task>total, done-with-next_action, missing required artifact incl. handoff, restricted-YAML violation → non-zero exit; WARN: uncommitted work, missing handoff sections, no protocol installed), `main.py` (`ai-workflow init|status|validate`). Manual verification (per V1 boundary, no test framework): template parses & roundtrips exactly; init on a scratch repo is idempotent (second run = no-op) and preserves user AGENTS.md (BEGIN marker count stays 1 after 2 runs); status prints correct summary; validate flags each corruption case as ERROR with exit 1 — gate-violation, current_task>total (5/3), done-with-next_action, flow-style `{}`, anchor `&`, block scalar `|`, missing handoff/evidence — and passes (exit 0, WARN only) on a valid implementation-phase state. `start/adopt/upgrade` stubbed as not-implemented (later tickets). State machine transitions match spec §4 exactly; no invented transitions.
+
+- Known limitation (validate/parser edge): a stray deeper-indented line after an inline `- key: value` sequence item is silently dropped rather than flagged; normal indentation flow collections are correctly rejected. Does not occur in the fixed schema / templates.
