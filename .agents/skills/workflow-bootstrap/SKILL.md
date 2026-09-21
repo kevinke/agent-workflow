@@ -16,6 +16,13 @@ migration guide — this skill only routes to it.
 2. If `.ai/workflow/MIGRATION.md` does not exist in the target repo, the
    migration capability has not been deployed there yet (it is delivered with
    the adoption ticket). Report that instead of improvising a migration.
+3. The adoption-specific blocks in `state.yaml` (`migration`, `historical_phases`,
+   `adoption_checkpoint`) have no CLI command yet: confirm the six checkpoint
+   items per MIGRATION.md and set `adoption_checkpoint.continuation_safe: true`
+   by hand once they all hold.
+4. Enter the normal flow with
+   `ai-workflow advance <ticket-id> --to <phase>` after the checkpoint is
+   complete, and verify with `ai-workflow validate`.
 
 Follow MIGRATION.md exactly: never fabricate artifacts for phases that were
 never executed; never require re-walking full history; integrate existing

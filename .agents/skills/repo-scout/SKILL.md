@@ -20,17 +20,20 @@ A thin operational procedure. All business rules live in the protocol under
    (at minimum `.ai/workflow/PROTOCOL.md`, `.ai/workflow/ARTIFACTS.md`).
 4. Read the source artifacts referenced by `source_artifacts` in state.yaml
    (spec, ticket, plan). Reference them by path; never copy their content.
-5. Collect repository facts only into `evidence.md` per the evidence contract
+5. Record your working session:
+   `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
+6. Collect repository facts only into `evidence.md` per the evidence contract
    in `.ai/workflow/ARTIFACTS.md`: entries tagged FACT / INFERENCE / UNKNOWN;
    important FACTs carry anchors (file path, symbol, line, command, test
    result). Design proposals are forbidden in evidence.md.
-6. Update `state.yaml`: increment `evidence.round` if you opened a new round,
-   keep `evidence.gate` as-is (only the auditor sets it). Set `claim` to your
-   session before work and update `provenance` on save.
-7. Write `handoff.md` per the contract before stopping (fixed sections +
+7. Do not touch `evidence.round` / `evidence.gate` / `phase` / `next_action`:
+   the auditor records the round and verdict via `ai-workflow set-gate`, and
+   the checkpoint-handoff advances the phase via `ai-workflow advance`. Leave
+   those to them.
+8. Write `handoff.md` per the contract before stopping (fixed sections +
    Repository State block).
-8. Commit per the protocol's commit discipline, or report readiness for the
+9. Commit per the protocol's commit discipline, or report readiness for the
    next phase transition.
 
-Do not set `evidence.gate`; do not write `decision.md`; do not advance the
-phase. Those belong to other roles.
+Do not record the evidence verdict; do not write `decision.md`; do not advance
+the phase (`ai-workflow advance`). Those belong to other roles.

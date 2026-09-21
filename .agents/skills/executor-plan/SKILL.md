@@ -1,6 +1,6 @@
 ---
 name: executor-plan
-description: Write the implementation plan from decision.md and advance a ticket to implementation during planning. Senior-model role only. Use when a ticket's next_action.role is "executor-plan".
+description: Write the implementation plan from decision.md and advance a ticket to implementation with ai-workflow advance during planning. Senior-model role only. Use when a ticket's next_action.role is "executor-plan".
 ---
 
 # executor-plan
@@ -17,14 +17,16 @@ A thin operational procedure. All business rules live in the protocol under
 1. Read `.ai/work/<ticket-id>/state.yaml` first — it is authoritative.
 2. Confirm `next_action.role` is `executor-plan`. If not, hand back.
 3. Read `decision.md` (the source of the plan).
-4. Write the implementation plan: an ordered decomposition of the decision into
+4. Record your working session:
+   `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
+5. Write the implementation plan: an ordered decomposition of the decision into
    concrete tasks, each executable by a cheap model within a bounded step.
-5. Reference the plan by path in `source_artifacts.plan`; never copy the plan
-   body into `.ai/` (the protocol integrates plans by reference).
-6. Update `state.yaml`: advance `phase` to `implementation`, set
-   `implementation.total_tasks` to the plan's task count, set `current_task`
-   to the first task, and point `next_action` at the `ticket-executor` role.
-   Set `claim` before work, update `provenance`.
+   Record the plan in `progress.md` (or a referenced docs file), declaring the
+   task count the executor will use.
+6. Advance:
+   `ai-workflow advance <ticket-id> --to implementation`.
+   The `ticket-executor` sets the task counters when it completes the first
+   task (`ai-workflow complete-task --total N`); you do not pre-set them.
 7. Write `handoff.md` before stopping (fixed sections + Repository State block).
 8. Commit per the protocol's commit discipline (phase-boundary commit).
 

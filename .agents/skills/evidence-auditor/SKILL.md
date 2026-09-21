@@ -1,6 +1,6 @@
 ---
 name: evidence-auditor
-description: Audit evidence sufficiency and write evidence-audit.md during evidence_audit. Use when a ticket's next_action.role is "evidence-auditor" or when evidence.gate must be set to sufficient or insufficient. Senior-model role.
+description: Audit evidence sufficiency, write evidence-audit.md, and record the verdict with ai-workflow set-gate during evidence_audit. Use when a ticket's next_action.role is "evidence-auditor" or when evidence.gate must be set to sufficient or insufficient. Senior-model role.
 ---
 
 # evidence-auditor
@@ -21,13 +21,16 @@ A thin operational procedure. All business rules live in the protocol under
 4. Read the current `evidence.md`.
 5. Write `evidence-audit.md` answering only the four sufficiency questions in
    the contract. No recommendations, no designs.
-6. Update `state.yaml`: set `evidence.gate` to `sufficient` or `insufficient`.
-   If `insufficient`, the next phase is `followup_evidence` and `next_action.role`
-   returns to `scout`; if `sufficient`, the next phase is `technical_decision`
-   and the next role is `technical-decision`. Set `claim` before work, update
-   `provenance` on save.
-7. Write `handoff.md` before stopping (fixed sections + Repository State block).
-8. Commit per the protocol's commit discipline.
+6. Record your working session:
+   `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
+7. Record the verdict:
+   `ai-workflow set-gate <ticket-id> --gate <sufficient|insufficient> --round <N>`.
+   `<N>` is the number of evidence-collection rounds you audited.
+8. Do not advance the phase yourself: `ai-workflow advance` branches out of
+   `evidence_audit` on the gate you just set (sufficient → `technical_decision`,
+   insufficient → `followup_evidence`), and the checkpoint-handoff performs it.
+9. Write `handoff.md` before stopping (fixed sections + Repository State block).
+10. Commit per the protocol's commit discipline.
 
-Do not write `decision.md`; do not advance the phase to `technical_decision` —
-the transition is recorded in state.yaml only.
+Do not write `decision.md`; do not advance the phase — the transition belongs
+to the checkpoint-handoff via `ai-workflow advance`.
