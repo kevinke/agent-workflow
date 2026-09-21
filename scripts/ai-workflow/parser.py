@@ -87,7 +87,10 @@ def _detect_inline(value_part):
 
 def _is_flowlike(s):
     stripped = s.strip()
-    return any(c in stripped for c in "{},[")
+    # Only real flow-collection delimiters are flow-like. A comma alone is a
+    # valid scalar character (e.g. inside a quoted string) and must not be
+    # treated as flow syntax (ADR-0002: quoted strings are scalars).
+    return any(c in stripped for c in "{}[]")
 
 
 class _Index:
