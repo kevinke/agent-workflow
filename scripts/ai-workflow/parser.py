@@ -142,6 +142,10 @@ def _build_map(entries, idx, indent):
         else:
             node[key] = _detect_inline(value_part)
             idx.i += 1
+    if idx.i < len(entries) and entries[idx.i][0] > indent:
+        raise YAMLParseError(
+            "unexpected indented content after map entry: %r" % entries[idx.i][1]
+        )
     return node
 
 
@@ -170,6 +174,10 @@ def _build_list(entries, idx, indent):
         else:
             node.append(_detect_inline(item_rest))
             idx.i += 1
+    if idx.i < len(entries) and entries[idx.i][0] > indent:
+        raise YAMLParseError(
+            "unexpected indented content after sequence item: %r" % entries[idx.i][1]
+        )
     return node
 
 
