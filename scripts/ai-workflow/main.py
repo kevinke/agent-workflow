@@ -4,9 +4,11 @@ Usage:
     ai-workflow init [target]
     ai-workflow status [ticket-id]
     ai-workflow validate [ticket-id]
+    ai-workflow start <ticket-id> [opts]
+    ai-workflow adopt <ticket-id> [opts]
+    ai-workflow upgrade
 
-Subcommands implement the workflow state machine (spec §9 / TICKET-002).
-`start` and `upgrade` are delivered by later tickets.
+Subcommands implement the workflow state machine (spec §9).
 """
 
 import os
@@ -14,7 +16,9 @@ import sys
 
 import adopt
 import init
+import start
 import status
+import upgrade
 import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "upgrade"}
@@ -25,12 +29,15 @@ commands:
   init [target]       install protocol + templates + AGENTS.md managed block
   status [ticket-id]  one-screen summary of a ticket (or the active ticket)
   validate [ticket-id] validate workflow state; ERROR -> non-zero exit
+  start <ticket-id> [opts]  scaffold a new (greenfield) ticket from template
+      --title <title>       ticket title
+      --phase <phase>       start phase (default: requirement)
+      --spec <path> --ticket <path> --plan <path>   source-artifact references
   adopt <ticket-id> [opts]  legacy repo adoption: migration report + state scaffold
       --phase <phase>       adopted phase (default: requirement)
       --title <title>       ticket title
       --spec <path> --ticket <path> --plan <path>   source-artifact references
-
-`start` and `upgrade` are implemented in later tickets.
+  upgrade             explicit protocol upgrade using workflow_version
 """
 
 
@@ -114,6 +121,62 @@ def cmd_adopt(args, root):
     return 0
 
 
+def cmd_start(args, root):
+    opts = {}
+    rest = args[1:]
+    if not rest or rest[0].startswith("--"):
+        sys.stderr.write("usage: ai-workflow start <ticket-id> [--title <title>] "
+                         "[--phase <phase>] [--spec <path>] [--ticket <path>] "
+                         "[--plan <path>]\n")
+        return 2
+    ticket_id = rest[0]
+    i = 1
+    while i < len(rest):
+        arg = rest[i]
+        if arg in ("--title", "--phase", "--spec", "--ticket", "--plan") and i + 1 < len(rest):
+            opts[arg[2:]] = rest[i + 1]
+            i += 2
+        else:
+            sys.stderr.write("unknown start option %r\n" % arg)
+            return 2
+    created = start.start(
+        root, ticket_id,
+        title=opts.get("title"),
+        phase=opts.get("phase"),
+        spec_path=opts.get("spec"),
+        ticket_path=opts.get("ticket"),
+        plan_path=opts.get("plan"),
+    )
+    if not created:
+        print("nothing to do: %s already started (idempotent)." % ticket_id)
+        return 0
+    print("started %s:" % ticket_id)
+    for p in created:
+        print("  %s" % os.path.relpath(p, root))
+    return 0
+
+
+def cmd_upgrade(args, root):
+    try:
+        updated, bumped = upgrade.upgrade(root)
+    except upgrade.UpgradeError as exc:
+        sys.stderr.write("upgrade: %s\n" % exc)
+        return 2
+    installed = upgrade.installed_workflow_version(root)
+    if not updated and not bumped:
+        print("nothing to do: protocol already at workflow_version %s (idempotent)."
+              % installed)
+        return 0
+    print("upgraded protocol to workflow_version %s:" % upgrade.kit_workflow_version())
+    for p in updated:
+        print("  %s" % os.path.relpath(p, root))
+    if bumped:
+        print("bumped tickets:")
+        for t in bumped:
+            print("  %s" % t)
+    return 0
+
+
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -132,9 +195,11 @@ def main(argv=None):
         return cmd_validate(argv, root)
     if cmd == "adopt":
         return cmd_adopt(argv, root)
-    # start / upgrade — future tickets.
-    sys.stderr.write("%s is not implemented yet (later ticket).\n" % cmd)
-    return 2
+    if cmd == "start":
+        return cmd_start(argv, root)
+    if cmd == "upgrade":
+        return cmd_upgrade(argv, root)
+    return 2  # unreachable: COMMANDS gates dispatch above
 
 
 if __name__ == "__main__":

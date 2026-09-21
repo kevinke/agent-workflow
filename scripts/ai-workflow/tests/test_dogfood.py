@@ -25,7 +25,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import init as init_mod  # noqa: E402
-import parser  # noqa: E402
 import state  # noqa: E402
 
 # The real CLI entry point, driven via subprocess so we test the user surface.
@@ -41,10 +40,6 @@ HANDOFF_SECTIONS = [
 TICKET = "TICKET-001"
 
 
-def _handoff_text():
-    return "\n\n".join("## %s" % s for s in HANDOFF_SECTIONS) + "\n"
-
-
 class DogfoodE2ETest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -53,9 +48,10 @@ class DogfoodE2ETest(unittest.TestCase):
 
         code, _out, err = self._cli("init", self.root)
         self.assertEqual(code, 0, err)
-        os.makedirs(self.work, exist_ok=True)
-        self._scaffold_from_template()
-        self._write("handoff.md", _handoff_text())
+        # Dogfood: the ticket is started through the real `start` CLI, not
+        # hand-scaffolded — the user-facing entry point is the thing under test.
+        code, _out, err = self._cli("start", TICKET, "--title", "dogfood e2e ticket")
+        self.assertEqual(code, 0, err)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -75,15 +71,6 @@ class DogfoodE2ETest(unittest.TestCase):
     def _assert_validate_ok(self, msg="validate must pass"):
         code, out = self._validate()
         self.assertEqual(code, 0, "%s\n%s" % (msg, out))
-
-    def _scaffold_from_template(self):
-        # Dogfood: the ticket state comes from the installed template, parsed
-        # by the kit's own parser, then filled with a real ticket identity.
-        tmpl = os.path.join(self.root, ".ai", "workflow", "templates", "state.yaml")
-        with open(tmpl, encoding="utf-8") as fh:
-            data = parser.parse(fh.read())
-        data["ticket"] = {"id": TICKET, "title": "dogfood e2e ticket"}
-        state.save_file(os.path.join(self.work, "state.yaml"), data)
 
     def _write(self, name, content):
         with open(os.path.join(self.work, name), "w", encoding="utf-8") as fh:
@@ -192,6 +179,13 @@ class DogfoodE2ETest(unittest.TestCase):
         self.assertIn("idempotent", out)
         with open(os.path.join(self.root, "AGENTS.md"), encoding="utf-8") as fh:
             self.assertEqual(fh.read(), text)
+
+    def test_upgrade_cli_is_noop_when_current(self):
+        # The installed protocol ships at the kit's current version, so the
+        # explicit upgrade is a no-op through the real CLI.
+        code, out, err = self._cli("upgrade")
+        self.assertEqual(code, 0, err)
+        self.assertIn("nothing to do", out)
 
     # -- negative regression gates ---------------------------------------------
 
