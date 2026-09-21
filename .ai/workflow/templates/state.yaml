@@ -1,0 +1,46 @@
+schema_version: 1
+workflow_version: 1
+ticket:
+  id: <ticket-id>
+  title: <ticket title>
+phase: requirement
+status: active
+repository:
+  base_commit: <base commit hash>
+  branch: <branch name>
+source_artifacts:
+  spec:
+    path: null
+  ticket:
+    path: null
+  plan:
+    path: null
+artifacts:
+  evidence: evidence.md
+  evidence_audit: evidence-audit.md
+  decision: decision.md
+  progress: progress.md
+  handoff: handoff.md
+evidence:
+  round: 0
+  gate: insufficient
+implementation:
+  current_task: 0
+  total_tasks: 0
+  completed_tasks: []
+escalation:
+  required: false
+  scope: machine
+  reason: null
+claim:
+  harness: null
+  model: null
+  claimed_at: null
+next_action:
+  role: checkpoint-handoff
+  action: advance phase from requirement to evidence_collection
+  task: null
+provenance:
+  last_harness: null
+  last_model: null
+updated_at: <ISO-8601 timestamp>
