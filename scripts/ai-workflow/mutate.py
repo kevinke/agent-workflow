@@ -14,7 +14,8 @@ import state
 import validate
 
 __all__ = ["MutateError", "TRANSITIONS", "DEFAULT_NEXT",
-           "advance", "claim", "complete_task", "set_gate", "escalate"]
+           "advance", "claim", "complete_task", "set_gate", "escalate",
+           "set_status", "release"]
 
 _WORK_DIR_REL = os.path.join(".ai", "work")
 
@@ -178,3 +179,22 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False):
     data["escalation"] = {"required": True, "scope": scope, "reason": reason}
     _save(root, ticket_id, data)
     return "%s: escalation required (scope=%s)" % (ticket_id, scope)
+
+
+def set_status(root, ticket_id, status):
+    """Set the lateral status (orthogonal to phase)."""
+    if status not in validate.STATUSES:
+        raise MutateError("unknown status %r (must be one of %s)"
+                          % (status, ", ".join(sorted(validate.STATUSES))))
+    data = _load(root, ticket_id)
+    data["status"] = status
+    _save(root, ticket_id, data)
+    return "%s: status=%s" % (ticket_id, status)
+
+
+def release(root, ticket_id):
+    """Clear the soft claim; provenance is kept for the audit trail."""
+    data = _load(root, ticket_id)
+    data["claim"] = {"harness": None, "model": None, "claimed_at": None}
+    _save(root, ticket_id, data)
+    return "%s: claim released" % ticket_id

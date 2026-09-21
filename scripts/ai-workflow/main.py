@@ -1,20 +1,24 @@
 """`ai-workflow` CLI entry point (Python 3 stdlib, zero dependencies).
 
 Usage:
-    ai-workflow init [target]
+    ai-workflow init [target] [--with-skills]
     ai-workflow status [ticket-id]
     ai-workflow validate [ticket-id]
     ai-workflow start <ticket-id> [opts]
     ai-workflow adopt <ticket-id> [opts]
     ai-workflow advance <ticket-id> --to <phase>
     ai-workflow claim <ticket-id> [opts]
+    ai-workflow release <ticket-id>
     ai-workflow complete-task <ticket-id> [--total N]
     ai-workflow set-gate <ticket-id> --gate <g> [--round N]
     ai-workflow escalate <ticket-id> [opts]
+    ai-workflow set-status <ticket-id> --status <s>
+    ai-workflow install-skills [target]
     ai-workflow upgrade
 
 Subcommands implement the workflow state machine (spec §9); the semantic
-mutators (advance/claim/complete-task/set-gate/escalate) are TICKET-010.
+mutators (advance/claim/release/complete-task/set-gate/escalate/set-status)
+are TICKET-010/012.
 """
 
 import os
@@ -23,18 +27,21 @@ import sys
 import adopt
 import init
 import mutate
+import skills
 import start
 import status
 import upgrade
 import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
-            "complete-task", "set-gate", "escalate", "upgrade"}
+            "release", "complete-task", "set-gate", "escalate", "set-status",
+            "install-skills", "upgrade"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
 commands:
-  init [target]       install protocol + templates + AGENTS.md managed block
+  init [target] [--with-skills]  install protocol + templates + AGENTS.md managed block
+      --with-skills             also install the seven role skills (optional, in place)
   status [ticket-id]  one-screen summary of a ticket (or the active ticket)
   validate [ticket-id] validate workflow state; ERROR -> non-zero exit
   start <ticket-id> [opts]  scaffold a new (greenfield) ticket from template
@@ -47,9 +54,12 @@ commands:
       --spec <path> --ticket <path> --plan <path>   source-artifact references
   advance <ticket-id> --to <phase>  move along the state machine (enforces gates)
   claim <ticket-id> [--harness H] [--model M]   set the soft claim + provenance
+  release <ticket-id>     clear the soft claim (provenance kept)
   complete-task <ticket-id> [--total N]  mark one implementation task done
   set-gate <ticket-id> --gate G [--round N]  record evidence verdict (G: sufficient|insufficient)
   escalate <ticket-id> --scope S --reason "..." | --clear  set/clear escalation
+  set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
+  install-skills [target]  install the seven role skills into the target repo (idempotent)
   upgrade             explicit protocol upgrade using workflow_version
 """
 
@@ -78,14 +88,31 @@ def _parse_options(rest, known):
 
 
 def cmd_init(args, root):
-    target = args[1] if len(args) > 1 else root
+    rest = args[1:]
+    with_skills = "--with-skills" in rest
+    rest = [r for r in rest if r != "--with-skills"]
+    target = rest[0] if rest else root
     created = init.init(target)
+    if with_skills:
+        created += skills.install_skills(target)
     if created:
         print("installed into %s:" % target)
         for p in created:
             print("  %s" % os.path.relpath(p, target))
     else:
         print("nothing to do: protocol already installed (idempotent).")
+
+
+def cmd_install_skills(args, root):
+    target = args[1] if len(args) > 1 else root
+    written = skills.install_skills(target)
+    if not written:
+        print("nothing to do: the seven role skills are already current (idempotent).")
+        return 0
+    print("installed skills into %s:" % target)
+    for p in written:
+        print("  %s" % os.path.relpath(p, target))
+    return 0
 
 
 def cmd_status(args, root):
@@ -264,6 +291,25 @@ def cmd_set_gate(args, root):
         args, root, {"--gate", "--round"}, apply)
 
 
+def cmd_set_status(args, root):
+    def apply(ticket_id, opts):
+        st = opts.get("status")
+        if not st:
+            raise mutate.MutateError("--status <s> is required")
+        return mutate.set_status(root, ticket_id, st)
+    return _cmd_mutate(
+        "set-status", "set-status <ticket-id> --status <s>",
+        args, root, {"--status"}, apply)
+
+
+def cmd_release(args, root):
+    def apply(ticket_id, opts):
+        return mutate.release(root, ticket_id)
+    return _cmd_mutate(
+        "release", "release <ticket-id>",
+        args, root, set(), apply)
+
+
 def cmd_escalate(args, root):
     rest = args[1:]
     if not rest or rest[0].startswith("--"):
@@ -305,6 +351,8 @@ def main(argv=None):
     root = _resolve_root(argv)
     if cmd == "init":
         return cmd_init(argv, root)
+    if cmd == "install-skills":
+        return cmd_install_skills(argv, root)
     if cmd == "status":
         return cmd_status(argv, root)
     if cmd == "validate":
@@ -325,6 +373,10 @@ def main(argv=None):
         return cmd_set_gate(argv, root)
     if cmd == "escalate":
         return cmd_escalate(argv, root)
+    if cmd == "set-status":
+        return cmd_set_status(argv, root)
+    if cmd == "release":
+        return cmd_release(argv, root)
     return 2  # unreachable: COMMANDS gates dispatch above
 
 

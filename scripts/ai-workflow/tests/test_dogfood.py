@@ -46,8 +46,12 @@ class DogfoodE2ETest(unittest.TestCase):
         self.root = self._tmp.name
         self.work = os.path.join(self.root, ".ai", "work", TICKET)
 
-        code, _out, err = self._cli("init", self.root)
+        code, _out, err = self._cli("init", self.root, "--with-skills")
         self.assertEqual(code, 0, err)
+        # Skills landed in the target repo through the real CLI.
+        skill_path = os.path.join(self.root, ".agents", "skills",
+                                  "ticket-executor", "SKILL.md")
+        self.assertTrue(os.path.exists(skill_path), skill_path)
         # Dogfood: the ticket is started through the real `start` CLI, not
         # hand-scaffolded — the user-facing entry point is the thing under test.
         code, _out, err = self._cli("start", TICKET, "--title", "dogfood e2e ticket")

@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import state  # noqa: E402
+import parser  # noqa: E402
 import validate  # noqa: E402
 
 HANDOFF_SECTIONS = [
@@ -170,6 +171,19 @@ class ValidateTest(unittest.TestCase):
         findings = self._findings()
         self.assertEqual(self._errors(findings), [])
         self.assertTrue(any(f.severity == "WARN" and "handoff.md missing section" in f.message
+                            for f in findings))
+
+    def test_missing_updated_at_is_warn_only(self):
+        data = _valid_state()
+        self._write_state(data)  # save_file stamps updated_at
+        data = state.load_file(os.path.join(self.work, "state.yaml"))
+        del data["updated_at"]  # simulate a hand-edit that bypassed the kit
+        with open(os.path.join(self.work, "state.yaml"), "w", encoding="utf-8") as fh:
+            fh.write(parser.dump(data))
+        self._write_handoff()
+        findings = self._findings()
+        self.assertEqual(self._errors(findings), [])
+        self.assertTrue(any(f.severity == "WARN" and "updated_at" in f.message
                             for f in findings))
 
     def test_validate_repo_empty_repo_warns_no_errors(self):

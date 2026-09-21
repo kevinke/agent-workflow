@@ -8,9 +8,12 @@ agents to call the CLI, never to hand-edit `state.yaml` state-machine fields
 
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import skills  # noqa: E402
 
 # this file: scripts/ai-workflow/tests/test_skills.py -> 4 levels up to kit root.
 _KIT_ROOT = os.path.dirname(os.path.dirname(
@@ -49,6 +52,27 @@ class SkillsLintTest(unittest.TestCase):
             with self.subTest(skill=skill):
                 self.assertIn("ai-workflow", self._text(skill),
                               "%s never references the ai-workflow CLI" % skill)
+
+    def test_install_skills_copies_bundle_idempotently(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            written = skills.install_skills(tmp)
+            self.assertEqual(len(written), len(skills.KIT_SKILLS))
+            for name in skills.KIT_SKILLS:
+                self.assertTrue(os.path.exists(
+                    os.path.join(tmp, ".agents", "skills", name, "SKILL.md")), name)
+            # Second run is a true no-op (nothing rewritten).
+            self.assertEqual(skills.install_skills(tmp), [])
+
+    def test_install_skills_updates_changed_skill_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skills.install_skills(tmp)
+            dst = os.path.join(tmp, ".agents", "skills", "repo-scout", "SKILL.md")
+            with open(dst, "w", encoding="utf-8") as fh:
+                fh.write("stale copy\n")
+            written = skills.install_skills(tmp)
+            self.assertIn(dst, written)
+            with open(dst, encoding="utf-8") as fh:
+                self.assertNotEqual(fh.read(), "stale copy\n")
 
 
 if __name__ == "__main__":

@@ -105,6 +105,10 @@ def validate_ticket(root, ticket, findings):
     if status not in STATUSES:
         bad("illegal status %r (must be one of %s)" % (status, ", ".join(sorted(STATUSES))))
 
+    # Every save stamps updated_at; a missing value means hand-edited state.
+    if not data.get("updated_at"):
+        warn("missing updated_at (state was hand-edited, not saved via the kit)")
+
     evidence = data.get("evidence") or {}
     gate = evidence.get("gate")
     if gate not in GATES:

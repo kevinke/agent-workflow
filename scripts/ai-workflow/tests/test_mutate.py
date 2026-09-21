@@ -143,6 +143,22 @@ class MutateTest(unittest.TestCase):
         with self.assertRaises(mutate.MutateError):
             mutate.escalate(self.root, "T1", scope="bogus")
 
+    def test_set_status(self):
+        mutate.set_status(self.root, "T1", "blocked")
+        self.assertEqual(self._state()["status"], "blocked")
+        mutate.set_status(self.root, "T1", "active")
+        self.assertEqual(self._state()["status"], "active")
+        with self.assertRaises(mutate.MutateError):
+            mutate.set_status(self.root, "T1", "bogus")
+
+    def test_release_clears_claim_keeps_provenance(self):
+        mutate.claim(self.root, "T1", harness="trae", model="claude")
+        mutate.release(self.root, "T1")
+        data = self._state()
+        self.assertEqual(data["claim"], {"harness": None, "model": None, "claimed_at": None})
+        # provenance is the audit trail and is not cleared.
+        self.assertEqual(data["provenance"], {"last_harness": "trae", "last_model": "claude"})
+
 
 if __name__ == "__main__":
     unittest.main()
