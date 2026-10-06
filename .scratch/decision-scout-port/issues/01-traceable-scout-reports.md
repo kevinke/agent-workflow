@@ -71,3 +71,23 @@ authoritative contract. Use the parent spec to resolve disagreements.
 
 - 2026-10-07 — Created as the immediate frontier; user prioritised inexpensive
   scouting and structured, precisely anchored facts.
+- 2026-10-07 — Task 1 implemented (branch ticket-01-traceable-scout). Canonical
+  Scout Report grammar written into .ai/workflow/ARTIFACTS.md (Evidence
+  format_version=1: Metadata with observed_commit/dirty_changes/provenance,
+  Decision Questions DQ-01…, Findings F-01 [FACT|INFERENCE|UNKNOWN] with
+  anchored Sources/Method/Scope, Unknowns, Handoff); templates/evidence.md and
+  evidence-audit.md updated (rounds and Migration Notice preserved; audit keeps
+  exactly the four sufficiency questions plus Metadata with evidence_sha256);
+  PROTOCOL.md gains a scouting/auditing section; ROLES.md scout outputs/rules
+  updated. Thin Skills (repo-scout, evidence-auditor) point at the contract —
+  DQ drafting, architectural escalation, temporary diagnostics, stop rules;
+  no State fields or business-rule copies added. Fixture
+  .ai/workflow/examples/scout-fixture/{service.py,demo.py} runs clean:
+  `python demo.py` prints initial=1, configured=2, actual=1, exit 0. Worked
+  examples scout-bug.md (ready-for-audit) and scout-feature.md (partial with a
+  critical UNKNOWN; only the auditor can open the Gate) anchor to observed
+  commit bceba0fb81f6dad3e2c7dfb6fe4c89b61e7bbe7e with the fixture as dirty
+  changes; receiving-reader check located every pivotal claim directly without
+  a general survey. Verification: test_skills.py 4 tests OK, test_start.py 6
+  tests OK, test_validate.py 18 tests OK. Commit:
+  ai-workflow(SCOUT-001): add traceable Scout report contract.

@@ -22,10 +22,26 @@ A thin operational procedure. All business rules live in the protocol under
    (spec, ticket, plan). Reference them by path; never copy their content.
 5. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
-6. Collect repository facts only into `evidence.md` per the evidence contract
-   in `.ai/workflow/ARTIFACTS.md`: entries tagged FACT / INFERENCE / UNKNOWN;
-   important FACTs carry anchors (file path, symbol, line, command, test
-   result). Design proposals are forbidden in evidence.md.
+6. Collect repository facts only into `evidence.md` per the Scout Report
+   contract in `.ai/workflow/ARTIFACTS.md` (full worked examples:
+   `.ai/workflow/examples/scout-bug.md`, `.ai/workflow/examples/scout-feature.md`):
+   - Capture the snapshot first: current HEAD as `observed_commit`, relevant
+     dirty paths as `dirty_changes`.
+   - Draft Decision Questions from the request when the ticket supplies none;
+     tie each to the decision it affects. Three to eight is guidance.
+   - Record findings as FACT / INFERENCE / UNKNOWN with stable F-IDs, precise
+     anchors, the verification method (static / execution / test), and scope.
+     Negative searches state scope and exclusions.
+   - If the request's ambiguity requires an architectural choice, escalate it;
+     do not silently pick an architecture.
+   - Temporary diagnostics (throwaway runs, probes) are permitted; record
+     their outcome and any residual changes.
+   - Stop when questions are answered or the remaining gaps and stopping
+     reason are explicit. An exhausted budget yields a partial report with
+     precise unknowns, not a verdict.
+   Design proposals and your own sufficiency verdict are forbidden in
+   evidence.md — a critical UNKNOWN can still leave the report ready for
+   audit; only the auditor opens the Gate.
 7. Do not touch `evidence.round` / `evidence.gate` / `phase` / `next_action`:
    the auditor records the round and verdict via `ai-workflow set-gate`, and
    the checkpoint-handoff advances the phase via `ai-workflow advance`. Leave

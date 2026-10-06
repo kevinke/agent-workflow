@@ -56,7 +56,20 @@ A phase changes only via the transitions above. Do not invent transitions.
 
 ## 7. Writing artifacts
 
-Artifact contracts are in ARTIFACTS.md. In brief: evidence.md is collected by a scout; evidence-audit.md answers only sufficiency questions; decision.md is senior-only; progress.md logs at task granularity; handoff.md has fixed sections plus a Repository State block. Each artifact's writer is defined in ROLES.md.
+Artifact contracts are in ARTIFACTS.md. In brief: evidence.md is the Scout Report, collected by a scout; evidence-audit.md answers only sufficiency questions; decision.md is senior-only; progress.md logs at task granularity; handoff.md has fixed sections plus a Repository State block. Each artifact's writer is defined in ROLES.md.
+
+### Scouting and auditing
+
+A scout turns an engineering request into a bounded, traceable report:
+
+1. Capture the observation snapshot first: current HEAD as `observed_commit` and relevant dirty paths as `dirty_changes`.
+2. Record Decision Questions (DQs) tied to the decisions they affect. If the ticket supplies none, draft them from the request. Ambiguity that requires an architectural choice is escalated, not answered.
+3. Record findings as FACT / INFERENCE / UNKNOWN with stable F-IDs, precise anchors (file/line/symbol, key/record, or command/result/exit), the verification method, and its scope or limits. Negative searches state their scope and exclusions. INFERENCE cites its basis.
+4. Record unresolved DQ/F IDs in Unknowns with decision impact and the next collection step; a critical UNKNOWN does not block report readiness but cannot open the Evidence Gate.
+5. Stop when questions are answered or remaining gaps and the need for a new decision or resource are explicit. Write the stopping reason in the report's Handoff. An exhausted budget produces a partial report, not a successful investigation.
+6. The scout writes evidence and handoff only — never production changes, final decisions, or its own sufficiency verdict. Necessary temporary diagnostics are permitted; record their outcomes and residual changes.
+
+The evidence-auditor reads the report and answers the four sufficiency questions in evidence-audit.md, then records the gate. Report readiness and evidence sufficiency are distinct: a ready report with a critical UNKNOWN still leaves the Gate insufficient until the auditor decides otherwise.
 
 ## 8. Escalation
 

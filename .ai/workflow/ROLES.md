@@ -19,8 +19,8 @@ Tier names ("cheap" / "senior") are guidance, not harness-specific model mandate
 - Tier: cheap
 - Phase scope: evidence_collection, followup_evidence
 - Inputs: state.yaml, ticket and spec source artifacts
-- Outputs: evidence.md (FACT / INFERENCE / UNKNOWN + anchors), updated state.yaml
-- Rules: collect repository facts only; design proposals are forbidden in evidence.md.
+- Outputs: evidence.md (Scout Report: Metadata, Decision Questions, Findings, Unknowns, Handoff — FACT / INFERENCE / UNKNOWN with anchors), updated state.yaml
+- Rules: collect repository facts only; design proposals and the evidence verdict are forbidden in evidence.md. Draft DQs when none are supplied; escalate ambiguity requiring an architectural choice; stop when questions are answered or gaps and stopping reason are explicit. A critical UNKNOWN does not open the Evidence Gate — readiness and sufficiency are distinct.
 
 ## evidence-auditor
 

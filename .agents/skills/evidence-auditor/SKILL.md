@@ -20,7 +20,10 @@ A thin operational procedure. All business rules live in the protocol under
    the ticket and spec source artifacts (by reference).
 4. Read the current `evidence.md`.
 5. Write `evidence-audit.md` answering only the four sufficiency questions in
-   the contract. No recommendations, no designs.
+   the contract. No recommendations, no designs. Assess DQ coverage,
+   traceability, verification limits, and decision-changing unknowns within
+   those answers; a report whose questions all have status can still be
+   insufficient when a critical UNKNOWN would change the decision.
 6. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
 7. Record the verdict:
