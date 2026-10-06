@@ -144,6 +144,25 @@ def validate_ticket(root, ticket, findings):
     if cur > tot >= 0:
         bad("implementation.current_task (%d) > total_tasks (%d)" % (cur, tot))
 
+    completed = impl.get("completed_tasks")
+    if cur >= 0 and tot >= 0 and "implementation" in data:
+        if not isinstance(completed, list):
+            bad("implementation.completed_tasks must be a list (got %r)" % (completed,))
+        else:
+            try:
+                nums = sorted(int(c) for c in completed)
+            except (TypeError, ValueError):
+                bad("implementation.completed_tasks contains non-integer entries: %r"
+                    % (completed,))
+            else:
+                if nums != list(range(1, cur + 1)):
+                    bad("implementation.completed_tasks %r does not match "
+                        "current_task=%d (expected [1..%d])"
+                        % (completed, cur, cur))
+                elif nums and tot > 0 and nums[-1] > tot:
+                    bad("implementation.completed_tasks contains task %d > "
+                        "total_tasks (%d)" % (nums[-1], tot))
+
     # --- DONE must clear next_action ----------------------------------------
     if phase == "done" and has_next:
         bad("phase=done but next_action is still set")

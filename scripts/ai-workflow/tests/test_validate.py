@@ -87,6 +87,30 @@ class ValidateTest(unittest.TestCase):
         self._write_handoff()
         self.assertTrue(any("current_task" in m for m in self._errors()))
 
+    def test_completed_tasks_mismatch_is_error(self):
+        data = _valid_state()
+        data["implementation"] = {"current_task": 1, "total_tasks": 5,
+                                  "completed_tasks": []}
+        self._write_state(data)
+        self._write_handoff()
+        self.assertTrue(any("completed_tasks" in m for m in self._errors()))
+
+    def test_completed_tasks_non_integer_is_error(self):
+        data = _valid_state()
+        data["implementation"] = {"current_task": 1, "total_tasks": 5,
+                                  "completed_tasks": ["one"]}
+        self._write_state(data)
+        self._write_handoff()
+        self.assertTrue(any("completed_tasks" in m for m in self._errors()))
+
+    def test_completed_tasks_matching_passes(self):
+        data = _valid_state()
+        data["implementation"] = {"current_task": 2, "total_tasks": 5,
+                                  "completed_tasks": [1, 2]}
+        self._write_state(data)
+        self._write_handoff()
+        self.assertEqual(self._errors(), [])
+
     def test_done_with_next_action(self):
         data = _valid_state()
         data["phase"] = "done"

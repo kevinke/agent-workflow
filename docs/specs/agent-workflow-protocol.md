@@ -1,6 +1,13 @@
 # Spec: Repo-native Cross-Harness Agent Workflow Protocol
 
-Status: confirmed via grilling (2026-09-21). Source decisions: [ADR-0001](docs/adr/0001-repo-native-protocol-over-harness-skills.md), [ADR-0002](docs/adr/0002-restricted-yaml-subset-parser-over-pyyaml.md).
+Status: confirmed via grilling (2026-09-21). Source decisions: [ADR-0001](../adr/0001-repo-native-protocol-over-harness-skills.md), [ADR-0002](../adr/0002-restricted-yaml-subset-parser-over-pyyaml.md).
+
+This document records the version 1 baseline. The planned Decision Scout and
+structured model handoff enhancement is specified separately in
+[the feature spec](../../.scratch/decision-scout-port/spec.md), with its
+[delivery tickets](../../.scratch/decision-scout-port/tickets.md). Its version 2
+gates are not implemented by writing those documents; installed version 1 rules
+remain authoritative until the explicit release and Ticket upgrade described there.
 
 ## 1. Goal
 

@@ -134,6 +134,19 @@ def complete_task(root, ticket_id, total=None):
         total_tasks = int(impl.get("total_tasks", 0) or 0)
     except (TypeError, ValueError):
         raise MutateError("implementation counters are not integers")
+    completed = list(impl.get("completed_tasks") or [])
+    try:
+        completed = [int(c) for c in completed]
+    except (TypeError, ValueError):
+        raise MutateError(
+            "implementation.completed_tasks contains non-integer entries; "
+            "reconcile against `git log --grep ai-workflow(` and progress.md")
+    if sorted(completed) != list(range(1, current + 1)):
+        raise MutateError(
+            "implementation counters out of sync: current_task=%d but "
+            "completed_tasks=%s (expected [1..%d]); reconcile against "
+            "`git log --grep ai-workflow(` and progress.md — do not "
+            "hand-edit current_task" % (current, completed, current))
     if total is not None:
         total_tasks = int(total)
     if total_tasks <= 0:
@@ -142,7 +155,6 @@ def complete_task(root, ticket_id, total=None):
     if current >= total_tasks:
         raise MutateError("all %d tasks already complete" % total_tasks)
     current += 1
-    completed = list(impl.get("completed_tasks") or [])
     if current not in completed:
         completed.append(current)
     impl["current_task"] = current

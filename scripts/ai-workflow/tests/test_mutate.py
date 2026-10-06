@@ -120,6 +120,25 @@ class MutateTest(unittest.TestCase):
         with self.assertRaises(mutate.MutateError):
             mutate.complete_task(self.root, "T1")
 
+    def test_complete_task_rejects_desynced_counters(self):
+        path = os.path.join(self.root, ".ai", "work", "T1", "state.yaml")
+        data = state.load_file(path)
+        data["implementation"] = {"current_task": 1, "total_tasks": 5,
+                                  "completed_tasks": []}
+        state.save_file(path, data)
+        with self.assertRaises(mutate.MutateError):
+            mutate.complete_task(self.root, "T1")
+        self.assertEqual(self._state()["implementation"]["completed_tasks"], [])
+
+    def test_complete_task_rejects_non_integer_completed(self):
+        path = os.path.join(self.root, ".ai", "work", "T1", "state.yaml")
+        data = state.load_file(path)
+        data["implementation"] = {"current_task": 1, "total_tasks": 5,
+                                  "completed_tasks": ["x"]}
+        state.save_file(path, data)
+        with self.assertRaises(mutate.MutateError):
+            mutate.complete_task(self.root, "T1", total=5)
+
     def test_set_gate(self):
         mutate.set_gate(self.root, "T1", "sufficient", round_no=2)
         evidence = self._state()["evidence"]

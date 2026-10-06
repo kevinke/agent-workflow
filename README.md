@@ -103,6 +103,11 @@ ai-workflow adopt TICKET-001 --title "..." --spec docs/spec.md --ticket .scratch
 
 ## 文档地图
 
+计划中的增强见 [Decision Scout 与结构化交接 spec](.scratch/decision-scout-port/spec.md)
+和 [实施票据](.scratch/decision-scout-port/tickets.md)。优先让便宜 Scout 输出可追溯的
+事实报告，再补执行契约、review 门禁和跨 Harness 接手；这些能力尚未实现，下面的
+使用说明仍描述当前版本。
+
 - **本套件是什么 / 怎么设计**：[docs/specs/agent-workflow-protocol.md](docs/specs/agent-workflow-protocol.md)
 - **安装到目标仓库的协议正文**：`.ai/workflow/`（PROTOCOL / STATE_SCHEMA / ARTIFACTS / ROLES / ESCALATION / MIGRATION）
 - **决策记录**：[docs/adr/](docs/adr/)（仓库原生协议、受限 YAML、纯 stdlib CLI）

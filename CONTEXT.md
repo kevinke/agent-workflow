@@ -16,6 +16,28 @@ Glossary for the agent-workflow kit. Terms are canonical: skills and protocol do
 - **Evidence Gate** — The auditor's verdict on whether evidence is sufficient to enter technical_decision. The state machine enforces it.
 - **Claim (soft claim)** — A convention recorded in `state.yaml` (`claim: {harness, model, claimed_at}`) marking which session is working on a ticket. Advisory, not a lock; a conflicting session must read `handoff.md` before taking over.
 
+## Structured handoff vocabulary
+
+These terms describe the planned enhancement; supported behavior remains defined
+by the installed Workflow Protocol and each Ticket's workflow version.
+
+- **Decision Question** — A bounded investigation question whose answer can
+  change a downstream technical decision; identified by a DQ ID.
+- **Fact ID** — A stable identifier for a finding within a Ticket's Evidence,
+  allowing decisions, tasks, and reviews to refer to the same finding.
+- **Scout Report** — The structured Evidence artifact produced by a Scout,
+  linking Decision Questions to anchored findings, unknowns, and a handoff.
+- **Verification Scope** — The behavior, input, or code path actually checked
+  by a finding's verification, together with its limits.
+- **Execution Contract** — A bounded Plan task declaring modification scope,
+  protected behavior, acceptance criteria, verification, and escalation conditions.
+- **Reviewer** — The role that independently judges implemented changes against
+  their decisions and acceptance criteria; distinct from checkpoint-handoff.
+- **Review Verdict** — A review's pass or changes_requested conclusion for a
+  particular code revision and Plan.
+- **Artifact Binding** — The identity connecting a recorded gate or verdict to
+  the exact artifact and revision it assessed.
+
 ## Migration concepts
 
 - **Retroactive Minimum Evidence** — When adopting a half-done ticket, evidence is collected only for what is needed to safely continue remaining work, never a full historical reconstruction. The evidence file must carry a Migration Notice stating this.
