@@ -106,8 +106,10 @@ critical UNKNOWN can be ready for audit while the Gate remains insufficient.
 Metadata lives in the first fenced yaml block under an exact H2 Metadata
 heading, with required fields: `artifact_type: evidence-audit`,
 `format_version: 1`, `ticket_id`, `round`, `gate`, `evidence_sha256`. The
-SHA-256 is computed when the gate is recorded; it is never inserted into the
-audit artifact itself.
+`evidence_sha256` field is the SHA-256 of the audited Evidence report; it is
+computed when the gate is recorded and IS written into the audit artifact's
+Metadata. The audit artifact's own SHA-256 is never computed and inserted
+into itself.
 
 After Metadata, keep exactly the existing four sufficiency-question H2s; each
 has a substantive answer or a justified not-applicable:
