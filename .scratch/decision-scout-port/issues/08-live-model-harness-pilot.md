@@ -72,3 +72,20 @@ manufacture a completed pilot.
   default to `workflow_version: 2`). No real model session was launched (only
   availability probes). Pilot stays pending on explicit user consent to spend
   external model quota; blocker recorded in [pilot/report.md](../pilot/report.md).
+- 2026-10-07 — **Task 2 attempted; still PENDING/BLOCKED.** Task 2 Steps 1–2 need
+  actual Scout + senior + executor + independent-review sessions and a handoff
+  crossing two **real** Harnesses. The binding precondition — **explicit user
+  consent to spend the user's external model quota/credentials** — is still
+  **missing**, so no real session was launched and **no run records or findings
+  exist**. Per Task 2 Step 5 and AC 7 the sanctioned result is to preserve pending
+  status and the blocker rather than simulate. `.scratch/decision-scout-port/pilot/bug/`
+  and `.../feature/` were deliberately **not** created (no actual records to copy;
+  placeholder content would be fabrication). Cost-free availability probes were
+  re-verified unchanged (`python` 3.13.5, `git` 2.45.1.windows.1, `ai-workflow
+  --help` exit 0, `codex-cli 0.160.0`). Binding ruling recorded: do not launch,
+  authenticate, or invoke any real/paid model session without consent — only
+  availability probes. Commit used is `ai-workflow(SCOUT-008): record live pilot
+  blocker (pending)` (the plan's "record live model and harness findings" wording
+  does not apply because no runs produce no findings). Status stays as-is; **no
+  acceptance criterion was checked**. Full report:
+  `.superpowers/sdd/2026-10-07-scout-08/task-2-report.md`.

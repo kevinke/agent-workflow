@@ -44,3 +44,11 @@ CLI checks alone cannot establish the truth or usefulness of model-generated fac
 - 2026-10-07 — Eight local Tickets created from the updated spec. Cheap scouting
   is first, later gates are explicit, and release compatibility precedes the live
   pilot. Ticket bodies carry implementation scope and acceptance criteria.
+- 2026-10-07 — SCOUT-008 (live model/Harness pilot) **remains pending/blocked**.
+  Task 2 was attempted; the required real role sessions and cross-Harness handoff
+  cannot run because explicit user consent to spend the user's external model
+  quota is still missing. No real session was launched, so no run records or
+  findings exist and no acceptance criterion was checked. Cost-free availability
+  probes re-verified unchanged. See
+  [issues/08](issues/08-live-model-harness-pilot.md) and
+  [pilot/report.md](pilot/report.md). No Ticket was flipped to done.
