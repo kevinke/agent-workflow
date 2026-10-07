@@ -124,13 +124,24 @@ python <KIT>\scripts\ai-workflow\main.py init $T
 
 Set-Location $T
 
-# --- Bug ticket, on its OWN branch (create+switch BEFORE its start/commit) ---
+# === BUG ticket, on its OWN branch: branch -> start -> baseline commit ===
+# create+switch branch BEFORE start and BEFORE the baseline commit
 git -C $T checkout -b pilot/bug
 python <KIT>\scripts\ai-workflow\main.py start PILOT-BUG-01 --title "bug: read after config change"
+# copy the fixture and record the task base (stable observed_commit) on pilot/bug
+Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
+Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\demo.py    $T\demo.py
+git -C $T add service.py demo.py
+git -C $T commit -q -m "pilot: add scout-fixture baseline"
 
-# --- Feature ticket, on its OWN branch (create+switch BEFORE its work) ---
+# === FEATURE ticket, on its OWN branch: branch -> start -> baseline commit ===
+# create+switch branch BEFORE start and BEFORE the baseline commit
 git -C $T checkout -b pilot/feat
 python <KIT>\scripts\ai-workflow\main.py start PILOT-FEAT-01 --title "feature: CachedValue.reload(config)"
+# feature only needs service.py
+Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
+git -C $T add service.py
+git -C $T commit -q -m "pilot: add scout-fixture baseline"
 ```
 
 Two Tickets on two branches keep bug and feature from interfering:
@@ -138,33 +149,21 @@ Two Tickets on two branches keep bug and feature from interfering:
 - Bug: branch `pilot/bug`, Ticket `PILOT-BUG-01`.
 - Feature: branch `pilot/feat`, Ticket `PILOT-FEAT-01`.
 
-Switch points (do not infer them — follow these exactly):
+Switch points (do not infer them — follow these exactly; the code block above
+already runs them in order):
 
-1. `git -C $T checkout -b pilot/bug` runs **before** `start PILOT-BUG-01` and
-   **before** the bug baseline commit (below), so the bug work and its baseline
-   commit land on `pilot/bug`, not on the default branch.
-2. `git -C $T checkout -b pilot/feat` runs **before** `start PILOT-FEAT-01` and
-   before any feature work, so the feature work and its baseline commit land on
-   `pilot/feat`.
-3. `checkout -b` creates and switches in one step. Each Ticket therefore gets its
-   own branch and its own baseline commit; never run both `start`s on one branch.
-
-Copy the fixture into the target root **on that Ticket's branch**, and commit it
-as the task's base so anchors have a stable `observed_commit`. Do this once per
-branch, immediately after the matching `checkout -b` above:
-
-```powershell
-# on pilot/bug (bug baseline)
-Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
-Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\demo.py    $T\demo.py
-git -C $T add service.py demo.py
-git -C $T commit -q -m "pilot: add scout-fixture baseline"
-
-# later, after `git -C $T checkout -b pilot/feat` (feature baseline)
-Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
-git -C $T add service.py
-git -C $T commit -q -m "pilot: add scout-fixture baseline"
-```
+1. Bug: `git -C $T checkout -b pilot/bug` runs **before** `start PILOT-BUG-01`
+   and **before** the bug baseline commit, so `start`'s files and the baseline
+   commit both land on `pilot/bug`.
+2. Feature: `git -C $T checkout -b pilot/feat` runs **before**
+   `start PILOT-FEAT-01` and **before** the feature baseline commit, so both land
+   on `pilot/feat`. It switches away from `pilot/bug`, whose baseline commit is
+   already recorded at that point.
+3. Each Ticket block is self-contained (`branch -> start -> baseline commit`), so
+   HEAD is on the correct branch at every step; never run both `start`s on one
+   branch.
+4. To resume the bug's work later, switch back explicitly:
+   `git -C $T checkout pilot/bug` (or `git -C $T switch pilot/bug`).
 
 Artifacts are written under `.ai/work/<ticket-id>/` (verified: `start` created
 `state.yaml`, `evidence.md`, `handoff.md`, `progress.md`; `decision.md`,
