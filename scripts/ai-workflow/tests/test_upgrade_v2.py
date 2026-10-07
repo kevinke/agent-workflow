@@ -216,6 +216,21 @@ class UpgradeTicketV2Test(V2CLITestCase):
                 self.assertFalse(cleared["escalation"]["required"])
                 self.assertFalse(cleared["upgrade"]["requires_reconstruction"])
 
+    def test_escalated_or_abandoned_status_rejected_unchanged(self):
+        for status in ("escalation_required", "abandoned"):
+            with self.subTest(status=status):
+                self.seed_v1("implementation")
+                data = self.read_state()
+                data["status"] = status
+                self.write_state(data)
+                before = self.state_bytes()
+                proc = self._upgrade_ticket()
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+                self.assertIn(status, proc.stderr)
+                self.assertEqual(self.state_bytes(), before)
+                self.assertEqual(self.read_state()["workflow_version"], 1)
+
     # -- step 4: retained-phase reconstruction -------------------------------
 
     def test_reconstruct_implementation_without_fake_history(self):

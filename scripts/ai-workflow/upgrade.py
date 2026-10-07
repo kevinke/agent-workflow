@@ -33,6 +33,12 @@ __all__ = ["upgrade", "upgrade_ticket", "UpgradeError",
 
 _WORK_DIR_REL = os.path.join(".ai", "work")
 
+# The only v1 Statuses the explicit conversion accepts. `active`, `paused` and
+# `blocked` are live, reconstructible work; a ticket that has already escalated
+# must have that block resolved first, and an `abandoned` ticket has no routine
+# work to reconstruct.
+_CONVERTIBLE_STATUSES = frozenset({"active", "paused", "blocked"})
+
 # Recorded reason/route for the reconstruction escalation created on conversion.
 # Kept free of the restricted-YAML-reserved characters so it round-trips plainly.
 _RECONSTRUCTION_REASON = ("workflow reconstruction required for this converted "
@@ -161,8 +167,9 @@ def upgrade_ticket(root, ticket_id):
 
     Returns a confirmation line. An already-v2 Ticket is a byte-preserving
     no-op. A historical `done` v1 Ticket, an uninterpretable version
-    (bool/zero/future), a state too malformed to reconstruct, or a missing
-    ticket is rejected unchanged (raising UpgradeError).
+    (bool/zero/future), a Status that is not active/paused/blocked (an already
+    escalated or abandoned Ticket), a state too malformed to reconstruct, or a
+    missing ticket is rejected unchanged (raising UpgradeError).
     """
     path = _ticket_state_path(root, ticket_id)
     if not os.path.isfile(path):
@@ -188,6 +195,14 @@ def upgrade_ticket(root, ticket_id):
         raise UpgradeError(
             "cannot upgrade %s: state is too malformed to reconstruct (phase=%r)"
             % (ticket_id, phase))
+
+    status = data.get("status")
+    if status not in _CONVERTIBLE_STATUSES:
+        raise UpgradeError(
+            "cannot upgrade %s: only an active, paused, or blocked v1 Ticket may "
+            "be converted (status=%r); resolve an existing escalation with "
+            "`escalate --clear --resolution` first, or leave an abandoned Ticket "
+            "as workflow_version 1" % (ticket_id, status))
 
     _convert_v1_to_v2(data)
     state.save_file(path, data)

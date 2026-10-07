@@ -244,22 +244,18 @@ def cmd_start(args, root):
 
 def cmd_upgrade(args, root):
     try:
-        updated, bumped = upgrade.upgrade(root)
+        updated, _ = upgrade.upgrade(root)
     except upgrade.UpgradeError as exc:
         sys.stderr.write("upgrade: %s\n" % exc)
         return 2
     installed = upgrade.installed_workflow_version(root)
-    if not updated and not bumped:
+    if not updated:
         print("nothing to do: protocol already at workflow_version %s (idempotent)."
               % installed)
         return 0
     print("upgraded protocol to workflow_version %s:" % upgrade.kit_workflow_version())
     for p in updated:
         print("  %s" % os.path.relpath(p, root))
-    if bumped:
-        print("bumped tickets:")
-        for t in bumped:
-            print("  %s" % t)
     return 0
 
 
