@@ -123,7 +123,13 @@ git -C $T config user.name  "Pilot"
 python <KIT>\scripts\ai-workflow\main.py init $T
 
 Set-Location $T
-python <KIT>\scripts\ai-workflow\main.py start PILOT-BUG-01  --title "bug: read after config change"
+
+# --- Bug ticket, on its OWN branch (create+switch BEFORE its start/commit) ---
+git -C $T checkout -b pilot/bug
+python <KIT>\scripts\ai-workflow\main.py start PILOT-BUG-01 --title "bug: read after config change"
+
+# --- Feature ticket, on its OWN branch (create+switch BEFORE its work) ---
+git -C $T checkout -b pilot/feat
 python <KIT>\scripts\ai-workflow\main.py start PILOT-FEAT-01 --title "feature: CachedValue.reload(config)"
 ```
 
@@ -132,13 +138,31 @@ Two Tickets on two branches keep bug and feature from interfering:
 - Bug: branch `pilot/bug`, Ticket `PILOT-BUG-01`.
 - Feature: branch `pilot/feat`, Ticket `PILOT-FEAT-01`.
 
-Copy the fixture into the target root on the branch that needs it, and commit it
-as the task's base so anchors have a stable `observed_commit`:
+Switch points (do not infer them — follow these exactly):
+
+1. `git -C $T checkout -b pilot/bug` runs **before** `start PILOT-BUG-01` and
+   **before** the bug baseline commit (below), so the bug work and its baseline
+   commit land on `pilot/bug`, not on the default branch.
+2. `git -C $T checkout -b pilot/feat` runs **before** `start PILOT-FEAT-01` and
+   before any feature work, so the feature work and its baseline commit land on
+   `pilot/feat`.
+3. `checkout -b` creates and switches in one step. Each Ticket therefore gets its
+   own branch and its own baseline commit; never run both `start`s on one branch.
+
+Copy the fixture into the target root **on that Ticket's branch**, and commit it
+as the task's base so anchors have a stable `observed_commit`. Do this once per
+branch, immediately after the matching `checkout -b` above:
 
 ```powershell
+# on pilot/bug (bug baseline)
 Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
 Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\demo.py    $T\demo.py
 git -C $T add service.py demo.py
+git -C $T commit -q -m "pilot: add scout-fixture baseline"
+
+# later, after `git -C $T checkout -b pilot/feat` (feature baseline)
+Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
+git -C $T add service.py
 git -C $T commit -q -m "pilot: add scout-fixture baseline"
 ```
 

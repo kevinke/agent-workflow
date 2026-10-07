@@ -19,7 +19,11 @@ exists.
 Concrete unverified access at the time of writing:
 
 - **User consent to spend external model quota** — not given for Task 1. Required
-  before Task 2 runs any real session.
+  before Task 2 runs any real session. **This is the blocker.**
+
+Record-only data gaps (non-blocking — they fill measurement fields at run time,
+they do not prevent the pilot from running once consent is given):
+
 - **codex (Harness B) model identity/tier** — UNKNOWN; pinning a model needs a
   session (`codex exec -m <model>`), which Task 1 must not run.
 - **Token/cost usage telemetry** — UNKNOWN for both Harnesses; would require a

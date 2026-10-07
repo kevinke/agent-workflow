@@ -70,5 +70,5 @@ manufacture a completed pilot.
   aider / cursor-agent / opencode. Host `python` 3.13.5, `git 2.45.1.windows.1`,
   CLI entry point `scripts/ai-workflow/main.py` (`--help` exit 0; `init`/`start`
   default to `workflow_version: 2`). No real model session was launched (only
-  availability probes). Pilot stays pending pending explicit user consent to spend
+  availability probes). Pilot stays pending on explicit user consent to spend
   external model quota; blocker recorded in [pilot/report.md](../pilot/report.md).
