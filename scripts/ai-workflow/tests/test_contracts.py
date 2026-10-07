@@ -162,6 +162,25 @@ class ContractReadTest(unittest.TestCase):
         problems = self._problems(text)
         self.assertTrue(any("Basis" in p for p in problems), problems)
 
+    def test_dangling_basis_reference(self):
+        text = self._valid().replace("### F-01 [FACT]", "### F-01 [INFERENCE]")
+        text = text.replace(
+            "**Scope:** the committed fixture only",
+            "**Basis:** F-99 supports the inference\n\n"
+            "**Scope:** the committed fixture only")
+        problems = self._problems(text)
+        self.assertTrue(any("Basis" in p and "F-99" in p for p in problems),
+                        problems)
+
+    def test_valid_basis_reference_has_no_problem(self):
+        text = self._valid().replace("### F-01 [FACT]", "### F-01 [INFERENCE]")
+        text = text.replace(
+            "**Scope:** the committed fixture only",
+            "**Basis:** F-01 supports the inference\n\n"
+            "**Scope:** the committed fixture only")
+        problems = self._problems(text)
+        self.assertFalse(any("Basis" in p for p in problems), problems)
+
     def test_unknown_answer_with_unknown_fact_link_is_allowed(self):
         text = self._valid().replace("**Answer:** ANSWERED", "**Answer:** UNKNOWN")
         text = text.replace("**Facts:** F-01", "**Facts:** UNKNOWN")

@@ -374,11 +374,14 @@ def validate_evidence(report, ticket_id):
                                 % (rec.get("id", "?"), ref))
     for rec in findings:
         fields = rec.get("fields") or {}
-        for label in ("Questions", "Basis"):
-            for ref in DQ_REF_RE.findall(fields.get(label) or ""):
-                if ref not in q_ids:
-                    problems.append("%s: %s references unknown question %s"
-                                    % (rec.get("id", "?"), label, ref))
+        for ref in DQ_REF_RE.findall(fields.get("Questions") or ""):
+            if ref not in q_ids:
+                problems.append("%s: Questions references unknown question %s"
+                                % (rec.get("id", "?"), ref))
+        for ref in F_REF_RE.findall(fields.get("Basis") or ""):
+            if ref not in f_ids:
+                problems.append("%s: Basis references unknown finding %s"
+                                % (rec.get("id", "?"), ref))
     return problems
 
 

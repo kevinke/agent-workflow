@@ -166,7 +166,7 @@ Reported structural problems include:
 - illegal IDs (DQ-NN / F-NN), missing or illegal finding tag, illegal
   `Method`/`Answer` values
 - empty values or bare `<placeholder>` stand-ins in required fields
-- dangling references: `Facts` naming an unknown F-ID, `Questions`/`Basis`
+- dangling references: `Facts`/`Basis` naming an unknown F-ID, `Questions`
   naming an unknown DQ-ID (an explicit `UNKNOWN` fact-link stays valid)
 - an `INFERENCE` finding without a `Basis`
 - a `code:` source with neither a line reference nor a named symbol/key
