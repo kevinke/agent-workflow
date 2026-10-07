@@ -231,6 +231,10 @@ def cmd_upgrade(args, root):
     return 0
 
 
+class _UsageError(Exception):
+    """A malformed argument (bad option value), reported as a usage error (exit 2)."""
+
+
 def _cmd_mutate(name, usage, args, root, known_opts, apply):
     """Shared driver for the semantic mutators: usage errors -> 2, rejected -> 1."""
     rest = args[1:]
@@ -244,6 +248,9 @@ def _cmd_mutate(name, usage, args, root, known_opts, apply):
         return 2
     try:
         print(apply(ticket_id, opts))
+    except _UsageError as exc:
+        sys.stderr.write("%s: %s\n" % (name, exc))
+        return 2
     except mutate.MutateError as exc:
         sys.stderr.write("%s: %s\n" % (name, exc))
         return 1
@@ -284,7 +291,12 @@ def cmd_set_gate(args, root):
         gate = opts.get("gate")
         if not gate:
             raise mutate.MutateError("--gate <sufficient|insufficient> is required")
-        round_no = int(opts["round"]) if opts.get("round") is not None else None
+        round_no = None
+        if opts.get("round") is not None:
+            raw = opts["round"]
+            if not raw.isdigit() or int(raw) <= 0:
+                raise _UsageError("--round must be a positive integer (got %r)" % raw)
+            round_no = int(raw)
         return mutate.set_gate(root, ticket_id, gate, round_no=round_no)
     return _cmd_mutate(
         "set-gate", "set-gate <ticket-id> --gate <g> [--round N]",

@@ -59,7 +59,7 @@ No other phase transitions exist. At `done`, `next_action` is cleared.
 | repository | map {base_commit, branch} | git anchor |
 | source_artifacts | map {spec: {path}, ticket: {path}, plan: {path}} | references only, never copies |
 | artifacts | map {evidence, evidence_audit, decision, progress, handoff} | artifact filenames |
-| evidence | map {round, gate} | gate: sufficient / insufficient |
+| evidence | map {round, gate[, report_sha256, audit_sha256]} | gate: sufficient / insufficient; the two hashes bind a v2 verdict to the audited bytes |
 | implementation | map {current_task, total_tasks, completed_tasks: []} | task progress |
 | escalation | map {required, scope, reason} | scope: machine / human |
 | claim | map {harness, model, claimed_at} | soft claim, advisory |
@@ -103,7 +103,29 @@ artifact grammar in `ARTIFACTS.md`:
 
 Structural validity is not proof that acceptance criteria passed; it checks
 required sections, IDs, references, tags, metadata and anchor presence only.
-This extension adds only version selection and structural validation; the
+
+## v2 Evidence Gate binding
+
+Recording a verdict with `set-gate` on a `workflow_version: 2` Ticket binds it to
+the audited bytes. The command validates the concrete reports and only then
+writes `evidence.round`, `evidence.gate`, `evidence.report_sha256` (SHA-256 of
+`evidence.md`) and `evidence.audit_sha256` (SHA-256 of `evidence-audit.md`):
+
+- It is allowed only in `evidence_audit`, or while a senior reconstruction is
+  recorded (`upgrade.requires_reconstruction`); otherwise it is rejected.
+- The Evidence must be a structurally valid report whose Metadata `round` is a
+  positive integer, and the CLI/`--round` value must name that same round.
+- The Audit must be structurally valid and its Metadata `gate`, `round` and
+  `evidence_sha256` must agree with the command and the current Evidence bytes.
+
+Once a sufficient verdict is bound, `advance` into a decisionward target
+(`technical_decision` onward) and `validate` both reject a gate whose recorded
+hashes no longer match the current `evidence.md` / `evidence-audit.md` (a stale
+binding). Re-auditing and re-running `set-gate` clears it. An insufficient verdict
+is expected to be superseded by the next follow-up round, so its aging binding is
+not treated as a blocker. Rejections change no State bytes and report the stale
+binding or the malformed report field. Version 1 Tickets keep the loose, unbound
+`evidence` block; `report_sha256`/`audit_sha256` are written only on v2. The
 remaining additive v2 State fields are introduced by later Tickets.
 
 ## Migration blocks (adopted repos only)

@@ -181,3 +181,14 @@ and are never treated as completed reports; from `evidence_audit` onward the
 present reports must be structurally valid. Structural validity is not proof
 that acceptance criteria passed.
 
+### Gate binding (workflow_version 2)
+
+Recording the verdict with `set-gate` binds it to the audited bytes: State gains
+`evidence.report_sha256` (SHA-256 of `evidence.md`) and `evidence.audit_sha256`
+(SHA-256 of `evidence-audit.md`), and the Audit's Metadata `evidence_sha256` must
+equal the current Evidence hash. The recorded `round` must name the Evidence
+Metadata round. Changing either artifact after a sufficient verdict makes the
+binding stale; `validate` and decisionward advances report the same blocker until
+the auditor re-audits and re-runs `set-gate`. Version 1 Tickets keep the loose,
+unbound gate.
+

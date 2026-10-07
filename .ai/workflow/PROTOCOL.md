@@ -69,7 +69,7 @@ A scout turns an engineering request into a bounded, traceable report:
 5. Stop when questions are answered or remaining gaps and the need for a new decision or resource are explicit. Write the stopping reason in the report's Handoff. An exhausted budget produces a partial report, not a successful investigation.
 6. The scout writes evidence and handoff only — never production changes, final decisions, or its own sufficiency verdict. Necessary temporary diagnostics are permitted; record their outcomes and residual changes.
 
-The evidence-auditor reads the report and answers the four sufficiency questions in evidence-audit.md, then records the gate. Report readiness and evidence sufficiency are distinct: a ready report with a critical UNKNOWN still leaves the Gate insufficient until the auditor decides otherwise.
+The evidence-auditor reads the report and answers the four sufficiency questions in evidence-audit.md, then records the gate. On a `workflow_version: 2` Ticket the recorded verdict is bound to the audited Evidence and its audit artifact: changing either after a sufficient verdict is recorded makes the gate stale, and `validate` and decisionward advances report the same blocker until the auditor re-audits and records the gate again. Report readiness and evidence sufficiency are distinct: a ready report with a critical UNKNOWN still leaves the Gate insufficient until the auditor decides otherwise.
 
 ## 8. Escalation
 

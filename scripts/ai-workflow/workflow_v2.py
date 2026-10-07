@@ -9,9 +9,38 @@ can convert them into ERROR Findings.
 
 import contracts
 
-__all__ = ["version", "problems", "SUPPORTED_VERSIONS"]
+__all__ = ["version", "problems", "check_transition", "next_action",
+           "TRANSITIONS", "NEXT_ACTIONS", "SUPPORTED_VERSIONS"]
 
 SUPPORTED_VERSIONS = (1, 2)
+
+# Allowed phase transitions, a literal encoding of STATE_SCHEMA.md. This is
+# the pure table shared by `mutate` and `validate`; the v2 gate/route checks
+# are layered on top by the callers.
+TRANSITIONS = {
+    "requirement": {"evidence_collection"},
+    "evidence_collection": {"evidence_audit"},
+    "evidence_audit": {"technical_decision", "followup_evidence"},
+    "followup_evidence": {"evidence_audit"},
+    "technical_decision": {"planning"},
+    "planning": {"implementation"},
+    "implementation": {"review"},
+    "review": {"done"},
+}
+
+# Route written into next_action when a ticket enters a phase. `done` clears
+# the block entirely. Kept here so both the mutator and validate share it.
+NEXT_ACTIONS = {
+    "requirement": ("workflow-bootstrap",
+                    "advance phase from requirement to evidence_collection"),
+    "evidence_collection": ("scout", "collect evidence into evidence.md"),
+    "evidence_audit": ("evidence-auditor", "audit evidence sufficiency"),
+    "followup_evidence": ("scout", "collect the missing evidence"),
+    "technical_decision": ("technical-decision", "write decision.md"),
+    "planning": ("executor-plan", "write the implementation plan"),
+    "implementation": ("ticket-executor", "implement current task"),
+    "review": ("checkpoint-handoff", "review and hand off"),
+}
 
 
 def version(data):
@@ -78,3 +107,34 @@ def problems(root, data):
         out.append("upgrade.from_version must be an integer")
 
     return out
+
+
+def check_transition(root, data, to):
+    """Validate a transition precondition; raise ContractError if illegal.
+
+    Shares the TRANSITIONS table with `validate`, so the v1 edges plus the v2
+    repair edge are checked the same way everywhere. `root` is part of the
+    planned interface but read-only checks need no repository access.
+    """
+    current = (data or {}).get("phase")
+    if current not in TRANSITIONS:
+        raise contracts.ContractError(
+            "cannot advance from phase %r (terminal or unknown)" % current)
+    if to not in TRANSITIONS[current]:
+        raise contracts.ContractError(
+            "illegal transition %s -> %s (allowed: %s)"
+            % (current, to, ", ".join(sorted(TRANSITIONS[current]))))
+
+
+def next_action(data, phase):
+    """The next_action block written when a ticket enters `phase`.
+
+    Always carries exactly the keys role/action/task; entering `done` clears the
+    block. Shared by the mutator and available to validate for route checks.
+    """
+    if phase == "done":
+        return {"role": None, "action": None, "task": None}
+    if phase not in NEXT_ACTIONS:
+        raise contracts.ContractError("no next action for phase %r" % phase)
+    role, action = NEXT_ACTIONS[phase]
+    return {"role": role, "action": action, "task": None}

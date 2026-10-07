@@ -28,7 +28,9 @@ A thin operational procedure. All business rules live in the protocol under
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
 7. Record the verdict:
    `ai-workflow set-gate <ticket-id> --gate <sufficient|insufficient> --round <N>`.
-   `<N>` is the number of evidence-collection rounds you audited.
+   `<N>` is the number of evidence-collection rounds you audited. The recorded
+   verdict binds to the audited artifacts: if either changes, re-audit and run
+   `set-gate` again (see `.ai/workflow/ARTIFACTS.md`).
 8. Do not advance the phase yourself: `ai-workflow advance` branches out of
    `evidence_audit` on the gate you just set (sufficient → `technical_decision`,
    insufficient → `followup_evidence`), and the checkpoint-handoff performs it.

@@ -63,6 +63,21 @@ def _validate_v2_artifacts(work_dir, ticket, data, filenames, phase, bad, warn):
     audit_path = os.path.join(
         work_dir, filenames.get("evidence_audit", "evidence-audit.md"))
 
+    # A sufficient verdict binds it to the audited artifact bytes; if either
+    # changed the binding is stale -- the same blocker decisionward advances hit.
+    # An insufficient verdict is meant to be superseded by the follow-up round,
+    # so its (necessarily aging) binding is not reported here.
+    if gate == "sufficient":
+        recorded = (
+            ("evidence.md", ev_path, evidence_block.get("report_sha256")),
+            ("evidence-audit.md", audit_path, evidence_block.get("audit_sha256")),
+        )
+        for label, path, expected in recorded:
+            if expected and os.path.exists(path):
+                if contracts.sha256_file(path) != expected:
+                    bad("%s changed since the evidence gate was recorded (stale "
+                        "binding: re-audit and set-gate again)" % label)
+
     if phase in _V2_PENDING_PHASES:
         # A scaffold is not a completed report: surface shape problems as
         # WARN so placeholders here are never structural failures.
