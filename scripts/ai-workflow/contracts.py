@@ -22,7 +22,7 @@ import re
 
 import parser
 
-__all__ = ["ContractError", "read_artifact", "sha256_file",
+__all__ = ["ContractError", "read_artifact", "read_plan", "sha256_file",
            "validate_evidence", "validate_audit"]
 
 
@@ -238,6 +238,189 @@ def read_artifact(path, kind):
     else:
         raise ContractError("unknown artifact kind %r" % kind)
     return {"metadata": metadata, "sections": sections, "records": records}
+
+
+# ---------------------------------------------------------------------------
+# Plan reader (registered execution contracts)
+# ---------------------------------------------------------------------------
+
+PLAN_TASK_FIELDS = [
+    "Objective", "Inputs", "Allowed changes", "Protected scope",
+    "Invariants", "Acceptance criteria", "Verification", "Dependencies",
+    "Escalation conditions",
+]
+
+_TASK_HEADING_RE = re.compile(r"^Task (\d+)$")
+
+
+def _scan_plan(text):
+    """Ordered H2 sections for a Plan, with nested H3 bodies and fences.
+
+    Like `_scan`, a heading inside a code fence is never a boundary. Unlike
+    `_scan`, the raw body of an H2 section keeps its nested H3 subheadings (so a
+    `Task N` section can be hashed and split into named fields), and repeated H3
+    labels across tasks are not treated as duplicate records. Returns
+    (order, bodies, fenced): the section headings in order, heading -> raw body
+    text (heading line included), and heading -> list of fenced blocks.
+    """
+    order = []
+    bodies = {}
+    fenced = {}
+    current = None
+    fence = None
+    fence_block = None
+    for line in text.splitlines():
+        m = _FENCE_RE.match(line)
+        if fence is not None:
+            if m and m.group(1).startswith(fence):
+                if current is not None and fence_block is not None:
+                    fenced.setdefault(current, []).append(fence_block)
+                fence = None
+                fence_block = None
+            elif fence_block is not None:
+                fence_block.append(line)
+            if current is not None:
+                bodies[current].append(line)
+            continue
+        if m:
+            fence = m.group(1)[0] * 3
+            fence_block = []
+            if current is not None:
+                bodies[current].append(line)
+            continue
+        h2 = _H2_RE.match(line)
+        if h2:
+            heading = h2.group(1).strip()
+            if heading in bodies:
+                raise ContractError("duplicate H2 heading %r" % heading)
+            bodies[heading] = [line]
+            order.append(heading)
+            current = heading
+            continue
+        if current is not None:
+            bodies[current].append(line)
+    return order, {h: "\n".join(lines) for h, lines in bodies.items()}, fenced
+
+
+def _plan_task_fields(body):
+    """Parse a `Task N` section body into H3 `heading -> body text` fields.
+
+    Fenced content is ignored (a heading inside a fence is not a boundary);
+    duplicate H3 headings within one task raise ContractError.
+    """
+    fields = {}
+    lines = body.split("\n")
+    label = None
+    fence = None
+    for line in lines[1:]:  # drop the H2 Task heading line
+        m = _FENCE_RE.match(line)
+        if fence is not None:
+            if m and m.group(1).startswith(fence):
+                fence = None
+            continue
+        if m:
+            fence = m.group(1)[0] * 3
+            continue
+        h3 = _H3_RE.match(line)
+        if h3:
+            label = h3.group(1).strip()
+            if label in fields:
+                raise ContractError("plan: duplicate field heading %r" % label)
+            fields[label] = ""
+            continue
+        if label is not None and line.strip():
+            fields[label] = (fields[label] + "\n" + line.strip()).strip("\n")
+    return fields
+
+
+def _justified_na(value):
+    text = (value or "").strip().lower()
+    return text.startswith("n/a") or text.startswith("not applicable") \
+        or text == "none"
+
+
+def _canonical_task_hash(section):
+    """SHA-256 of a task section: CRLF -> LF, trailing whitespace removed."""
+    normalised = section.replace("\r\n", "\n")
+    lines = [line.rstrip() for line in normalised.split("\n")]
+    return hashlib.sha256("\n".join(lines).rstrip().encode("utf-8")).hexdigest()
+
+
+def _check_plan_task(fields, number):
+    for name in PLAN_TASK_FIELDS:
+        if name not in fields:
+            raise ContractError(
+                "plan task %d: missing field heading %r" % (number, name))
+        if _is_placeholder(fields[name]):
+            raise ContractError(
+                "plan task %d: field %r is empty or a bare placeholder"
+                % (number, name))
+    deps = fields["Dependencies"]
+    if not _justified_na(deps):
+        for ref in re.findall(r"\d+", deps):
+            if int(ref) >= number:
+                raise ContractError(
+                    "plan task %d: dependency %s does not reference an earlier "
+                    "task" % (number, ref))
+
+
+def read_plan(path, ticket_id):
+    """Read a Plan artifact into an ordered list of task records.
+
+    Each record is {number: int, fields: dict[str, str], sha256: str}; the hash
+    is the canonical task-section digest (CRLF normalised, trailing whitespace
+    removed). Structural problems (missing file/Metadata/fields, a noncontiguous
+    or non-`Task N` heading order, a forward/self dependency, or a Metadata
+    `task_count` that disagrees with the sections) raise ContractError.
+    """
+    try:
+        with open(path, "rb") as fh:
+            text = fh.read().decode("utf-8")
+    except OSError as exc:
+        raise ContractError("cannot read %s: %s" % (path, exc))
+    except UnicodeDecodeError as exc:
+        raise ContractError("plan is not UTF-8: %s" % exc)
+
+    order, bodies, fenced = _scan_plan(text)
+    if "Metadata" not in bodies:
+        raise ContractError("plan: missing required H2 section 'Metadata'")
+    blocks = fenced.get("Metadata") or []
+    if not blocks:
+        raise ContractError("plan: Metadata section has no fenced yaml block")
+    md = _metadata_from_lines(blocks[0])
+    if md.get("artifact_type") != "plan":
+        raise ContractError(
+            "plan: Metadata artifact_type must be 'plan' (got %r)"
+            % md.get("artifact_type"))
+    if not _is_int(md.get("format_version")) or md.get("format_version") != 1:
+        raise ContractError("plan: Metadata format_version must be 1")
+    if md.get("ticket_id") != ticket_id:
+        raise ContractError(
+            "plan: Metadata ticket_id %r does not match %r"
+            % (md.get("ticket_id"), ticket_id))
+    if not _is_int(md.get("task_count")) or md.get("task_count") <= 0:
+        raise ContractError("plan: Metadata task_count must be a positive integer")
+
+    headings = [h for h in order if _TASK_HEADING_RE.match(h)]
+    if not headings:
+        raise ContractError("plan: no ordered 'Task N' H2 sections found")
+    records = []
+    for index, heading in enumerate(headings, start=1):
+        number = int(_TASK_HEADING_RE.match(heading).group(1))
+        if number != index:
+            raise ContractError(
+                "plan: task sections must be contiguous Task 1..Task N; found "
+                "%r at position %d" % (heading, index))
+        fields = _plan_task_fields(bodies[heading])
+        _check_plan_task(fields, number)
+        records.append({"number": number, "fields": fields,
+                        "sha256": _canonical_task_hash(bodies[heading])})
+
+    if md["task_count"] != len(records):
+        raise ContractError(
+            "plan: Metadata task_count %r does not match the %d task sections"
+            % (md["task_count"], len(records)))
+    return records
 
 
 # ---------------------------------------------------------------------------

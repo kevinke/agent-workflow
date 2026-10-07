@@ -43,16 +43,16 @@ Tier names ("cheap" / "senior") are guidance, not harness-specific model mandate
 - Tier: senior
 - Phase scope: planning
 - Inputs: decision.md
-- Outputs: implementation plan (referenced from `source_artifacts.plan`), state.yaml phase -> implementation
-- Rules: the plan decomposes the decision into ordered tasks; it is integrated by reference, never copied into `.ai/`.
+- Outputs: plan.md (`source_artifacts.plan`), then state.yaml phase -> implementation
+- Rules: the plan decomposes the decision into ordered, bounded tasks (`plan.md`); it is integrated by reference, never copied into `.ai/`. On a v2 Ticket register it with `register-plan <ticket-id> --path <plan> --total N`, which stores the path/hash and the ordered task hashes without counting any task complete.
 
 ## ticket-executor
 
 - Tier: cheap
 - Phase scope: implementation (bounded)
-- Inputs: plan, decision.md, evidence.md
+- Inputs: the registered Plan, decision.md, evidence.md
 - Outputs: code changes, progress.md, state.yaml implementation block updates, per-task commits
-- Rules: execute one task at a time; update `current_task` / `completed_tasks`; commit per task with the `ai-workflow(<ticket-id>): <action>` prefix; do not redesign — plan deviation goes to escalation.
+- Rules: execute one registered task at a time; update `current_task` / `completed_tasks`; commit per task with the `ai-workflow(<ticket-id>): <action>` prefix; do not redesign — an executor cannot select or rewrite a registered Plan, so plan deviation goes to escalation.
 
 ## checkpoint-handoff
 

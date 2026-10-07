@@ -7,6 +7,7 @@ All artifacts live under `.ai/work/<ticket-id>/`. Each has one writer role, an a
 | evidence.md | scout | Scout Report: Metadata, Decision Questions, Findings, Unknowns, Handoff; FACT / INFERENCE / UNKNOWN entries; important FACTs carry anchors | design proposals, the evidence verdict |
 | evidence-audit.md | evidence-auditor | sufficiency answers only | recommendations, designs |
 | decision.md | technical-decision (senior-only) | chosen approach, rejected alternatives, invariants, compatibility, API/schema decisions, risks, escalation boundaries | undecided design questions |
+| plan.md | executor-plan (senior-only) | ordered bounded tasks, each with objective, Fact/decision inputs, allowed and protected scope, invariants, acceptance criteria, verification, dependencies, escalation conditions | an executor-selected or redesigned task |
 | progress.md | ticket-executor | task-granularity log: completed task, files changed, tests run, deviation, open issues | every shell command |
 | handoff.md | checkpoint-handoff (or the departing agent) | fixed sections + Repository State block | unverified claims |
 
@@ -137,6 +138,42 @@ Written only by a senior model (technical-decision role). Contains:
 
 Adopted repos add a Provenance section recording only the still-valid API/schema/invariants/architecture (see MIGRATION.md).
 
+## plan.md (format_version=1)
+
+The Plan is the referenced execution contract, written by the senior
+`executor-plan` role and integrated by reference (`source_artifacts.plan`) — never
+copied into `.ai/`. It decomposes the decision into ordered, bounded tasks.
+
+Metadata lives in the first fenced yaml block under an exact H2 Metadata
+heading, with required fields: `artifact_type: plan`, `format_version: 1`,
+`ticket_id`, `task_count` (the number of ordered `Task N` sections).
+
+After Metadata, use ordered H2 `Task 1`, `Task 2`, … Each task carries named H3
+sections, in order:
+
+- **Objective** — one bounded step an executor can complete without inventing design
+- **Inputs** — referenced Fact IDs and the decision from `decision.md`
+- **Allowed changes** — the files or areas the executor may modify
+- **Protected scope** — behavior, interfaces, or data that must not change
+- **Invariants** — properties that must still hold
+- **Acceptance criteria** — observable conditions that make the task complete
+- **Verification** — exact commands and expected outcomes
+- **Dependencies** — earlier task numbers, or a justified `N/A`
+- **Escalation conditions** — what forces a senior decision instead of improvisation
+
+Dependency numbers must reference earlier tasks only; a forward or self
+dependency is invalid. A justified `N/A` (or `none`) is valid; a bare empty
+placeholder is not. Open architecture decisions prevent handing a task to an
+executor.
+
+On a `workflow_version: 2` Ticket, `register-plan <ticket-id> --path <plan>
+--total N` reads and validates the Plan, bounds its path to the repository,
+checks the declared count, and records `source_artifacts.plan.path` and
+`source_artifacts.plan.sha256` (the raw-byte hash) plus the ordered
+`implementation.task_hashes`. Registration is allowed only in `planning`, a
+recorded senior escalation resolution, or a strictly-appending
+`changes_requested` review; a rejected registration changes no State bytes.
+
 ## progress.md
 
 Execution log at task granularity: completed task, files changed, tests run, deviation from plan, open issues. Not every shell command.
@@ -175,6 +212,13 @@ Reported structural problems include:
 The Audit keeps exactly the four sufficiency-question H2s; its Metadata
 `round`/`gate` must match the State and CLI values, and `evidence_sha256` must
 be a SHA-256 digest.
+
+The Plan (see above) is validated as ordered `Task N` sections with the nine
+required H3 fields; contiguous task numbers, no forward/self dependency, and a
+`task_count` agreeing with the sections are required. Its per-task identity is
+the **canonical task hash**: SHA-256 of the task's section with CRLF changed to
+LF and trailing whitespace removed, so line-ending conversion alone does not
+rewrite registered history.
 
 Pending scaffold reports are only WARNed in `requirement`/`evidence_collection`
 and are never treated as completed reports; from `evidence_audit` onward the

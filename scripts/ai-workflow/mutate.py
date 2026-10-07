@@ -17,7 +17,7 @@ import workflow_v2
 
 __all__ = ["MutateError", "TRANSITIONS", "DEFAULT_NEXT",
            "advance", "claim", "complete_task", "set_gate", "escalate",
-           "set_status", "release"]
+           "set_status", "release", "register_plan"]
 
 _WORK_DIR_REL = os.path.join(".ai", "work")
 
@@ -247,6 +247,116 @@ def complete_task(root, ticket_id, total=None):
     data["implementation"] = impl
     _save(root, ticket_id, data)
     return "%s: task %d/%d complete" % (ticket_id, current, total_tasks)
+
+
+def _register_mode(data):
+    """Why register-plan is allowed here (or None): the spec's three contexts."""
+    if (data.get("upgrade") or {}).get("requires_reconstruction"):
+        return "reconstruction"
+    phase = data.get("phase")
+    if phase == "planning":
+        return "planning"
+    if phase == "review" and (data.get("review") or {}).get("verdict") \
+            == "changes_requested":
+        return "review"
+    return None
+
+
+def register_plan(root, ticket_id, path, total):
+    """Register a referenced execution Plan on a v2 Ticket (SCOUT-003).
+
+    Loads and structurally validates the Plan, bounds its path to the repository,
+    checks the declared task count, and records the reference, the Plan's byte
+    hash and the ordered canonical task hashes without counting any task
+    complete. Re-registration preserves the completed-task prefix and counter
+    history and is allowed only in planning, a recorded senior reconstruction, or
+    a strictly-appending changes_requested review. Every rejection leaves State
+    unchanged.
+    """
+    data = _load(root, ticket_id)
+    if workflow_v2.version(data) != 2:
+        raise MutateError(
+            "register-plan requires workflow_version 2 (this Ticket is v1; "
+            "upgrade it explicitly first)")
+    if not path:
+        raise MutateError("--path <plan> is required")
+    if os.path.isabs(path):
+        raise MutateError(
+            "plan path must be repository-relative, not absolute: %r" % path)
+    full = os.path.join(root, path)
+    if not os.path.exists(full):
+        raise MutateError("plan file does not exist: %r" % path)
+    real_root = os.path.realpath(root)
+    real_full = os.path.realpath(full)
+    if real_full != real_root and not real_full.startswith(real_root + os.sep):
+        raise MutateError("plan path escapes the repository root: %r" % path)
+
+    try:
+        tasks = contracts.read_plan(full, ticket_id)
+    except contracts.ContractError as exc:
+        raise MutateError("cannot register the Plan: %s" % exc)
+
+    if total is None:
+        raise MutateError("--total N is required")
+    try:
+        total = int(total)
+    except (TypeError, ValueError):
+        raise MutateError("--total must be a positive integer")
+    if total != len(tasks):
+        raise MutateError(
+            "declared total %d does not match the Plan's %d task sections"
+            % (total, len(tasks)))
+
+    mode = _register_mode(data)
+    if mode is None:
+        raise MutateError(
+            "register-plan is allowed only in planning, a recorded senior "
+            "escalation resolution, or changes_requested review append; "
+            "current phase=%r" % data.get("phase"))
+
+    impl = dict(data.get("implementation") or {})
+    current = impl.get("current_task", 0) or 0
+    if isinstance(current, bool) or not isinstance(current, int) or current < 0:
+        raise MutateError("implementation.current_task is not a non-negative integer")
+    old_hashes = impl.get("task_hashes") or []
+    if not isinstance(old_hashes, list):
+        raise MutateError("implementation.task_hashes must be a list")
+    old_hashes = [str(h) for h in old_hashes]
+
+    if len(tasks) < current:
+        raise MutateError(
+            "the new Plan has %d tasks but %d are already complete; a new total "
+            "cannot be less than the completed count" % (len(tasks), current))
+    if current and len(old_hashes) < current:
+        raise MutateError(
+            "implementation.task_hashes does not cover the %d completed tasks; "
+            "reconcile the registered Plan before re-registering" % current)
+    if current and [t["sha256"] for t in tasks[:current]] != old_hashes[:current]:
+        raise MutateError(
+            "cannot re-register: the contract of a completed task (1..%d) "
+            "changed; completed tasks must stay unchanged" % current)
+    if mode == "review" and len(tasks) <= len(old_hashes):
+        raise MutateError(
+            "changes_requested review rework must strictly append tasks "
+            "(registered %d, new Plan has %d)"
+            % (len(old_hashes), len(tasks)))
+
+    sources = dict(data.get("source_artifacts") or {})
+    plan_ref = dict(sources.get("plan") or {})
+    plan_ref["path"] = path
+    plan_ref["sha256"] = contracts.sha256_file(full)
+    sources["plan"] = plan_ref
+    data["source_artifacts"] = sources
+
+    impl["total_tasks"] = len(tasks)
+    impl["current_task"] = current
+    impl["completed_tasks"] = list(impl.get("completed_tasks") or [])
+    impl["task_hashes"] = [t["sha256"] for t in tasks]
+    data["implementation"] = impl
+
+    _save(root, ticket_id, data)
+    return "%s: registered plan %s (%d tasks, %d complete)" % (
+        ticket_id, path, len(tasks), current)
 
 
 def set_gate(root, ticket_id, gate, round_no=None):

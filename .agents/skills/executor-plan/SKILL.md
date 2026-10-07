@@ -19,16 +19,21 @@ A thin operational procedure. All business rules live in the protocol under
 3. Read `decision.md` (the source of the plan).
 4. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
-5. Write the implementation plan: an ordered decomposition of the decision into
-   concrete tasks, each executable by a cheap model within a bounded step.
-   Record the plan in `progress.md` (or a referenced docs file), declaring the
-   task count the executor will use.
-6. Advance:
+5. Write the implementation plan as `plan.md`: ordered `Task N` sections, each
+   with objective, Fact/decision inputs, allowed and protected scope,
+   invariants, acceptance criteria, verification, dependencies, and escalation
+   conditions (see `.ai/workflow/ARTIFACTS.md`).
+6. Register the plan on a `workflow_version: 2` Ticket:
+   `ai-workflow register-plan <ticket-id> --path <plan> --total N`.
+   Registration stores the reference and its hash plus the ordered task hashes
+   without counting any task complete. On a v1 Ticket skip this step and record
+   the task count in `progress.md` instead.
+7. Advance:
    `ai-workflow advance <ticket-id> --to implementation`.
-   The `ticket-executor` sets the task counters when it completes the first
-   task (`ai-workflow complete-task --total N`); you do not pre-set them.
-7. Write `handoff.md` before stopping (fixed sections + Repository State block).
-8. Commit per the protocol's commit discipline (phase-boundary commit).
+   The `ticket-executor` marks tasks complete
+   (`ai-workflow complete-task <ticket-id>`); you do not pre-set the counters.
+8. Write `handoff.md` before stopping (fixed sections + Repository State block).
+9. Commit per the protocol's commit discipline (phase-boundary commit).
 
 Do not implement the plan yourself; implementation belongs to the
 `ticket-executor` role.

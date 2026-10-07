@@ -57,10 +57,10 @@ No other phase transitions exist. At `done`, `next_action` is cleared.
 | phase | scalar | one of the phases above |
 | status | scalar | one of the lateral statuses above |
 | repository | map {base_commit, branch} | git anchor |
-| source_artifacts | map {spec: {path}, ticket: {path}, plan: {path}} | references only, never copies |
+| source_artifacts | map {spec: {path}, ticket: {path}, plan: {path[, sha256]}} | references only, never copies; on v2 the registered plan also records its raw-byte sha256 |
 | artifacts | map {evidence, evidence_audit, decision, progress, handoff} | artifact filenames |
 | evidence | map {round, gate[, report_sha256, audit_sha256]} | gate: sufficient / insufficient; the two hashes bind a v2 verdict to the audited bytes |
-| implementation | map {current_task, total_tasks, completed_tasks: []} | task progress |
+| implementation | map {current_task, total_tasks, completed_tasks: [], [, task_hashes: []]} | task progress; on v2 task_hashes is the ordered canonical hash of each registered task |
 | escalation | map {required, scope, reason} | scope: machine / human |
 | claim | map {harness, model, claimed_at} | soft claim, advisory |
 | next_action | map {role, action, task} | intended next step |
@@ -127,6 +127,28 @@ not treated as a blocker. Rejections change no State bytes and report the stale
 binding or the malformed report field. Version 1 Tickets keep the loose, unbound
 `evidence` block; `report_sha256`/`audit_sha256` are written only on v2. The
 remaining additive v2 State fields are introduced by later Tickets.
+
+## v2 Plan registration
+
+`register-plan <ticket-id> --path <plan> --total N` registers the referenced
+execution Plan on a `workflow_version: 2` Ticket. It reads and structurally
+validates the Plan (see `ARTIFACTS.md`), bounds the path to the repository
+(rejecting nonexistent, absolute, outside-root, and symlink-escaping paths),
+and checks the declared `--total` against the actual task count. It then writes:
+
+- `source_artifacts.plan.path` — the repository-relative path, as given
+- `source_artifacts.plan.sha256` — the SHA-256 of the Plan's raw bytes
+- `implementation.total_tasks` — the task count
+- `implementation.task_hashes` — the ordered canonical hash of each task
+
+It does **not** count any task complete: `current_task` stays the completed
+count and `completed_tasks` is preserved. Re-registration keeps the completed
+prefix and counter history and refuses a rewritten completed contract, a new
+total below the completed count, or a non-appending changes_requested review.
+Registration is allowed only in `planning`, a recorded senior reconstruction
+(`upgrade.requires_reconstruction`), or an appending `changes_requested` review.
+A v1 Ticket, or any other phase, is rejected. Every rejection leaves the State
+bytes unchanged with an actionable error.
 
 ## Migration blocks (adopted repos only)
 

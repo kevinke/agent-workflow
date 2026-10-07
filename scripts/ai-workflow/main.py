@@ -10,6 +10,7 @@ Usage:
     ai-workflow claim <ticket-id> [opts]
     ai-workflow release <ticket-id>
     ai-workflow complete-task <ticket-id> [--total N]
+    ai-workflow register-plan <ticket-id> --path <plan> --total N
     ai-workflow set-gate <ticket-id> --gate <g> [--round N]
     ai-workflow escalate <ticket-id> [opts]
     ai-workflow set-status <ticket-id> --status <s>
@@ -34,8 +35,8 @@ import upgrade
 import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
-            "release", "complete-task", "set-gate", "escalate", "set-status",
-            "install-skills", "upgrade"}
+            "release", "complete-task", "register-plan", "set-gate", "escalate",
+            "set-status", "install-skills", "upgrade"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
@@ -56,6 +57,7 @@ commands:
   claim <ticket-id> [--harness H] [--model M]   set the soft claim + provenance
   release <ticket-id>     clear the soft claim (provenance kept)
   complete-task <ticket-id> [--total N]  mark one implementation task done
+  register-plan <ticket-id> --path P --total N  register a referenced Plan (v2)
   set-gate <ticket-id> --gate G [--round N]  record evidence verdict (G: sufficient|insufficient)
   escalate <ticket-id> --scope S --reason "..." | --clear  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
@@ -286,6 +288,22 @@ def cmd_complete_task(args, root):
         args, root, {"--total"}, apply)
 
 
+def cmd_register_plan(args, root):
+    def apply(ticket_id, opts):
+        path = opts.get("path")
+        if not path:
+            raise mutate.MutateError("--path <plan> is required")
+        raw = opts.get("total")
+        if raw is None:
+            raise mutate.MutateError("--total N is required")
+        if not raw.isdigit() or int(raw) <= 0:
+            raise _UsageError("--total must be a positive integer (got %r)" % raw)
+        return mutate.register_plan(root, ticket_id, path, int(raw))
+    return _cmd_mutate(
+        "register-plan", "register-plan <ticket-id> --path <plan> --total N",
+        args, root, {"--path", "--total"}, apply)
+
+
 def cmd_set_gate(args, root):
     def apply(ticket_id, opts):
         gate = opts.get("gate")
@@ -381,6 +399,8 @@ def main(argv=None):
         return cmd_claim(argv, root)
     if cmd == "complete-task":
         return cmd_complete_task(argv, root)
+    if cmd == "register-plan":
+        return cmd_register_plan(argv, root)
     if cmd == "set-gate":
         return cmd_set_gate(argv, root)
     if cmd == "escalate":

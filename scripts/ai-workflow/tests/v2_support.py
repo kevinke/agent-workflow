@@ -176,6 +176,62 @@ def valid_audit(ticket_id, gate, round_no, evidence_sha256):
     }
 
 
+PLAN_HEADER = '''\
+# Plan - %(ticket)s
+
+## Metadata
+
+```yaml
+artifact_type: plan
+format_version: 1
+ticket_id: %(ticket)s
+task_count: %(count)d
+```
+
+'''
+
+PLAN_TASK = '''\
+## Task %(n)d
+
+### Objective
+Carry out bounded step %(n)d for the fixture.
+
+### Inputs
+F-01 decision recorded in decision.md.
+
+### Allowed changes
+src/app.py only.
+
+### Protected scope
+The public read() behavior of the fixture.
+
+### Invariants
+main() keeps returning 42.
+
+### Acceptance criteria
+Step %(n)d is observably complete and no protected behavior changed.
+
+### Verification
+Run `python -c "import app"` and expect exit status 0.
+
+### Dependencies
+%(deps)s
+
+### Escalation conditions
+Stop and escalate if the decision no longer covers this step.
+
+'''
+
+
+def valid_plan(ticket_id, total):
+    """A structurally valid Plan with `total` ordered, bounded tasks."""
+    parts = [PLAN_HEADER % {"ticket": ticket_id, "count": total}]
+    for n in range(1, total + 1):
+        deps = "N/A (first task)" if n == 1 else "Task 1"
+        parts.append(PLAN_TASK % {"n": n, "deps": deps})
+    return "".join(parts)
+
+
 class V2CLITestCase(unittest.TestCase):
     """Temporary-repo fixture driving the real CLI (cwd is the target repo)."""
 
@@ -265,6 +321,14 @@ class V2CLITestCase(unittest.TestCase):
             digest = hashlib.sha256(fh.read()).hexdigest()
         return self._write_artifact(
             "evidence-audit.md", valid_audit(self.TICKET, gate, round_no, digest))
+
+    def write_plan(self, total=1, name="plan.md"):
+        """Write a valid `total`-task Plan; return its repo-relative path."""
+        full = os.path.join(self.work, name)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(valid_plan(self.TICKET, total))
+        return os.path.relpath(full, self.root)
 
     # -- repository ------------------------------------------------------------------
 
