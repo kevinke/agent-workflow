@@ -65,3 +65,14 @@ CLI checks alone cannot establish the truth or usefulness of model-generated fac
   pending/blocked (see above). Per-issue `Status:` lines and acceptance-criteria
   boxes were left unchanged: this tracker documents no terminal `Status` value for
   `Type: task` tickets, so none was invented.
+- 2026-10-07 — SCOUT-008 **Task 2 executed, still pending.** Consent for external
+  model spend was given (5-session cap, option A). Real Harness-A sessions ran in a
+  disposable target: a cheap scout produced anchored evidence for the bug and the
+  feature, and a senior session audited, decided and registered a Plan for both;
+  both tickets reached `implementation` with clean `validate`. An independent
+  anchor/runtime re-check found no wrong anchors. **AC 2 is unmet:** three attempts
+  to drive Harness B (`codex-cli 0.160.0`) non-interactively were blocked by host
+  session policy, so no cross-Harness handoff could be persisted. The
+  executor/reviewer sessions were not run (budget exhausted). Real records archived
+  at [pilot/bug](pilot/bug/) and [pilot/feature](pilot/feature/); report at
+  [pilot/report.md](pilot/report.md). No acceptance criterion was checked.

@@ -1,0 +1,57 @@
+schema_version: 1
+workflow_version: 2
+ticket:
+  id: PILOT-FEAT-01
+  title: "feature: CachedValue.reload(config)"
+phase: implementation
+status: active
+repository:
+  base_commit: 2fee994c39b562b9676e8e098f190e2b8b022665
+  branch: pilot/feat
+source_artifacts:
+  spec:
+    path: null
+  ticket:
+    path: null
+  plan:
+    path: .scratch/PILOT-FEAT-01/plan.md
+    sha256: fab175916bc710e3cf5517abab0dbadf4b6e17b61de51d04145137064bac487e
+artifacts:
+  evidence: evidence.md
+  evidence_audit: evidence-audit.md
+  decision: decision.md
+  progress: progress.md
+  handoff: handoff.md
+  review: review.md
+evidence:
+  round: 1
+  gate: sufficient
+  report_sha256: 930cd02b9275ddabc786d5d88ee170247f7fa905d4ba66fbc9590eb54dc46d4b
+  audit_sha256: 8cc535552c3126e1ebdff44af49b3be9945de8d3d5178525015ae9d4447add9c
+implementation:
+  current_task: 0
+  total_tasks: 1
+  completed_tasks: []
+  task_hashes:
+    - 9063ea957a720252ac54b734e96fdec5f91025750f9766dac58902676c173294
+escalation:
+  required: false
+  scope: machine
+  reason: null
+claim:
+  harness: null
+  model: null
+  claimed_at: null
+next_action:
+  role: ticket-executor
+  action: implement current task
+  task: 1
+review:
+  verdict: pending
+  artifact_sha256: null
+  reviewed_commit: null
+  plan_sha256: null
+provenance:
+  last_harness: null
+  last_model: null
+updated_at: "2026-10-07T12:43:39+00:00"

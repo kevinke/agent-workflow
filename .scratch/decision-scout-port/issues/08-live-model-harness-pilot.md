@@ -7,11 +7,14 @@ Blocked by: 07
 Parent: [spec](../spec.md)
 Plan: [Implementation plan](../../../docs/superpowers/plans/2026-10-07-scout-08.md)
 
-Pilot status (observed, 2026-10-07): **pending** — Task 1 prepared the runbook and
-recorded prerequisites; the report remains pending and **no real model session has
-been run** (external-budget ruling). See [pilot/runbook.md](../pilot/runbook.md)
-and [pilot/report.md](../pilot/report.md). No acceptance criterion below is marked
-passed.
+Pilot status (observed, 2026-10-07): **pending** — consent was given and real
+Harness-A scout and senior sessions ran for both tasks (evidence, audit, decision
+and a registered Plan), but the required cross-Harness handoff could not be
+persisted because the `codex` CLI (Harness B) is blocked by host session policy;
+the executor/reviewer sessions were not run (session budget exhausted). See
+[pilot/runbook.md](../pilot/runbook.md) and [pilot/report.md](../pilot/report.md).
+No acceptance criterion below is marked passed. Real records are archived under
+[pilot/bug/](../pilot/bug/) and [pilot/feature/](../pilot/feature/).
 
 ## What to build
 
@@ -95,3 +98,22 @@ manufacture a completed pilot.
   does not apply because no runs produce no findings). Status stays as-is; **no
   acceptance criterion was checked**. Full report:
   `.superpowers/sdd/2026-10-07-scout-08/task-2-report.md`.
+- 2026-10-07 — **Task 2 executed (partially).** User consent for external model
+  spend was given (cap: 5 sessions, ~3 min each, option A). Real **Harness-A**
+  sessions ran in a disposable target (`%TEMP%\scout008-target`, two isolated
+  branches): a cheap **scout** wrote anchored `evidence.md` for both the bug and
+  the feature (`0504a25`, `d5234df`), and a senior session audited sufficiency,
+  wrote `decision.md`/`plan.md` and recorded `gate=sufficient` round 1 for both
+  (`a947051`, `b856779`). Both tickets reached `implementation` with a registered
+  Plan and clean `validate`. An independent re-check of every pivotal anchor
+  (`service.py:1-6`, `demo.py:1-18`) and the runtime claim (`python demo.py` →
+  `initial=1/configured=2/actual=1`, exit 0) found **no wrong anchors**. However
+  **AC 2 (cross-Harness handoff) is unmet**: three attempts to drive Harness B
+  (`codex-cli 0.160.0`) non-interactively were **blocked by host session policy**
+  (project trust allowlist excludes the temp target; `-c approval_policy`/trust
+  overrides failed). The executor and independent-reviewer sessions were **not
+  run** — the 5-session budget was exhausted by the scout + senior + 3 blocked
+  codex attempts. Observed friction: a byte-exact v2 gate plus `core.autocrlf=true`
+  forced `set-gate` re-attestation after branch switches. Result: **stays pending**;
+  no AC passed. Real records archived at [pilot/bug/](../pilot/bug/) and
+  [pilot/feature/](../pilot/feature/); full report at [pilot/report.md](../pilot/report.md).
