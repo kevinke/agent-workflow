@@ -15,6 +15,14 @@ Eight roles. Each role has a phase scope and a model tier. Model routing is enco
 
 Tier names ("cheap" / "senior") are guidance, not harness-specific model mandates. Typical cheap models: DS Flash, GLM Flash. Typical senior models: Terra, Sol. A harness maps these tiers to whatever models it can run.
 
+## Model routing and continuation
+
+Tiers are Harness-local defaults, not model mandates. The default mapping is cheap models for `scout` and `ticket-executor`, and senior models for `evidence-auditor`, `technical-decision`, `executor-plan`, and `reviewer`. A senior capability may also perform hard scouting or hard implementation when the difficulty warrants it.
+
+- Several logical phases may share one session (for example, a senior session that audits, decides, and plans). The `reviewer` keeps an independent context from the implementation it reviews.
+- A receiver continues from persisted state and artifacts, never from chat history: `ai-workflow resume <ticket-id>` prints the read-only continuation brief (next role / action / task, artifact identity and digests, repository state, and continuation checks). Point at reports; do not paste them.
+- When the required tools, a reproduction environment, or task clarity are missing, the role escalates (`ai-workflow escalate <ticket-id> --scope machine|human --reason "..."`). Claims stay advisory; this is not model-identity authentication and it assumes no subagent.
+
 ## scout
 
 - Tier: cheap

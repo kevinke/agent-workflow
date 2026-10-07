@@ -113,6 +113,29 @@ Before stopping work on a ticket:
 3. Run `ai-workflow validate`; no ERROR findings may remain. Any WARN findings are recorded in handoff.md.
 4. Leave the working tree interpretable: the next agent must be able to continue from `state.yaml` + `handoff.md` alone.
 
+### Portable continuation
+
+A receiver resumes from persisted state and artifacts, never from chat history:
+
+```
+ai-workflow resume <ticket-id>
+```
+
+prints a read-only brief with the Ticket, State (phase/status/gate/escalation),
+the next role/action/task, the repository branch/HEAD/dirty paths, the referenced
+artifacts and their digests, and the continuation checks. It exits `0` for a valid
+brief, `1` when the brief carries ERROR blockers or `state.yaml` cannot be read,
+and `2` for a usage error; a readable blocked Ticket still prints the brief
+(exit `1`). The command never writes `updated_at`, never claims the ticket, and
+never mutates a file — it points at reports rather than copying them.
+
+An Evidence report whose `observed_commit` is older than HEAD prompts a relevance
+assessment of its anchors; those facts are not automatically discarded. Review
+freshness follows the review checks in section 7. Version 1 Tickets print
+explicit notices for the newer contracts instead of an invented gate or a
+migration claim. Model tiers are Harness-local defaults (see ROLES.md); manual
+model/Harness switching is supported and no automatic dispatch is assumed.
+
 ## 10. Commits and rollback
 
 - Commit at every phase boundary; during implementation, commit per task.

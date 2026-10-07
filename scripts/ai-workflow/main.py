@@ -14,6 +14,7 @@ Usage:
     ai-workflow set-gate <ticket-id> --gate <g> [--round N]
     ai-workflow escalate <ticket-id> [opts]
     ai-workflow set-status <ticket-id> --status <s>
+    ai-workflow resume <ticket-id>
     ai-workflow install-skills [target]
     ai-workflow upgrade
 
@@ -29,6 +30,7 @@ import sys
 import adopt
 import init
 import mutate
+import resume
 import skills
 import start
 import status
@@ -37,7 +39,7 @@ import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
             "release", "complete-task", "register-plan", "set-gate", "escalate",
-            "set-status", "set-review", "install-skills", "upgrade"}
+            "set-status", "set-review", "resume", "install-skills", "upgrade"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
@@ -63,6 +65,7 @@ commands:
   set-review <ticket-id> --verdict V  record a Review verdict (V: pass|changes_requested)
   escalate <ticket-id> --scope S --reason "..." | --clear [--resolution TEXT]  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
+  resume <ticket-id>  print a read-only continuation brief (exit 1 on ERROR blockers)
   install-skills [target]  install the eight role skills into the target repo (idempotent)
   upgrade             explicit protocol upgrade using workflow_version
 """
@@ -130,6 +133,27 @@ def cmd_status(args, root):
         return 1
     print(status.status_for_ticket(root, ticket))
     return 0
+
+
+def cmd_resume(args, root):
+    """Read-only continuation brief: 0 valid, 1 ERROR blockers/unreadable, 2 usage."""
+    rest = args[1:]
+    if not rest or rest[0].startswith("--") or len(rest) > 1:
+        sys.stderr.write("usage: ai-workflow resume <ticket-id>\n")
+        return 2
+    ticket_id = rest[0]
+    tickets = status.list_tickets(root)
+    if ticket_id not in tickets:
+        sys.stderr.write("unknown ticket %r (have: %s)\n"
+                         % (ticket_id, ", ".join(tickets)))
+        return 1
+    try:
+        text = resume.resume_for_ticket(root, ticket_id)
+    except resume.ResumeError as exc:
+        sys.stderr.write("resume: %s\n" % exc)
+        return 1
+    print(text)
+    return 1 if resume.continuation_blocked(root, ticket_id) else 0
 
 
 def cmd_validate(args, root):
@@ -415,6 +439,8 @@ def main(argv=None):
         return cmd_install_skills(argv, root)
     if cmd == "status":
         return cmd_status(argv, root)
+    if cmd == "resume":
+        return cmd_resume(argv, root)
     if cmd == "validate":
         return cmd_validate(argv, root)
     if cmd == "adopt":

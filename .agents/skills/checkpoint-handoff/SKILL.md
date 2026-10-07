@@ -40,6 +40,15 @@ Phase transitions and handoff (see `.ai/workflow/ROLES.md`). Any model tier.
    files, test status). No unverified claims.
 9. Commit per the protocol's commit discipline (phase-boundary commit).
 
+## Continuing across sessions
+
+When the previous session's chat is gone, run `ai-workflow resume <ticket-id>`:
+it prints a read-only continuation brief (next role / action / task, artifact
+identity and digests, repository state, continuation checks). Read it before
+acting; it never writes state. Model tiers are Harness-local defaults
+(`.ai/workflow/ROLES.md`); if the tools or environment the brief assumes are
+missing, escalate rather than guess.
+
 ## Role boundary
 
 This is a mechanical role: it performs the transition mechanics and supplies no

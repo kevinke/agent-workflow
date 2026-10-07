@@ -10,10 +10,16 @@ import os
 import state
 import workflow_v2
 
-__all__ = ["status_for_ticket", "list_tickets", "WORK_DIR_REL"]
+__all__ = ["status_for_ticket", "list_tickets", "ticket_state_path",
+           "WORK_DIR_REL"]
 
 
 WORK_DIR_REL = os.path.join(".ai", "work")
+
+
+def ticket_state_path(root, ticket):
+    """The path to a ticket's state.yaml under `.ai/work/` (single source)."""
+    return os.path.join(root, WORK_DIR_REL, ticket, "state.yaml")
 
 
 def list_tickets(root):
@@ -49,7 +55,7 @@ def _fmt_task(data):
 
 
 def status_for_ticket(root, ticket):
-    path = os.path.join(root, WORK_DIR_REL, ticket, "state.yaml")
+    path = ticket_state_path(root, ticket)
     try:
         data = state.load_file(path)
     except state.StateError as exc:

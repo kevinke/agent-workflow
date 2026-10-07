@@ -31,6 +31,13 @@ authoritative workflow state. Follow the current phase and role in
 you need. Never redo completed phases. Update state.yaml and handoff.md before
 stopping.
 
+To continue without chat history, run `ai-workflow resume <ticket-id>`: it prints
+a read-only brief (next role / action / task, artifact identity, continuation
+checks). Model tiers are Harness-local defaults (Scout/executor cheap;
+auditor/decision/planner/Reviewer senior); a senior may also do hard scouting or
+implementation, decision phases may share a session, and review stays
+independent. Missing tools, environment, or task clarity are escalated.
+
 """ + END_MARKER
 
 
