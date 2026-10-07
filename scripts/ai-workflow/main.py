@@ -43,7 +43,7 @@ USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
 commands:
   init [target] [--with-skills]  install protocol + templates + AGENTS.md managed block
-      --with-skills             also install the seven role skills (optional, in place)
+      --with-skills             also install the eight role skills (optional, in place)
   status [ticket-id]  one-screen summary of a ticket (or the active ticket)
   validate [ticket-id] validate workflow state; ERROR -> non-zero exit
   start <ticket-id> [opts]  scaffold a new (greenfield) ticket from template
@@ -63,7 +63,7 @@ commands:
   set-review <ticket-id> --verdict V  record a Review verdict (V: pass|changes_requested)
   escalate <ticket-id> --scope S --reason "..." | --clear [--resolution TEXT]  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
-  install-skills [target]  install the seven role skills into the target repo (idempotent)
+  install-skills [target]  install the eight role skills into the target repo (idempotent)
   upgrade             explicit protocol upgrade using workflow_version
 """
 
@@ -111,7 +111,7 @@ def cmd_install_skills(args, root):
     target = args[1] if len(args) > 1 else root
     written = skills.install_skills(target)
     if not written:
-        print("nothing to do: the seven role skills are already current (idempotent).")
+        print("nothing to do: the eight role skills are already current (idempotent).")
         return 0
     print("installed skills into %s:" % target)
     for p in written:

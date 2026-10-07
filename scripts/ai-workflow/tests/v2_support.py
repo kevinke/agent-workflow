@@ -37,9 +37,21 @@ ROUTES = {
     "technical_decision": ("technical-decision", "write decision.md"),
     "planning": ("executor-plan", "write the implementation plan"),
     "implementation": ("ticket-executor", "implement current task"),
-    "review": ("checkpoint-handoff", "review and hand off"),
+    "review": ("reviewer", "review and hand off"),
     "done": (None, None),
 }
+
+DECISION_TEMPLATE = '''\
+# Decision - %(ticket)s
+
+## Chosen approach
+
+Implement the bounded fixture change described by F-01.
+
+## Invariants
+
+main() keeps returning 42.
+'''
 
 EVIDENCE_TEMPLATE = '''\
 # Evidence - %(ticket)s
@@ -381,6 +393,14 @@ class V2CLITestCase(unittest.TestCase):
         with open(full, "w", encoding="utf-8", newline="") as fh:
             fh.write(valid_plan(self.TICKET, total))
         return os.path.relpath(full, self.root)
+
+    def write_decision(self, name="decision.md"):
+        """Write a concrete decision.md; return its repository-relative path.
+
+        `implementation -> review` requires decision.md on a v2 Ticket, so the
+        review lifecycle fixtures write it before the reviewed commit.
+        """
+        return self._write_artifact(name, DECISION_TEMPLATE % {"ticket": self.TICKET})
 
     def write_review(self, verdict, reviewed_commit=None, name="review.md"):
         """Write a concrete Review bound to the registered Plan and a commit.

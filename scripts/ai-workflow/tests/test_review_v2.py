@@ -18,18 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import contracts  # noqa: E402
 import review  # noqa: E402
-from v2_support import V2CLITestCase  # noqa: E402
+from v2_support import V2CLITestCase, valid_plan  # noqa: E402
 
 
 class ReviewV2Test(V2CLITestCase):
     # -- fixture helpers -----------------------------------------------------
 
-    def _seed_review(self, total=1, verdict="pass", reviewed_commit=None):
-        """Drive the public-command lifecycle into a bind-ready review phase.
-
-        Returns the reviewed commit (the committed, tree-clean HEAD that the
-        Review is written against).
-        """
+    def _seed_implementation(self, total=1):
+        """Reach a ready v2 implementation with a registered `total`-task Plan."""
         self.seed_v2("evidence_audit")
         self.write_evidence(round_no=1)
         self.write_audit(gate="sufficient", round_no=1)
@@ -45,11 +41,24 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         proc = self.cli("advance", self.TICKET, "--to", "implementation")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return plan
 
+    def _seed_review(self, total=1, verdict="pass", reviewed_commit=None):
+        """Drive the public-command lifecycle into a bind-ready review phase.
+
+        Returns the reviewed commit (the committed, tree-clean HEAD that the
+        Review is written against). `decision.md` is written by the senior role
+        and committed before that reviewed commit: implementation -> review now
+        requires it on a v2 Ticket.
+        """
+        self._seed_implementation(total)
+        self.write_decision()
         # The code under review, committed while in implementation.
         self.commit_code("src/feature.py", "def feature():\n    return 1\n")
-        proc = self.cli("complete-task", self.TICKET, "--total", str(total))
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        for _ in range(total):
+            proc = self.cli("complete-task", self.TICKET,
+                            "--total", str(total))
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         proc = self.cli("advance", self.TICKET, "--to", "review")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
@@ -86,6 +95,19 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
         self.assertEqual(self.state_bytes(), before)
+
+    def _bind(self, verdict):
+        proc = self.cli("set-review", self.TICKET, "--verdict", verdict)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def _append_and_repair(self, total):
+        """Append rework up to `total` tasks, then return to implementation."""
+        plan = self.write_plan(total)
+        proc = self.cli("register-plan", self.TICKET, "--path", plan,
+                        "--total", str(total))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     # -- happy path ----------------------------------------------------------
 
@@ -259,6 +281,231 @@ class ReviewV2Test(V2CLITestCase):
         proc = self.cli("set-review", spaced, "--verdict", "pass")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.read_state()["review"]["verdict"], "pass")
+
+    # -- v2 routing ----------------------------------------------------------
+
+    def test_review_routes_to_reviewer(self):
+        self._seed_review()
+        data = self.read_state()
+        self.assertEqual(data["next_action"]["role"], "reviewer")
+
+    # -- completion guards: implementation -> review -------------------------
+
+    def test_enter_review_requires_all_tasks_complete(self):
+        self._seed_implementation(2)
+        self.write_decision()
+        self.commit_code("src/feature.py", "def feature():\n    return 1\n")
+        self.assertEqual(
+            self.cli("complete-task", self.TICKET, "--total", "2").returncode, 0)
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "review")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_enter_review_requires_decision_artifact(self):
+        self._seed_implementation(1)
+        # decision.md is deliberately omitted; it is now required before review.
+        self.commit_code("src/feature.py", "def feature():\n    return 1\n")
+        self.assertEqual(self.cli("complete-task", self.TICKET).returncode, 0)
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "review")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    # -- completion guards: review -> done -----------------------------------
+
+    def test_done_requires_current_pass(self):
+        self._seed_review()  # review.md written but no verdict recorded
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_code_change_after_pass_blocks_done(self):
+        self._seed_review()
+        self._bind("pass")
+        self.commit_code("src/other_module.py", "def other():\n    return 0\n")
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_review_artifact_change_after_pass_blocks_done(self):
+        self._seed_review()
+        self._bind("pass")
+        self._append_file(os.path.join(self.work, "review.md"),
+                          "\n<!-- edited after verdict -->\n")
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_workflow_only_commit_still_permits_done(self):
+        self._seed_review()
+        self._bind("pass")
+        self._append_file(os.path.join(self.work, "progress.md"),
+                          "\n- task 1 complete\n")
+        self.assertEqual(
+            self._git("add", ".ai/work/T1/progress.md").returncode, 0)
+        commit = self._git("commit", "-q", "-m", "fixture: progress only")
+        self.assertEqual(commit.returncode, 0, commit.stderr)
+
+        proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.read_state()["phase"], "done")
+
+    def test_done_is_not_reopened(self):
+        self._seed_review()
+        self._bind("pass")
+        self.assertEqual(
+            self.cli("advance", self.TICKET, "--to", "done").returncode, 0)
+        attempts = (
+            ["advance", self.TICKET, "--to", "review"],
+            ["advance", self.TICKET, "--to", "implementation"],
+            ["complete-task", self.TICKET],
+            ["set-review", self.TICKET, "--verdict", "pass"],
+        )
+        for args in attempts:
+            with self.subTest(cmd=" ".join(args[:2])):
+                before = self.state_bytes()
+                proc = self.cli(*args)
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertEqual(self.state_bytes(), before)
+
+    # -- append-only repair --------------------------------------------------
+
+    def test_repair_preserves_completed_prefix(self):
+        self._seed_review(total=1, verdict="changes_requested")
+        self._bind("changes_requested")
+        self._append_and_repair(2)
+
+        data = self.read_state()
+        self.assertEqual(data["phase"], "implementation")
+        self.assertEqual(data["implementation"]["current_task"], 1)
+        self.assertEqual(data["implementation"]["completed_tasks"], [1])
+        self.assertEqual(data["next_action"]["role"], "ticket-executor")
+        self.assertEqual(data["next_action"]["task"], 2)
+        self.assertEqual(data["review"]["verdict"], "pending")
+
+        # Execute the appended task, then a fresh passing Review completes it.
+        self.commit_code("src/feature2.py", "def feature2():\n    return 2\n")
+        self.assertEqual(
+            self.cli("complete-task", self.TICKET, "--total", "2").returncode, 0)
+        self.assertEqual(
+            self.cli("advance", self.TICKET, "--to", "review").returncode, 0)
+        self.write_review("pass")
+        self._bind("pass")
+        proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.read_state()["phase"], "done")
+
+    def test_pass_cannot_repair(self):
+        self._seed_review(verdict="pass")
+        self._bind("pass")
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_repair_requires_appended_task(self):
+        self._seed_review(verdict="changes_requested")
+        self._bind("changes_requested")
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_repair_rejects_stale_failed_review(self):
+        self._seed_review(verdict="changes_requested")
+        self._bind("changes_requested")
+        plan = self.write_plan(2)
+        self.assertEqual(
+            self.cli("register-plan", self.TICKET, "--path", plan,
+                     "--total", "2").returncode, 0)
+        self._append_file(os.path.join(self.work, "review.md"),
+                          "\n<!-- edited after verdict -->\n")
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_repair_rejects_completed_prefix_edit(self):
+        self._seed_review(verdict="changes_requested")
+        self._bind("changes_requested")
+        rel = os.path.join(".ai", "work", self.TICKET, "plan.md")
+        changed = valid_plan(self.TICKET, 2).replace(
+            "Carry out bounded step 1 for the fixture.",
+            "REDESIGNED: do something else entirely.")
+        self._write_file(rel, changed)
+        before = self.state_bytes()
+        proc = self.cli("register-plan", self.TICKET, "--path", rel,
+                        "--total", "2")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_second_repair_cycle(self):
+        self._seed_review(total=1, verdict="changes_requested")
+        self._bind("changes_requested")
+        self._append_and_repair(2)
+
+        self.commit_code("src/feature2.py", "def feature2():\n    return 2\n")
+        self.assertEqual(
+            self.cli("complete-task", self.TICKET, "--total", "2").returncode, 0)
+        self.assertEqual(
+            self.cli("advance", self.TICKET, "--to", "review").returncode, 0)
+        self.write_review("changes_requested")
+        self._bind("changes_requested")
+        self._append_and_repair(3)
+
+        data = self.read_state()
+        self.assertEqual(data["implementation"]["current_task"], 2)
+        self.assertEqual(data["implementation"]["completed_tasks"], [1, 2])
+        self.assertEqual(data["next_action"]["task"], 3)
+        self.assertEqual(data["review"]["verdict"], "pending")
+
+    def test_escalation_blocks_repair(self):
+        self._seed_review(verdict="changes_requested")
+        self._bind("changes_requested")
+        plan = self.write_plan(2)
+        self.assertEqual(
+            self.cli("register-plan", self.TICKET, "--path", plan,
+                     "--total", "2").returncode, 0)
+        self.assertEqual(
+            self.cli("escalate", self.TICKET, "--scope", "machine",
+                     "--reason", "design change needs a senior").returncode, 0)
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    # -- validate agreement --------------------------------------------------
+
+    def test_validate_reports_done_without_pass(self):
+        self._seed_review()  # no verdict recorded
+        data = self.read_state()
+        data["phase"] = "done"
+        data["next_action"] = {"role": None, "action": None, "task": None}
+        self.write_state(data)
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("review.verdict", proc.stdout)
+
+    def test_validate_reports_stale_pass_binding(self):
+        self._seed_review()
+        self._bind("pass")
+        self._append_file(os.path.join(self.work, "review.md"),
+                          "\n<!-- edited after verdict -->\n")
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("Review artifact changed", proc.stdout)
+
+    def test_validate_accepts_repair_intermediate_state(self):
+        self._seed_review(total=1, verdict="changes_requested")
+        self._bind("changes_requested")
+        self._append_and_repair(2)
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("validate: OK", proc.stdout)
 
 
 if __name__ == "__main__":

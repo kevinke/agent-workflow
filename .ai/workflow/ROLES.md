@@ -1,6 +1,6 @@
 # Roles
 
-Seven roles. Each role has a phase scope and a model tier. Model routing is encoded here: cheap models collect evidence and execute bounded implementation; senior models audit uncertainty, decide, plan, handle escalations, and review.
+Eight roles. Each role has a phase scope and a model tier. Model routing is encoded here: cheap models collect evidence and execute bounded implementation; senior models audit uncertainty, decide, plan, handle escalations, and review.
 
 | Role | Model tier | Phase scope |
 |---|---|---|
@@ -9,6 +9,7 @@ Seven roles. Each role has a phase scope and a model tier. Model routing is enco
 | technical-decision | senior | technical_decision |
 | executor-plan | senior | planning |
 | ticket-executor | cheap | implementation (bounded) |
+| reviewer | senior (independent context) | review |
 | checkpoint-handoff | any | phase transitions, handoff |
 | workflow-bootstrap | senior | legacy adoption |
 
@@ -54,13 +55,21 @@ Tier names ("cheap" / "senior") are guidance, not harness-specific model mandate
 - Outputs: code changes, progress.md, state.yaml implementation block updates, per-task commits
 - Rules: execute one registered task at a time; update `current_task` / `completed_tasks`; commit per task with the `ai-workflow(<ticket-id>): <action>` prefix; do not redesign — an executor cannot select or rewrite a registered Plan, so plan deviation goes to escalation.
 
+## reviewer
+
+- Tier: senior default, in an independent context (not the context that wrote the change)
+- Phase scope: review
+- Inputs: state.yaml, the registered Plan (by reference), decision.md, the actual change and its verification records
+- Outputs: review.md, the recorded verdict via `set-review` in state.yaml
+- Rules: independently verify the acceptance criteria against the actual change and the recorded verification results; record `pass` or `changes_requested`; local repairs stay within the recorded decision and design/architecture changes escalate. On v2, `review -> implementation` is the append-only repair after `changes_requested`; `review -> done` requires a current `pass`. Mechanical checkpoint-handoff cannot supply this verdict.
+
 ## checkpoint-handoff
 
 - Tier: any
 - Phase scope: phase transitions, handoff
 - Inputs: state.yaml, artifacts
 - Outputs: handoff.md, updated state.yaml
-- Rules: verify state consistency before a transition; ensure validate-clean before handoff; write handoff.md with the fixed sections and the Repository State block.
+- Rules: mechanical — verify state consistency before a transition; ensure validate-clean before handoff; write handoff.md with the fixed sections and the Repository State block. It supplies no technical verdict: on a v2 Ticket `review` routes to the independent reviewer, not here.
 
 ## workflow-bootstrap
 

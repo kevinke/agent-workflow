@@ -207,6 +207,14 @@ unchanged. Only this Ticket's own `state.yaml`, `progress.md`, `handoff.md`, and
 `review.md` are exempt from the code-drift check. Structural validity is not
 proof that acceptance criteria passed.
 
+A `pass` completes the ticket only while it is current: `review -> done` is
+rejected once the Review artifact, the registered Plan, or the reviewed code
+changes. A `changes_requested` is repaired append-only — the senior registers an
+appending rework Plan (`register-plan`) and `review -> implementation` clears the
+failed verdict to `pending`, preserving the completed prefix and routing to the
+first appended task. The recorded Review must be unchanged for that repair; a
+stale failed Review is re-recorded, not reused.
+
 ## progress.md
 
 Execution log at task granularity: completed task, files changed, tests run, deviation from plan, open issues. Not every shell command.

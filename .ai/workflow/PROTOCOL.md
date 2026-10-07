@@ -38,6 +38,8 @@ UNINITIALIZED -> REQUIREMENT -> EVIDENCE_COLLECTION -> EVIDENCE_AUDIT
 
 In `state.yaml`, phases are lowercase: `requirement`, `evidence_collection`, `evidence_audit`, `followup_evidence`, `technical_decision`, `planning`, `implementation`, `review`, `done`.
 
+On a `workflow_version: 2` Ticket there is one additional edge: `review -> implementation`, the append-only repair path taken after a `changes_requested` Review. It is not available to v1 Tickets.
+
 Lateral statuses are orthogonal to phase and are never merged into it: `active`, `blocked`, `escalation_required`, `paused`, `abandoned`.
 
 A phase changes only via the transitions above. Do not invent transitions.
@@ -82,6 +84,17 @@ On a `workflow_version: 2` Ticket an executor may not enter `implementation` or 
 - an active ticket — `blocked`, `paused`, `abandoned`, or `escalation_required` Status may not execute.
 
 When the State marks the repo as adopted (`migration.adopted_existing_repo`), the `adoption_checkpoint` must carry all six confirmation booleans as true — `continuation_safe` included — before an executor proceeds; an adopted but unconfirmed ticket is rejected. `validate` reports the same problems as ERROR findings in `implementation`, `review`, and `done`. Version 1 Tickets are unaffected: every one of these conditions is v2-only. `complete-task` requires `implementation` and the current registered Plan on v2; its optional `--total` cannot override the registered count (a disagreeing value is rejected, not written), and on completion the explicit `next_action.task` is refreshed.
+
+### Review and completion (workflow_version 2)
+
+On a `workflow_version: 2` Ticket the Reviewer owns the Review in an independent context (senior default): it reads `decision.md` and the registered Plan, independently verifies the acceptance criteria against the actual change and the recorded verification results, writes `review.md` (see ARTIFACTS.md), and records the verdict with `set-review`. A mechanical checkpoint-handoff alone cannot supply the technical verdict, so in `review` the route is `reviewer`, not `checkpoint-handoff`.
+
+Completion is gated:
+
+- entering `review` requires a genuinely finished implementation — every registered task complete, the readiness conditions still satisfied, and the required artifacts (`evidence.md`, `evidence-audit.md`, `decision.md`, `handoff.md`) present;
+- `review -> done` requires a CURRENT passing Review — `review.verdict == "pass"`, the bound Review artifact unchanged, the bound `plan_sha256` still matching the registered Plan, and no code drift since the reviewed commit. A missing verdict, `changes_requested`, or a stale binding is rejected; `done` is never silently reopened.
+
+A `changes_requested` Review is repaired append-only: the senior registers an appending rework Plan (`register-plan`), and `review -> implementation` clears the failed verdict to `pending` while preserving `current_task`, `completed_tasks`, and the completed task-hash prefix, routing to the first appended task. The repair requires the recorded Review to be unchanged and the reviewed code to still match; a design or architectural change is escalated, never improvised as rework.
 
 ### Counter meaning (both versions)
 

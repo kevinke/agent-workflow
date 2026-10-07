@@ -6,6 +6,8 @@ agents to call the CLI, never to hand-edit `state.yaml` state-machine fields
 (TICKET-011). This test locks that in.
 """
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -13,6 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import main  # noqa: E402
 import skills  # noqa: E402
 
 # this file: scripts/ai-workflow/tests/test_skills.py -> 4 levels up to kit root.
@@ -73,6 +76,32 @@ class SkillsLintTest(unittest.TestCase):
             self.assertIn(dst, written)
             with open(dst, encoding="utf-8") as fh:
                 self.assertNotEqual(fh.read(), "stale copy\n")
+
+    # -- the eight-skill bundle includes the Reviewer ------------------------
+
+    def test_kit_ships_eight_skills_including_reviewer(self):
+        self.assertEqual(len(skills.KIT_SKILLS), 8)
+        self.assertIn("reviewer", skills.KIT_SKILLS)
+        for name in skills.KIT_SKILLS:
+            self.assertTrue(
+                os.path.isfile(os.path.join(SKILLS_DIR, name, "SKILL.md")), name)
+
+    def test_install_skills_installs_reviewer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skills.install_skills(tmp)
+            self.assertTrue(os.path.isfile(os.path.join(
+                tmp, ".agents", "skills", "reviewer", "SKILL.md")))
+
+    def test_help_and_install_text_report_eight_role_skills(self):
+        self.assertIn("eight role skills", main.USAGE)
+        self.assertNotIn("seven", main.USAGE)
+        with tempfile.TemporaryDirectory() as tmp:
+            skills.install_skills(tmp)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = main.cmd_install_skills(["install-skills", tmp], tmp)
+            self.assertEqual(code, 0)
+            self.assertIn("eight role skills", buf.getvalue())
 
 
 if __name__ == "__main__":

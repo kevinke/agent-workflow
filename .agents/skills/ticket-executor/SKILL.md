@@ -37,5 +37,15 @@ A thin operational procedure. All business rules live in the protocol under
 9. When all tasks are complete, write `handoff.md` and report readiness for
    the `review` transition; otherwise write `handoff.md` before stopping.
 
+## Repair path
+
+After a `changes_requested` Review, `review -> implementation` returns the
+ticket here with the reviewer's rework registered as tasks appended beyond the
+completed prefix (`next_action.task` is the first appended task). Execute those
+appended tasks exactly as registered — the failed verdict is cleared to
+`pending` and the completed tasks are preserved, so do not redo or renumber
+them. Do not redesign: a rework that needs a design or architectural change is
+escalated per `.ai/workflow/ESCALATION.md`, not improvised.
+
 Do not change `decision.md`; do not advance the phase (`ai-workflow advance` is
 the checkpoint-handoff's job); do not invent work outside the current task.

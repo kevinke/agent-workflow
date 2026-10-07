@@ -14,7 +14,7 @@ import contracts
 __all__ = ["version", "problems", "check_transition", "next_action",
            "readiness_problems", "counter_problems", "executable_task",
            "is_nonneg_int", "escalated_next_action", "ADOPTION_CONFIRMATIONS",
-           "TRANSITIONS", "NEXT_ACTIONS", "ESCALATION_RESOLVERS",
+           "TRANSITIONS", "V2_TRANSITIONS", "NEXT_ACTIONS", "ESCALATION_RESOLVERS",
            "SUPPORTED_VERSIONS"]
 
 SUPPORTED_VERSIONS = (1, 2)
@@ -44,6 +44,13 @@ TRANSITIONS = {
     "review": {"done"},
 }
 
+# The v2-only repair edge, layered on top of the v1 base table. Everything here
+# is gated on `workflow_version == 2`; v1 keeps the frozen TRANSITIONS exactly.
+# `review -> implementation` is the append-only rework path (spec decision 6).
+V2_TRANSITIONS = {
+    "review": {"implementation"},
+}
+
 # Route written into next_action when a ticket enters a phase. `done` clears
 # the block entirely. Kept here so both the mutator and validate share it.
 NEXT_ACTIONS = {
@@ -57,6 +64,10 @@ NEXT_ACTIONS = {
     "implementation": ("ticket-executor", "implement current task"),
     "review": ("checkpoint-handoff", "review and hand off"),
 }
+
+# On a v2 Ticket `review` routes to the independent Reviewer instead of the
+# mechanical checkpoint-handoff; the v1 base table above is left untouched.
+V2_REVIEW_ROUTE = ("reviewer", "review and hand off")
 
 # Senior resolver for each escalated phase (spec decision 5). While a v2 ticket
 # is escalated, next_action locks to the phase's resolver; the requirement phase
@@ -102,6 +113,20 @@ def _is_int(value):
     return not isinstance(value, bool) and isinstance(value, int)
 
 
+def _data_version(data):
+    """The ticket's version, or 1 when it cannot be read (never raises).
+
+    The transition/route helpers are shared by `mutate` (which has already
+    rejected an unsupported version) and `validate` (which reports it as a
+    Finding), so an unreadable version degrades to the v1 base instead of
+    raising here.
+    """
+    try:
+        return version(data)
+    except contracts.ContractError:
+        return 1
+
+
 def problems(root, data):
     """Shared v2 State-shape problems; [] means the State shape is fine.
 
@@ -132,10 +157,17 @@ def problems(root, data):
             and not _is_int(implementation["current_task"]):
         out.append("implementation.current_task must be an integer")
 
-    review = data.get("review") or {}
-    if "verdict" in review and review["verdict"] is not None \
-            and review["verdict"] not in ("pending", "pass", "changes_requested"):
-        out.append("review.verdict must be pending|pass|changes_requested")
+    review = data.get("review")
+    if review is not None and not isinstance(review, dict):
+        out.append("review must be a map")
+    elif review:
+        if "verdict" in review and review["verdict"] is not None \
+                and review["verdict"] not in ("pending", "pass", "changes_requested"):
+            out.append("review.verdict must be pending|pass|changes_requested")
+        for key in ("artifact_sha256", "reviewed_commit", "plan_sha256"):
+            if key in review and review[key] is not None \
+                    and not isinstance(review[key], str):
+                out.append("review.%s must be a string or null" % key)
 
     upgrade = data.get("upgrade") or {}
     if "from_version" in upgrade and upgrade["from_version"] is not None \
@@ -156,10 +188,13 @@ def check_transition(root, data, to):
     if current not in TRANSITIONS:
         raise contracts.ContractError(
             "cannot advance from phase %r (terminal or unknown)" % current)
-    if to not in TRANSITIONS[current]:
+    allowed = set(TRANSITIONS[current])
+    if _data_version(data) == 2:
+        allowed |= V2_TRANSITIONS.get(current, set())
+    if to not in allowed:
         raise contracts.ContractError(
             "illegal transition %s -> %s (allowed: %s)"
-            % (current, to, ", ".join(sorted(TRANSITIONS[current]))))
+            % (current, to, ", ".join(sorted(allowed))))
 
 
 def next_action(data, phase):
@@ -172,6 +207,9 @@ def next_action(data, phase):
     """
     if phase == "done":
         return {"role": None, "action": None, "task": None}
+    if phase == "review" and _data_version(data) == 2:
+        role, action = V2_REVIEW_ROUTE
+        return {"role": role, "action": action, "task": None}
     if phase not in NEXT_ACTIONS:
         raise contracts.ContractError("no next action for phase %r" % phase)
     role, action = NEXT_ACTIONS[phase]

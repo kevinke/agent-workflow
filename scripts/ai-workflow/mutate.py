@@ -191,24 +191,187 @@ def _bind_v2_gate(root, ticket_id, data, gate, round_no):
             "audit_sha256": audit_sha256}
 
 
+_REVIEW_ENTRY_ARTIFACTS = (
+    ("evidence", "evidence.md"),
+    ("evidence_audit", "evidence-audit.md"),
+    ("decision", "decision.md"),
+    ("handoff", "handoff.md"),
+)
+
+
+def _require_review_entry(root, ticket_id, data):
+    """v2: entering `review` needs a ready, finished implementation.
+
+    Requires the execution-readiness conditions (a current registered Plan,
+    coherent counters, an active Status), every registered task complete, and
+    the required artifacts present (evidence, evidence-audit, decision,
+    handoff). Every failure is actionable and leaves State unchanged.
+    """
+    problems = workflow_v2.readiness_problems(root, ticket_id, data)
+    if problems:
+        raise MutateError("cannot enter review: %s" % "; ".join(problems))
+    impl = data.get("implementation") or {}
+    if workflow_v2.executable_task(impl) is not None:
+        raise MutateError(
+            "cannot enter review: not all registered tasks are complete "
+            "(implementation.current_task=%r of total_tasks=%r)"
+            % (impl.get("current_task"), impl.get("total_tasks")))
+    missing = [default for key, default in _REVIEW_ENTRY_ARTIFACTS
+               if not os.path.exists(
+                   _artifact_path(root, ticket_id, data, key, default))]
+    if missing:
+        raise MutateError(
+            "cannot enter review: missing required artifact(s) %s"
+            % ", ".join(missing))
+
+
+def _require_current_pass(root, ticket_id, data):
+    """v2: `review -> done` needs a CURRENT passing review.
+
+    Requires `review.verdict == "pass"`, the bound Review-artifact hash still
+    matching `review.md`, the bound `plan_sha256` still matching the registered
+    Plan, and empty code drift since the reviewed commit. A missing verdict,
+    `changes_requested`, a stale binding, or a moved reviewed commit rejects the
+    transition and leaves State unchanged. Missing Git or a non-ancestor commit
+    is reported as a MutateError, not a traceback.
+    """
+    block = data.get("review")
+    if not isinstance(block, dict):
+        block = {}
+    verdict = block.get("verdict")
+    if verdict != "pass":
+        raise MutateError(
+            "cannot complete: phase=done requires a current `pass` review "
+            "(review.verdict=%r)" % (verdict,))
+
+    review_path = _artifact_path(root, ticket_id, data, "review", "review.md")
+    try:
+        current_sha = contracts.sha256_file(review_path)
+    except OSError as exc:
+        raise MutateError(
+            "cannot complete: the Review artifact is unreadable: %s" % exc)
+    if current_sha != block.get("artifact_sha256"):
+        raise MutateError(
+            "cannot complete: the Review artifact changed since the verdict was "
+            "recorded (stale binding: re-review and `set-review` again)")
+
+    sources = data.get("source_artifacts") or {}
+    plan_ref = sources.get("plan") or {}
+    if block.get("plan_sha256") != plan_ref.get("sha256"):
+        raise MutateError(
+            "cannot complete: the Review binds a different Plan than the "
+            "registered one (stale binding: re-review against the current Plan)")
+    try:
+        drift = review.code_drift(root, ticket_id, block.get("reviewed_commit"),
+                                  plan_ref.get("path"))
+    except contracts.ContractError as exc:
+        raise MutateError("cannot complete: %s" % exc)
+    if drift:
+        raise MutateError(
+            "cannot complete: the reviewed code changed since %s: %s"
+            % (block.get("reviewed_commit"), "; ".join(drift)))
+
+
+def _require_repair(root, ticket_id, data):
+    """v2: the append-only `review -> implementation` repair precondition.
+
+    Requires a recorded `changes_requested` verdict whose Review artifact is
+    unchanged (a stale failed Review is rejected), code identity unchanged since
+    the reviewed commit, and a registered Plan with tasks appended beyond the
+    completed prefix whose completed prefix is unchanged. The appended Plan is
+    the rework itself, so a plan-only change is expected and is not drift; only
+    the append/prefix consistency is checked. An unresolved escalation is
+    blocked earlier in `advance`.
+    """
+    block = data.get("review")
+    verdict = block.get("verdict") if isinstance(block, dict) else None
+    if verdict != "changes_requested":
+        raise MutateError(
+            "cannot repair: review -> implementation requires a recorded "
+            "changes_requested verdict (review.verdict=%r)" % (verdict,))
+
+    review_path = _artifact_path(root, ticket_id, data, "review", "review.md")
+    try:
+        current_sha = contracts.sha256_file(review_path)
+    except OSError as exc:
+        raise MutateError(
+            "cannot repair: the Review artifact is unreadable: %s" % exc)
+    if current_sha != block.get("artifact_sha256"):
+        raise MutateError(
+            "cannot repair: the recorded Review artifact changed since the "
+            "verdict was recorded (stale failed Review: re-record it)")
+
+    sources = data.get("source_artifacts") or {}
+    plan_ref = sources.get("plan") or {}
+    plan_path = plan_ref.get("path")
+    try:
+        drift = review.code_drift(root, ticket_id, block.get("reviewed_commit"),
+                                  plan_path)
+    except contracts.ContractError as exc:
+        raise MutateError("cannot repair: %s" % exc)
+    plan_note = ("the registered Plan changed since the reviewed commit: %s"
+                 % (plan_path or "").replace("\\", "/"))
+    drift = [problem for problem in drift if problem != plan_note]
+    if drift:
+        raise MutateError(
+            "cannot repair: the reviewed code changed since %s: %s"
+            % (block.get("reviewed_commit"), "; ".join(drift)))
+
+    impl = data.get("implementation") or {}
+    current = impl.get("current_task", 0)
+    total = impl.get("total_tasks", 0)
+    current = 0 if current is None else current
+    total = 0 if total is None else total
+    if not workflow_v2.is_nonneg_int(current) \
+            or not workflow_v2.is_nonneg_int(total) or current >= total:
+        raise MutateError(
+            "cannot repair: the registered Plan has no appended task beyond the "
+            "completed prefix (current_task=%r, total_tasks=%r); register an "
+            "appending rework Plan first"
+            % (impl.get("current_task"), impl.get("total_tasks")))
+
+    if current:
+        if not plan_path:
+            raise MutateError(
+                "cannot repair: no registered Plan to check the completed "
+                "prefix against")
+        try:
+            tasks = contracts.read_plan(os.path.join(root, plan_path), ticket_id)
+        except contracts.ContractError as exc:
+            raise MutateError(
+                "cannot repair: the registered Plan is invalid: %s" % exc)
+        recorded = [str(h) for h in (impl.get("task_hashes") or [])]
+        expected = [t["sha256"] for t in tasks[:current]]
+        if recorded[:current] != expected:
+            raise MutateError(
+                "cannot repair: the completed prefix task contracts changed; "
+                "completed tasks must stay unchanged")
+
+
 def advance(root, ticket_id, to):
     """Move a ticket to phase `to` along the state machine.
 
-    Enforces the transition table, the evidence gate on decisionward targets,
-    and the gate-branched exit from evidence_audit. Returns a confirmation line.
+    Enforces the transition table (including the v2-only repair edge), the
+    evidence gate on decisionward targets, and the gate-branched exit from
+    evidence_audit. On a v2 Ticket it additionally gates completion: entering
+    `review` needs a finished, ready implementation; `done` needs a current
+    passing Review; and `review -> implementation` is the append-only repair.
+    Returns a confirmation line.
     """
     _require_phase(to)
     data = _load(root, ticket_id)
-    if workflow_v2.version(data) == 2 and _escalation_required(data):
+    ver = workflow_v2.version(data)
+    if ver == 2 and _escalation_required(data):
         raise _escalation_block("advance")
     current = data.get("phase")
     if current not in TRANSITIONS:
         raise MutateError("cannot advance from phase %r (terminal or unknown)" % current)
     if to == current:
         raise MutateError("already in phase %r" % current)
-    if to not in TRANSITIONS[current]:
-        raise MutateError("illegal transition %s -> %s (allowed: %s)"
-                          % (current, to, ", ".join(sorted(TRANSITIONS[current]))))
+    try:
+        workflow_v2.check_transition(root, data, to)
+    except contracts.ContractError as exc:
+        raise MutateError(str(exc))
 
     gate = (data.get("evidence") or {}).get("gate")
     if to in validate.DECISIONWARDS and gate != "sufficient":
@@ -224,16 +387,30 @@ def advance(root, ticket_id, to):
 
     # v2 decisionward continuation: the sufficient gate must still be bound to
     # the audited artifacts; a changed report or audit makes the verdict stale.
-    if workflow_v2.version(data) == 2 and to in validate.DECISIONWARDS:
+    if ver == 2 and to in validate.DECISIONWARDS:
         _require_fresh_binding(root, ticket_id, data)
 
     # v2 execution readiness: entering implementation needs a current registered
     # Plan, coherent counters, an active Status, and a safe adoption checkpoint.
-    if workflow_v2.version(data) == 2 and to == "implementation":
+    # From `review` this is the append-only repair, which clears the failed
+    # verdict (in the same save) and routes to the first appended task.
+    if ver == 2 and to == "implementation":
         problems = workflow_v2.readiness_problems(root, ticket_id, data)
         if problems:
             raise MutateError(
                 "cannot enter implementation: %s" % "; ".join(problems))
+        if current == "review":
+            _require_repair(root, ticket_id, data)
+            review_block = dict(data.get("review") or {})
+            review_block["verdict"] = "pending"
+            data["review"] = review_block
+
+    # v2 completion guards: a finished implementation to review, a current pass
+    # to done.
+    if ver == 2 and to == "review":
+        _require_review_entry(root, ticket_id, data)
+    if ver == 2 and to == "done":
+        _require_current_pass(root, ticket_id, data)
 
     data["phase"] = to
     data["next_action"] = workflow_v2.next_action(data, to)

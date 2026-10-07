@@ -16,6 +16,7 @@ import subprocess
 
 import contracts
 import parser
+import review
 import state
 import workflow_v2
 from status import list_tickets
@@ -33,7 +34,7 @@ GATES = {"sufficient", "insufficient"}
 SCOPES = {"machine", "human"}
 ROLES = {
     "scout", "evidence-auditor", "technical-decision", "executor-plan",
-    "ticket-executor", "checkpoint-handoff", "workflow-bootstrap",
+    "ticket-executor", "checkpoint-handoff", "workflow-bootstrap", "reviewer",
 }
 
 # Phases that require a sufficient evidence gate before they may be entered.
@@ -116,6 +117,66 @@ def _validate_v2_artifacts(work_dir, ticket, data, filenames, phase, bad, warn):
         else:
             for msg in problems:
                 bad("evidence-audit.md: %s" % msg)
+
+def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
+    """v2 Review binding agreement with command-time completion guards.
+
+    Read-only and crash-safe: it never calls Git in a way that could raise, and
+    missing/malformed fields are reported as ERRORs rather than tracebacks.
+    - phase `done` with a verdict other than `pass` is an ERROR;
+    - a recorded verdict in `review`/`done` must carry its binding fields;
+    - a `pass` whose Review artifact, `plan_sha256`, or reviewed code no longer
+      matches is an ERROR (the same blocker `advance` reports).
+    The intermediate repair state (`review`, `verdict == pending`, appended Plan)
+    stays valid here: it is not a `pass`, so the binding checks are skipped.
+    """
+    phase = data.get("phase")
+    block = data.get("review")
+    if block is None:
+        block = {}
+    elif not isinstance(block, dict):
+        return  # a malformed review block is already reported by workflow_v2
+    verdict = block.get("verdict")
+
+    if phase == "done" and verdict != "pass":
+        bad("phase=done but review.verdict is %r (a current `pass` is required "
+            "to complete)" % (verdict,))
+    if verdict in ("pending", "pass", "changes_requested") \
+            and phase in ("review", "done"):
+        for key in ("artifact_sha256", "reviewed_commit", "plan_sha256"):
+            if not isinstance(block.get(key), str):
+                bad("review.%s is missing but a verdict is recorded" % key)
+
+    if verdict != "pass":
+        return
+
+    review_name = filenames.get("review", "review.md")
+    review_path = os.path.join(work_dir, review_name)
+    expected_artifact = block.get("artifact_sha256")
+    if isinstance(expected_artifact, str):
+        if not os.path.exists(review_path):
+            bad("Review artifact %s is missing (stale binding: re-review and "
+                "set-review again)" % review_name)
+        elif contracts.sha256_file(review_path) != expected_artifact:
+            bad("Review artifact changed since the verdict was recorded "
+                "(stale binding: re-review and set-review again)")
+
+    sources = data.get("source_artifacts") or {}
+    plan_ref = sources.get("plan") or {}
+    if isinstance(block.get("plan_sha256"), str) \
+            and block.get("plan_sha256") != plan_ref.get("sha256"):
+        bad("review.plan_sha256 no longer matches the registered Plan "
+            "(stale binding: re-review against the current Plan)")
+
+    try:
+        drift = review.code_drift(root, ticket, block.get("reviewed_commit"),
+                                  plan_ref.get("path"))
+    except contracts.ContractError as exc:
+        bad("cannot assess review code drift: %s" % exc)
+    else:
+        for problem in drift:
+            bad("review is stale: %s" % problem)
+
 
 _HANDOFF_SECTIONS = [
     "What was done",
@@ -303,6 +364,7 @@ def validate_ticket(root, ticket, findings):
         "evidence_audit": artifacts.get("evidence_audit", "evidence-audit.md"),
         "decision": artifacts.get("decision", "decision.md"),
         "handoff": artifacts.get("handoff", "handoff.md"),
+        "review": artifacts.get("review", "review.md"),
     }
 
     def artifact_exists(key):
@@ -326,6 +388,7 @@ def validate_ticket(root, ticket, findings):
     if ver == 2:
         _validate_v2_artifacts(work_dir, ticket, data, filenames, phase,
                                bad, warn)
+        _validate_v2_review(root, work_dir, ticket, data, filenames, bad)
 
     # --- v2 execution readiness ------------------------------------------------
     # In an execution phase a v2 Ticket must be genuinely ready: a current

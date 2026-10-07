@@ -3,20 +3,20 @@
 Improvement 2 (TICKET-012), option C: by default the role skills live in the
 harness's global skill library (single source, zero drift); this command is the
 optional "self-contained repo" path. It copies the kit's canonical SKILL.md
-bundle (exactly the seven kit-owned skills under `.agents/skills/`) into the
+bundle (exactly the eight kit-owned skills under `.agents/skills/`) into the
 target's `.agents/skills/`, **updating in place**: already-current files are
 skipped (idempotent), changed files are overwritten, and nothing outside the
-seven known skill names is ever touched.
+eight known skill names is ever touched.
 """
 
 import os
 
 __all__ = ["install_skills", "KIT_SKILLS"]
 
-# The seven role skills the kit owns and ships.
+# The eight role skills the kit owns and ships.
 KIT_SKILLS = (
     "repo-scout", "evidence-auditor", "technical-decision", "executor-plan",
-    "ticket-executor", "checkpoint-handoff", "workflow-bootstrap",
+    "ticket-executor", "checkpoint-handoff", "workflow-bootstrap", "reviewer",
 )
 
 
@@ -27,9 +27,9 @@ def _kit_skills_dir():
 
 
 def install_skills(target):
-    """Install the kit's seven role skills into target (idempotent, in place).
+    """Install the kit's eight role skills into target (idempotent, in place).
 
-    Returns the list of paths written (created or updated); [] when all seven
+    Returns the list of paths written (created or updated); [] when all eight
     are already current. Never touches files outside the kit-owned names.
     """
     written = []

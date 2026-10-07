@@ -38,10 +38,13 @@ followup_evidence -> evidence_audit
 technical_decision -> planning
 planning -> implementation
 implementation -> review
-review -> done
+review -> done                              (workflow_version 2: requires a current `pass`)
+review -> implementation                    (workflow_version 2 only: append-only rework)
 ```
 
-No other phase transitions exist. At `done`, `next_action` is cleared.
+No other phase transitions exist. The `review -> implementation` edge is v2-only
+(the append-only repair after a `changes_requested` Review). At `done`,
+`next_action` is cleared and no transition leaves it.
 
 ## Lateral statuses
 
@@ -197,10 +200,20 @@ Code drift is the union of committed, staged, unstaged, and untracked paths
 since the reviewed commit, read with Git subprocess argument lists and
 NUL-delimited output. Changing any path other than this Ticket's exact
 `state.yaml`, `progress.md`, `handoff.md`, and `review.md` (including the
-registered Plan) rejects the command. Missing Git, a Reviewed commit that does
-not resolve, or an unrelated history (not an ancestor of HEAD) also reject it.
+registered Plan) rejects the command. Missing Git, a Reviewed commit that does not resolve, or an unrelated history (not an ancestor of HEAD) also reject it.
 Every rejection leaves the State bytes unchanged; Version 1 Tickets keep their
 existing semantics.
+
+`review.verdict` is `pending` in the intermediate repair state: after a
+`changes_requested` and an appending `register-plan`, the `review -> implementation`
+advance clears the failed verdict to `pending` in one save while preserving
+`current_task`, `completed_tasks`, and the completed task-hash prefix, and routes
+`next_action` to the first appended task. That intermediate state is valid.
+`review -> done` requires a current `pass` (verdict `pass`, the Review artifact
+hash and `plan_sha256` still matching, and no code drift since `reviewed_commit`);
+`validate` reports the same mismatch as an ERROR and a `done` phase without a
+`pass` is an ERROR. In `review` the v2 route is `reviewer`, not
+`checkpoint-handoff`.
 
 ## Migration blocks (adopted repos only)
 

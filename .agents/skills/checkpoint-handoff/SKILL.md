@@ -39,3 +39,13 @@ Phase transitions and handoff (see `.ai/workflow/ROLES.md`). Any model tier.
    fixed sections plus the Repository State block (branch, HEAD, uncommitted
    files, test status). No unverified claims.
 9. Commit per the protocol's commit discipline (phase-boundary commit).
+
+## Role boundary
+
+This is a mechanical role: it performs the transition mechanics and supplies no
+technical verdict. On a `workflow_version: 2` ticket, `review` routes to the
+independent `reviewer`, not here — the Reviewer records `pass` /
+`changes_requested` with `set-review` first. `advance --to done` then requires a
+current `pass`, and `advance --to implementation` from `review` is the
+append-only repair the senior performs after registering an appending rework
+Plan. Do not write `review.md` or judge the change.
