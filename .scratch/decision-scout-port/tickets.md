@@ -1,14 +1,16 @@
 # Decision Scout and Structured Handoff: Ticket Index
 
-Status: ready-for-agent
+Status: baseline delivered; follow-up pending
 Type: index
 Parent: [spec](spec.md)
 Plan: [Delivery plan and shared interfaces](../../docs/superpowers/plans/2026-10-07-decision-scout-handoff.md)
 
-Each implementation Ticket is a separate file under issues. Work blockers-first;
-all Tickets are unstarted. Each Ticket now links its development plan, covering
-exact files, interfaces, verification and commits. Planning is complete;
-implementation has not started. Ticket labels do not imply existing support.
+The original implementation and SCOUT-008 live pilot are delivered, as the
+append-only comments and report record. Per-issue historical labels remain as
+recorded; the table below preserves the original dependency graph. Current
+unstarted work is the [nine HARDEN follow-up tickets](../decision-scout-hardening/tickets.md),
+with a [supplemental spec](../decision-scout-hardening/spec.md) and
+[development plan](../../docs/superpowers/plans/2026-10-08-scout-hardening.md).
 
 | Ticket | Blocked by | End-to-end outcome |
 |---|---|---|
@@ -21,15 +23,9 @@ implementation has not started. Ticket labels do not imply existing support.
 | [07 — Safe installation and upgrade](issues/07-safe-installation-and-upgrade.md) | 06 | Complete v2 ships without silently promoting existing Tickets. |
 | [08 — Live model/Harness pilot](issues/08-live-model-harness-pilot.md) | 07 | Real bug/feature handoffs produce observed quality and effort evidence. |
 
-The immediate frontier is 01. After 02, 03 and 04 have independent behavioral
-dependencies; their implementations may touch shared mutation code and should
-still follow the repo's writing/concurrency rules. Dependency independence does
-not authorise parallel writers.
-
-01 is intentionally usable before the stronger CLI release. Tickets 02–06
-exercise explicit v2 test fixtures while the shipped default stays v1; 07 switches
-new installations and new Tickets to the complete v2 contract. 08 is a manual
-acceptance Ticket, distinct from automated CLI regression coverage.
+The original 01→08 sequence is complete. It no longer defines the delivery
+frontier. New review findings and the distinct-model pilot are tracked separately;
+follow the HARDEN index's real blockers and shared-file scheduling.
 
 ## Validation seam
 
@@ -92,3 +88,5 @@ CLI checks alone cannot establish the truth or usefulness of model-generated fac
   [pilot/report.md](pilot/report.md), [pilot/bug](pilot/bug/),
   [pilot/feature](pilot/feature/), [pilot/logs](pilot/logs/). Kit commit not
   pushed.
+
+- 2026-10-08 — Updated the current overview to delivered baseline and linked HARDEN-001–009. Earlier pending/completion comments remain historical. No original issue was reopened, relabelled or resolved by this documentation change.

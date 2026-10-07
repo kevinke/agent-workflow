@@ -3,7 +3,8 @@
 Status: ready-for-agent
 Type: spec
 Date: 2026-10-07
-Delivery: Scout first; execution and review safeguards follow as separate slices.
+Delivery: v2 baseline and live cross-Harness pilot delivered; review follow-up planned.
+Follow-up: [hardening spec](../decision-scout-hardening/spec.md).
 
 ## Problem Statement
 
@@ -260,6 +261,31 @@ invented. Historical done Tickets remain v1 in this increment. Repeating upgrade
 is safe; an uninterpretable Ticket is unchanged and produces an error. Adopted
 Tickets still need the Adoption Checkpoint before executor handoff.
 
+### 2026-10-08 — Post-implementation contract supplement
+
+The baseline implementation and real bug/feature cross-Harness pilot have been
+delivered. The [post-implementation review](post-implementation-review-2026-10-08.md)
+found remaining correctness defects and a separate model-pairing evidence gap.
+The [hardening supplement](../decision-scout-hardening/spec.md) defines their
+current requirements; the [disposition](../decision-scout-hardening/review-disposition.md)
+separates existing promises from newly enforced boundaries.
+
+- Review identity must be a stored full immutable OID, with pass and failed
+  verdicts assessed consistently; dirty code must remain detectable under
+  timestamp/index collisions.
+- Ordinary escalation, late-phase bootstrap and upgrade reconstruction need
+  a bounded senior recovery path and atomic retained-phase readiness checks.
+- Unknown nested upgrade fields and original bound artifact bytes survive
+  conversion and transport; v2 retains its raw-byte hash semantics.
+- Evidence references/metadata/source locators and late-phase Handoff contents
+  have concrete syntactic contracts; independent review still establishes acceptance.
+- Skills remain thin pointers to Protocol contracts. A supplemental actual
+  cheap-Scout/distinct-senior decision pilot tests the remaining allocation claim.
+
+Exact outcomes, dependencies and development plans are in the
+[new ticket index](../decision-scout-hardening/tickets.md). Original SCOUT-001–008
+records and plans remain historical; these findings do not erase their results.
+
 ## Testing Decisions
 
 Use the public CLI as the primary seam. Extend temporary-repository dogfood
@@ -305,16 +331,18 @@ CLI sessions are not proof of actual model performance.
 
 ## Further Notes
 
-The user prioritised inexpensive scouting and traceable structured facts and
-requested synthesis into a spec and local tickets. Versioning, command details,
-and rework handling are concrete choices for this spec, not claims of existing
-support or separately approved requirements. Spec/Tickets are reviewable,
-ready-for-agent documents; implementation has not started.
+The user prioritised inexpensive scouting and traceable structured facts.
+The original eight-slice implementation and real cross-Harness pilot are delivered,
+as recorded in the appended history and pilot report. The 2026-10-08 hardening
+spec, tickets and plans are ready-for-agent; their implementation has not started.
+The original release stages are preserved as design history, not a pending
+frontier or evidence that all later review findings have been resolved.
 
 Primary sources: [original proposal](original-proposal.md),
 [verbatim TRAE analysis](fit-analysis.md), and
 [preserved pre-spec synthesis](design-history.md).
-Current gaps and reproducible evidence: [review-findings.md](review-findings.md).
+Original gaps: [review-findings.md](review-findings.md).
+Current review: [post-implementation review](post-implementation-review-2026-10-08.md).
 Delivery frontier: [ticket index](tickets.md).
 Development plans: [shared contracts and eight Ticket plans](../../docs/superpowers/plans/2026-10-07-decision-scout-handoff.md).
 
@@ -323,3 +351,5 @@ Development plans: [shared contracts and eight Ticket plans](../../docs/superpow
 - 2026-10-07 — Replaced the pre-spec summary after the user prioritised cheap
   Scout work and structured facts. Preserved the old summary in design-history.md
   and left both verbatim sources intact. Review/escalation fixes are later slices.
+
+- 2026-10-08 — Added the post-implementation contract supplement and linked the nine HARDEN follow-up tickets/plans. Preserved prior sources, completion records and pilot history; no runtime fixes are claimed.
