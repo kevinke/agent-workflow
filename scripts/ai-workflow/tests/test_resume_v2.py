@@ -298,6 +298,51 @@ class ResumeV2Test(V2CLITestCase):
         # No automatic claim that the anchor still holds.
         self.assertNotIn("anchor is still valid", result.stdout)
 
+    # -- continuation blockers: unresolved escalation (resume's own path) -----
+
+    def test_unresolved_escalation_is_a_continuation_blocker(self):
+        """A well-formed escalation blocks continuation via `_continuation_blockers`.
+
+        It is not malformed State and `validate` emits no ERROR for it, so the
+        exit-1 comes from resume's own blocker path (not a validate Finding).
+        """
+        self.seed_v2("requirement")
+        proc = self.cli("escalate", "T1", "--scope", "machine",
+                        "--reason", "needs a senior design call")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+        # Well-formed: validate itself neither errors nor names the blocker.
+        valid = self.cli("validate", "T1")
+        self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+        self.assertNotIn("unresolved escalation", valid.stdout)
+
+        before = self.capture_files()
+        before_mtimes = self._mtimes()
+        result = self.cli("resume", "T1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Ticket", result.stdout)  # the brief is still printed
+        self.assertIn("unresolved escalation", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        # Still read-only.
+        self.assertEqual(self.capture_files(), before)
+        self.assertEqual(self._mtimes(), before_mtimes)
+
+    # -- stale audit binding (validate surfaces it, resume reports it) -------
+
+    def test_stale_audit_binding_is_surfaced(self):
+        """Changing the Evidence after set-gate is a stale-binding ERROR."""
+        self._seed_audit()  # evidence + audit + a bound `sufficient` gate
+        evidence = os.path.join(self.root, ".ai", "work", "T1", "evidence.md")
+        with open(evidence, "a", encoding="utf-8", newline="") as fh:
+            fh.write("\n<!-- drift after the gate was recorded -->\n")
+
+        result = self.cli("resume", "T1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Checks", result.stdout)
+        self.assertIn("ERROR", result.stdout)
+        self.assertIn("stale", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
