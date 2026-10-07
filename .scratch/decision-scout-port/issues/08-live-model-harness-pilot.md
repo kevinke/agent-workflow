@@ -7,6 +7,12 @@ Blocked by: 07
 Parent: [spec](../spec.md)
 Plan: [Implementation plan](../../../docs/superpowers/plans/2026-10-07-scout-08.md)
 
+Pilot status (observed, 2026-10-07): **pending** — Task 1 prepared the runbook and
+recorded prerequisites; the report remains pending and **no real model session has
+been run** (external-budget ruling). See [pilot/runbook.md](../pilot/runbook.md)
+and [pilot/report.md](../pilot/report.md). No acceptance criterion below is marked
+passed.
+
 ## What to build
 
 Produce an observed pilot report on one bug and one small feature showing whether
@@ -57,3 +63,12 @@ manufacture a completed pilot.
 
 - 2026-10-07 — Manual acceptance is separate from automated lifecycle tests so
   the intended benefit is judged from actual model work, not phase counts.
+- 2026-10-07 — Task 1 (runbook + prerequisites) done; full task report at
+  `.superpowers/sdd/2026-10-07-scout-08/task-1-report.md`. Observed: Harness A =
+  this Trae session (model label `DeepSeek-V4.1-Flash`); Harness B = `codex` CLI
+  `C:\nvm4w\nodejs\codex.ps1` (`codex-cli 0.160.0`); absent: claude / gemini /
+  aider / cursor-agent / opencode. Host `python` 3.13.5, `git 2.45.1.windows.1`,
+  CLI entry point `scripts/ai-workflow/main.py` (`--help` exit 0; `init`/`start`
+  default to `workflow_version: 2`). No real model session was launched (only
+  availability probes). Pilot stays pending pending explicit user consent to spend
+  external model quota; blocker recorded in [pilot/report.md](../pilot/report.md).
