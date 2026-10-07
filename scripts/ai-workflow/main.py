@@ -23,6 +23,7 @@ are TICKET-010/012.
 """
 
 import os
+import re
 import sys
 
 import adopt
@@ -237,6 +238,19 @@ class _UsageError(Exception):
     """A malformed argument (bad option value), reported as a usage error (exit 2)."""
 
 
+def _parse_nonneg_int(raw, opt):
+    """Parse a plain decimal (ASCII 0-9) integer; malformed -> _UsageError.
+
+    Matches `[0-9]+` before calling int(), so Unicode digit-likes (e.g. '²',
+    where str.isdigit() is True but int() raises ValueError) are rejected
+    cleanly instead of leaking an uncaught traceback. Callers apply their own
+    positivity constraint on the returned non-negative value.
+    """
+    if not re.fullmatch(r"[0-9]+", raw):
+        raise _UsageError("%s must be a non-negative integer (got %r)" % (opt, raw))
+    return int(raw)
+
+
 def _cmd_mutate(name, usage, args, root, known_opts, apply):
     """Shared driver for the semantic mutators: usage errors -> 2, rejected -> 1."""
     rest = args[1:]
@@ -281,7 +295,8 @@ def cmd_claim(args, root):
 
 def cmd_complete_task(args, root):
     def apply(ticket_id, opts):
-        total = int(opts["total"]) if opts.get("total") is not None else None
+        raw = opts.get("total")
+        total = _parse_nonneg_int(raw, "--total") if raw is not None else None
         return mutate.complete_task(root, ticket_id, total=total)
     return _cmd_mutate(
         "complete-task", "complete-task <ticket-id> [--total N]",
@@ -296,9 +311,10 @@ def cmd_register_plan(args, root):
         raw = opts.get("total")
         if raw is None:
             raise mutate.MutateError("--total N is required")
-        if not raw.isdigit() or int(raw) <= 0:
+        total = _parse_nonneg_int(raw, "--total")
+        if total <= 0:
             raise _UsageError("--total must be a positive integer (got %r)" % raw)
-        return mutate.register_plan(root, ticket_id, path, int(raw))
+        return mutate.register_plan(root, ticket_id, path, total)
     return _cmd_mutate(
         "register-plan", "register-plan <ticket-id> --path <plan> --total N",
         args, root, {"--path", "--total"}, apply)
@@ -312,9 +328,9 @@ def cmd_set_gate(args, root):
         round_no = None
         if opts.get("round") is not None:
             raw = opts["round"]
-            if not raw.isdigit() or int(raw) <= 0:
+            round_no = _parse_nonneg_int(raw, "--round")
+            if round_no <= 0:
                 raise _UsageError("--round must be a positive integer (got %r)" % raw)
-            round_no = int(raw)
         return mutate.set_gate(root, ticket_id, gate, round_no=round_no)
     return _cmd_mutate(
         "set-gate", "set-gate <ticket-id> --gate <g> [--round N]",

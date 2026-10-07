@@ -1,5 +1,7 @@
 """Smoke tests for the `ai-workflow` CLI dispatch (TICKET-006)."""
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -9,8 +11,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main  # noqa: E402
 
+# Superscript two: str.isdigit() is True but int() raises ValueError, so a
+# naive `raw.isdigit()` guard followed by int() leaks an uncaught traceback.
+UNICODE_DIGIT = "\u00b2"
+
 
 class MainTest(unittest.TestCase):
+    def _run_capturing_stderr(self, argv):
+        """Run the CLI, capturing stderr; return (exit_code, stderr_text)."""
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            code = main.main(argv)
+        return code, buf.getvalue()
+
     def test_help_exits_zero(self):
         self.assertEqual(main.main(["-h"]), 0)
         self.assertEqual(main.main(["help"]), 0)
@@ -31,6 +44,29 @@ class MainTest(unittest.TestCase):
     def test_commands_recognized(self):
         self.assertTrue({"init", "status", "validate", "start", "adopt", "upgrade"}
                         <= main.COMMANDS)
+
+    # -- malformed numeric arguments reject cleanly (usage error, no traceback) --
+
+    def test_malformed_register_plan_total_is_usage_error(self):
+        code, err = self._run_capturing_stderr(
+            ["register-plan", "T1", "--path", "P", "--total", UNICODE_DIGIT])
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("total", err)
+
+    def test_malformed_set_gate_round_is_usage_error(self):
+        code, err = self._run_capturing_stderr(
+            ["set-gate", "T1", "--gate", "sufficient", "--round", UNICODE_DIGIT])
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("round", err)
+
+    def test_malformed_complete_task_total_is_usage_error(self):
+        code, err = self._run_capturing_stderr(
+            ["complete-task", "T1", "--total", UNICODE_DIGIT])
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("total", err)
 
 
 if __name__ == "__main__":
