@@ -15,6 +15,11 @@ phases that were never executed; never require re-walking full history.
 - Existing repo, no active ticket (case B).
 - Existing repo with a half-done ticket (case C) — the priority.
 
+On a current (v2) install, `adopt` scaffolds the Ticket with
+`workflow_version: 2` and all six checkpoint booleans `false`; on an unupgraded
+v1 install it stays v1. Adoption itself never fabricates contracts for phases
+that were never executed.
+
 ## Procedure
 
 ### 1. Discovery

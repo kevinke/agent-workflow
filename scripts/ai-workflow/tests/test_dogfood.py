@@ -23,9 +23,11 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import init as init_mod  # noqa: E402
 import state  # noqa: E402
+from v2_support import install_v1_templates  # noqa: E402
 
 # The real CLI entry point, driven via subprocess so we test the user surface.
 KIT_CLI = os.path.join(
@@ -52,6 +54,11 @@ class DogfoodE2ETest(unittest.TestCase):
         skill_path = os.path.join(self.root, ".agents", "skills",
                                   "ticket-executor", "SKILL.md")
         self.assertTrue(os.path.exists(skill_path), skill_path)
+        # This suite is the v1-semantics full-machine regression net (loose
+        # artifacts, unbound gate). Task 2 flips the bundled default to v2, so
+        # pin the installed template to v1; the v2 lifecycle is covered by
+        # test_lifecycle_v2.py.
+        install_v1_templates(self.root)
         # Dogfood: the ticket is started through the real `start` CLI, not
         # hand-scaffolded — the user-facing entry point is the thing under test.
         code, _out, err = self._cli("start", TICKET, "--title", "dogfood e2e ticket")
@@ -166,8 +173,10 @@ class DogfoodE2ETest(unittest.TestCase):
             self.assertEqual(fh.read(), text)
 
     def test_upgrade_cli_is_noop_when_current(self):
-        # The installed protocol ships at the kit's current version, so the
-        # explicit upgrade is a no-op through the real CLI.
+        # setUp pins the install to v1; bring it to the kit's current version
+        # first, then the explicit upgrade is a no-op through the real CLI.
+        code, out, err = self._cli("upgrade")
+        self.assertEqual(code, 0, err)
         code, out, err = self._cli("upgrade")
         self.assertEqual(code, 0, err)
         self.assertIn("nothing to do", out)

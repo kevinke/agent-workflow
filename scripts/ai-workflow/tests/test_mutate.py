@@ -6,16 +6,22 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mutate  # noqa: E402
 import start  # noqa: E402
 import state  # noqa: E402
+from v2_support import install_v1_templates  # noqa: E402
 
 
 class MutateTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = self._tmp.name
+        # These mutations exercise the loose v1 semantics (unbound gate, plain
+        # counters). Task 2 flips the bundled default to v2, so plant an
+        # explicit v1 template for `start` to resolve.
+        install_v1_templates(self.root)
         start.start(self.root, "T1", title="t")
 
     def tearDown(self):

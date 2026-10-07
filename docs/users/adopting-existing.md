@@ -19,7 +19,7 @@ ai-workflow init --with-skills
 ```
 
 - 装协议 + 模板到 `.ai/workflow/`，`AGENTS.md` 追加托管块——**你现有的 AGENTS.md / CLAUDE.md / Matt 约定原样保留**（这是 kit 的硬承诺：spec §2.9）。
-- `--with-skills` 把 7 个角色技能装进 `.agents/skills/`（自包含模式）；不想复制进仓库的话，技能也可以装到 harness 的全局技能库，仓库只引用角色名——二选一即可，语义相同。
+- `--with-skills` 把 8 个角色技能装进 `.agents/skills/`（自包含模式）；不想复制进仓库的话，技能也可以装到 harness 的全局技能库，仓库只引用角色名——二选一即可，语义相同。
 
 ## 两种开票方式
 
@@ -62,11 +62,13 @@ ai-workflow start TICKET-002 --title "..." --spec docs/specs/spec.md --ticket .s
 | 技术决策 | technical-decision（`advance --to planning`） | Superpowers `brainstorming`、Matt `/domain-modeling` |
 | 计划 | executor-plan（`advance --to implementation`） | Matt `/writing-plans`、Superpowers `writing-plans` |
 | 实现 | ticket-executor（`claim`/`complete-task`） | **Superpowers `tdd` / `systematic-debugging` / `verification-before-completion`** |
-| 评审 | checkpoint-handoff（`validate`/`advance`） | Superpowers `requesting/receiving-code-review`、`finishing-a-development-branch` |
+| 评审 | reviewer（v2：`set-review`）或 checkpoint-handoff（v1：`validate`/`advance`） | Superpowers `requesting/receiving-code-review`、`finishing-a-development-branch` |
 
 ## 常见疑问
 
 - **kit 会覆盖我现有的 Matt/Superpowers 配置吗？** 不会。`init` 只在 `AGENTS.md` 追加一个带标记的托管块，块外内容分毫不动；已有 spec/ticket/plan 一律按路径引用。
 - **我的仓库已经有 `.scratch/` 票据了，还要重建吗？** 不用。`adopt` 时把它们填进 `source_artifacts`，`historical_phases` 如实标注即可。
 - **非要复制技能进仓库吗？** 不是。默认技能装 harness 全局库（零漂移、git pull 即升级）；`--with-skills` 只是给"自包含仓库"的可选路径。
+- **已有 v1 Ticket 怎么升到 v2？** 先用 `ai-workflow upgrade` 升级已安装协议（不改任何 Ticket），再用 `upgrade-ticket <ticket-id>` 显式转换单个 active v1 Ticket；随后由资深角色按 [.ai/workflow/MIGRATION.md](../.ai/workflow/MIGRATION.md) 重建当前阶段契约并 `escalate --clear --resolution`。转换保留阶段/引用/已完成计数，重置 gate/review，绝不伪造历史审计、Plan 或 review；历史已 `done` 的 Ticket 保持 v1。
+- **`adopt` 产出 v1 还是 v2？** 当前安装默认 `workflow_version: 2`，故 `adopt` 产出 v2 脚手架且六个 checkpoint 布尔全为 `false`；未升级的 v1 安装仍产出 v1。adoption 语义（历史标注、追溯最小证据、检查点门禁）两版一致。
 - **`adopt` 和 `start` 什么区别？** `adopt` = 已有仓库/半成品（迁移语义，带历史标注与检查点）；`start` = 全新工作（greenfield，从模板干净起票）。

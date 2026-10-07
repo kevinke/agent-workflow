@@ -6,16 +6,23 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import start  # noqa: E402
 import state  # noqa: E402
 import validate  # noqa: E402
+from v2_support import install_v1_templates  # noqa: E402
 
 
 class StartTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = self._tmp.name
+        # These are the v1-semantics tests (the version-agnostic `start`
+        # behavior). Task 2 flips the bundled default to v2, so install an
+        # explicit v1 template: `start` resolves the installed target's
+        # templates, keeping this suite a genuine v1 coverage net.
+        install_v1_templates(self.root)
 
     def tearDown(self):
         self._tmp.cleanup()

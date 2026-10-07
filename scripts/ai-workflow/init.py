@@ -11,7 +11,7 @@ The bundled protocol lives alongside the kit repo that ships this CLI.
 import os
 import shutil
 
-__all__ = ["init", "ManagedBlockError"]
+__all__ = ["init", "ManagedBlockError", "templates_dir"]
 
 
 # Marker lines delimiting the adapter block we own. Everything between (and
@@ -52,6 +52,21 @@ def _kit_root():
 
 def _protocol_source():
     return os.path.join(_kit_root(), ".ai", "workflow")
+
+
+def templates_dir(root):
+    """The template source `start`/`adopt` must use for a target repo.
+
+    The installed target's `.ai/workflow/templates/` when that directory exists
+    (so an unupgraded v1 install keeps producing v1 work), otherwise the bundled
+    kit templates for an uninstalled target. The version template
+    (`state.yaml`) and the report scaffolds are always resolved from this single
+    source, never mixed.
+    """
+    installed = os.path.join(root, ".ai", "workflow", "templates")
+    if os.path.isdir(installed):
+        return installed
+    return os.path.join(_protocol_source(), "templates")
 
 
 def _copy_tree(src, dst, seen):

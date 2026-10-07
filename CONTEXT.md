@@ -11,15 +11,16 @@ Glossary for the agent-workflow kit. Terms are canonical: skills and protocol do
 - **Phase** — Where a ticket is in the workflow state machine (requirement → evidence_collection → evidence_audit → technical_decision → planning → implementation → review → done). Distinct from status.
 - **Status** — The横向 condition of the current phase: active, blocked, paused, escalation_required, abandoned. Never merged into phase.
 - **State (`state.yaml`)** — The machine-readable, authoritative per-ticket workflow state. The first file any Harness reads; chat history is never authoritative.
-- **Artifact** — A markdown file with a strict contract under `.ai/work/<ticket-id>/`: evidence, evidence-audit, decision, progress, handoff. Each has a defined writer role and allowed content.
+- **Artifact** — A markdown file with a strict contract under `.ai/work/<ticket-id>/`: evidence, evidence-audit, decision, progress, handoff, and (v2) review. Each has a defined writer role and allowed content.
 - **Evidence** — Repository facts recorded in `evidence.md`, each tagged FACT, INFERENCE, or UNKNOWN, with source anchors (file, symbol, line, command, test result).
 - **Evidence Gate** — The auditor's verdict on whether evidence is sufficient to enter technical_decision. The state machine enforces it.
 - **Claim (soft claim)** — A convention recorded in `state.yaml` (`claim: {harness, model, claimed_at}`) marking which session is working on a ticket. Advisory, not a lock; a conflicting session must read `handoff.md` before taking over.
 
 ## Structured handoff vocabulary
 
-These terms describe the planned enhancement; supported behavior remains defined
-by the installed Workflow Protocol and each Ticket's workflow version.
+These terms describe the shipped v2 enhancement: supported behavior is defined by
+the installed Workflow Protocol and each Ticket's `workflow_version` (new work
+defaults to 2; existing v1 Tickets keep v1 semantics until explicitly converted).
 
 - **Decision Question** — A bounded investigation question whose answer can
   change a downstream technical decision; identified by a DQ ID.

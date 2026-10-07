@@ -6,16 +6,22 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import adopt  # noqa: E402
 import state  # noqa: E402
 import validate  # noqa: E402
+from v2_support import install_v1_templates  # noqa: E402
 
 
 class AdoptTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = self._tmp.name
+        # v1-semantics suite: install an explicit v1 template so `adopt` keeps
+        # producing a v1 State (Task 2 flips the bundled default to v2; the v2
+        # adoption path is covered in test_lifecycle_v2.py).
+        install_v1_templates(self.root)
 
     def tearDown(self):
         self._tmp.cleanup()

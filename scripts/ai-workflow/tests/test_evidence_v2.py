@@ -173,8 +173,10 @@ class EvidenceV2Test(V2CLITestCase):
         self.assertEqual(self.state_bytes(), before)
 
     def test_v1_fixture_semantics_unchanged(self):
-        # The default started ticket is v1 (no workflow_version): loose evidence
-        # and an unbound gate remain valid, with no byte-identity binding.
+        # An explicit v1 ticket: loose evidence and an unbound gate remain
+        # valid, with no byte-identity binding. (Task 2 flips the default to v2,
+        # so v1 is seeded explicitly rather than assumed.)
+        self.seed_v1("evidence_audit")
         path = os.path.join(self.work, "evidence.md")
         with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write("## Facts\n- FACT source artifact spec section\n")

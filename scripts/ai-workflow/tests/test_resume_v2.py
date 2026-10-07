@@ -217,7 +217,8 @@ class ResumeV2Test(V2CLITestCase):
     # -- v1 notices ----------------------------------------------------------
 
     def test_v1_ticket_gets_missing_contract_notices(self):
-        # setUp leaves a fresh v1 ticket in `requirement`.
+        # setUp's `start` now yields v2 (Task 2); the v1 version is explicit.
+        self.seed_v1("requirement")
         result = self.cli("resume", "T1")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("v1", result.stdout)

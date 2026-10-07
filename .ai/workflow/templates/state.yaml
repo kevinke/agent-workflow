@@ -1,5 +1,5 @@
 schema_version: 1
-workflow_version: 1
+workflow_version: 2
 ticket:
   id: <ticket-id>
   title: <ticket title>
@@ -21,13 +21,17 @@ artifacts:
   decision: decision.md
   progress: progress.md
   handoff: handoff.md
+  review: review.md
 evidence:
   round: 0
   gate: insufficient
+  report_sha256: null
+  audit_sha256: null
 implementation:
   current_task: 0
   total_tasks: 0
   completed_tasks: []
+  task_hashes: []
 escalation:
   required: false
   scope: machine
@@ -37,9 +41,14 @@ claim:
   model: null
   claimed_at: null
 next_action:
-  role: checkpoint-handoff
+  role: workflow-bootstrap
   action: advance phase from requirement to evidence_collection
   task: null
+review:
+  verdict: pending
+  artifact_sha256: null
+  reviewed_commit: null
+  plan_sha256: null
 provenance:
   last_harness: null
   last_model: null

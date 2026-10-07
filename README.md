@@ -8,7 +8,8 @@
 
 - **仓库即事实源**：`state.yaml` 是每个 ticket 的权威状态（第一个要读的文件），Chat 历史永远不算数。
 - **阶段机**：`requirement → evidence_collection → evidence_audit → technical_decision → planning → implementation → review → done`（evidence 不足时走 `followup_evidence` 循环）。
-- **角色**：scout / evidence-auditor / technical-decision / executor-plan / ticket-executor / checkpoint-handoff，每个阶段有对应的角色和模型档位。
+- **角色**：scout / evidence-auditor / technical-decision / executor-plan / ticket-executor / reviewer / checkpoint-handoff（外加处理遗留迁移的 workflow-bootstrap），每个阶段有对应的角色和模型档位。
+- **工作流版本**：新工作默认 `workflow_version: 2`（结构化 artifact 契约、字节身份门禁、review 结论、已注册 Plan）；已有 v1 Ticket 与未升级的 v1 安装保持 v1 语义不变，需要时用 `upgrade-ticket` 显式转换。
 - **状态推进走 CLI**：`advance` / `set-gate` / `complete-task` 等语义命令在**写入时**就校验合法性与证据门禁，不用手写受限 YAML。
 
 ## 三层协作（与 Matt / Superpowers 搭配）
@@ -47,7 +48,7 @@ python /path/to/agent-workflow/scripts/ai-workflow/main.py init --with-skills
 ## 快速上手（绿色字段新仓库）
 
 ```bash
-# 1. 安装协议（可选 --with-skills 顺带装 7 个角色技能）
+# 1. 安装协议（可选 --with-skills 顺带装 8 个角色技能）
 ai-workflow init
 ai-workflow install-skills          # 或 init --with-skills
 
@@ -82,12 +83,25 @@ ai-workflow adopt TICKET-001 --title "..." --spec docs/spec.md --ticket .scratch
 
 已有 Matt/Superpowers 痕迹的仓库（有 AGENTS.md、CONTEXT.md、.scratch/ 票据等）走 `adopt`：现有 spec/ticket/plan 按路径引用进 `source_artifacts`（不复制），历史阶段按 confirmed/inferred 标注，绝不伪造历史。详见 [docs/users/adopting-existing.md](docs/users/adopting-existing.md)。
 
+## 升级到 v2（已有 v1 仓库）
+
+`workflow_version: 2` 是当前默认发布：新 `init`/`start` 直接产出 v2，已有 v1 Ticket 与未升级的 v1 安装保持 v1 语义不变。把协议和某个 Ticket 显式升到 v2：
+
+```bash
+ai-workflow upgrade                        # 升级已安装协议（不改任何 Ticket 的 state.yaml）
+ai-workflow upgrade-ticket TICKET-001      # 把该 active v1 Ticket 转为 v2（记录 upgrade 块）
+# 资深角色按 MIGRATION.md 重建当前阶段契约：set-gate / register-plan / 补齐 artifact，
+ai-workflow escalate TICKET-001 --clear --resolution "当前阶段契约已重建"
+```
+
+`upgrade-ticket` 绝不伪造历史审计、Plan 或 review pass：它保留阶段、引用与已完成计数，重置 gate/review，并生成一个由 `workflow-bootstrap` 解决的重建升级；历史已 `done` 的 Ticket 保持 v1。详见 [.ai/workflow/MIGRATION.md](.ai/workflow/MIGRATION.md)。
+
 ## 命令总览
 
 | 命令 | 作用 |
 |---|---|
 | `init [target] [--with-skills]` | 安装协议 + 模板 + AGENTS.md 托管块（幂等，不覆盖现有内容） |
-| `install-skills [target]` | 把 7 个角色技能装进目标仓库（幂等更新） |
+| `install-skills [target]` | 把 8 个角色技能装进目标仓库（幂等更新） |
 | `status [ticket]` | 一屏状态：ticket / phase / status / task N/M / gate / next |
 | `validate [ticket]` | 校验工作流本身：ERROR 必改，WARN 记录即可；非零退出表示有 ERROR |
 | `start <ticket> [opts]` | 新开 greenfield ticket（从模板生成，含 source_artifacts 指针） |
@@ -96,17 +110,22 @@ ai-workflow adopt TICKET-001 --title "..." --spec docs/spec.md --ticket .scratch
 | `claim <ticket> [--harness H] [--model M]` | 标记本会话在工作 |
 | `release <ticket>` | 清空 claim（保留 provenance） |
 | `complete-task <ticket> [--total N]` | 实现阶段完成任务计数 |
+| `register-plan <ticket> --path P --total N` | 注册引用的执行 Plan（v2，绑定 Plan 字节哈希与各任务哈希） |
 | `set-gate <ticket> --gate G [--round N]` | 记录证据审计结论 |
+| `set-review <ticket> --verdict V` | 记录 Reviewer 结论（v2：pass / changes_requested） |
 | `escalate <ticket> --scope S --reason "..." \| --clear` | 设置/清除升级 |
 | `set-status <ticket> --status S` | 设置横向状态（blocked/paused/abandoned…） |
-| `upgrade` | 显式协议升级（workflow_version） |
+| `resume <ticket>` | 只读续接简报（有 ERROR 阻断时退出 1） |
+| `upgrade` | 显式协议升级（workflow_version，不改 Ticket） |
+| `upgrade-ticket <ticket>` | 把单个 active v1 Ticket 显式转换为 v2（记录资深重建） |
 
 ## 文档地图
 
-计划中的增强见 [Decision Scout 与结构化交接 spec](.scratch/decision-scout-port/spec.md)
-和 [实施票据](.scratch/decision-scout-port/tickets.md)。优先让便宜 Scout 输出可追溯的
-事实报告，再补执行契约、review 门禁和跨 Harness 接手；这些能力尚未实现，下面的
-使用说明仍描述当前版本。
+结构化交接（Decision Scout、执行契约、review 门禁、跨 Harness 接手）已实现并随
+`workflow_version: 2` 默认发布：新开票即 v2，已有 Ticket 保持 v1，需要时用
+`upgrade-ticket` 显式转换并重建当前阶段契约。背景见
+[Decision Scout 与结构化交接 spec](.scratch/decision-scout-port/spec.md)
+和 [实施票据](.scratch/decision-scout-port/tickets.md)。
 
 - **本套件是什么 / 怎么设计**：[docs/specs/agent-workflow-protocol.md](docs/specs/agent-workflow-protocol.md)
 - **安装到目标仓库的协议正文**：`.ai/workflow/`（PROTOCOL / STATE_SCHEMA / ARTIFACTS / ROLES / ESCALATION / MIGRATION）
@@ -114,4 +133,4 @@ ai-workflow adopt TICKET-001 --title "..." --spec docs/spec.md --ticket .scratch
 - **领域术语**：[CONTEXT.md](CONTEXT.md)
 - **开发约定**：[docs/agents/](docs/agents/)（domain / issue-tracker）
 - **票据**：`.scratch/<feature>/issues/`
-- **测试**：`scripts/ai-workflow/tests/`（104 个用例，含端到端 dogfood）
+- **测试**：`scripts/ai-workflow/tests/`（306 个用例，含端到端 dogfood 与完整安装生命周期）

@@ -84,6 +84,14 @@ class ProtocolUpgradePreservesTicketsTest(unittest.TestCase):
         self.assertEqual(state.load_file(active)["workflow_version"], 1)
         self.assertEqual(state.load_file(done)["phase"], "done")
 
+        # The protocol upgrade brings the installed template up to the kit's
+        # shipped default, which Task 2 flips to workflow_version 2.
+        tmpl = os.path.join(self.root, ".ai", "workflow", "templates",
+                            "state.yaml")
+        self.assertEqual(upgrade.kit_workflow_version(), 2)
+        self.assertEqual(state.load_file(tmpl)["workflow_version"], 2)
+        self.assertEqual(upgrade.installed_workflow_version(self.root), 2)
+
 
 class UpgradeTicketV2Test(V2CLITestCase):
 

@@ -40,6 +40,8 @@ In `state.yaml`, phases are lowercase: `requirement`, `evidence_collection`, `ev
 
 On a `workflow_version: 2` Ticket there is one additional edge: `review -> implementation`, the append-only repair path taken after a `changes_requested` Review. It is not available to v1 Tickets.
 
+New work ships on `workflow_version: 2`: a current install renders its template as v2, so greenfield `start` and `adopt` both begin on the v2 contracts. An existing `workflow_version: 1` Ticket (and an unupgraded v1 install) keeps the frozen v1 semantics until it is explicitly converted with `upgrade-ticket`.
+
 Lateral statuses are orthogonal to phase and are never merged into it: `active`, `blocked`, `escalation_required`, `paused`, `abandoned`.
 
 A phase changes only via the transitions above. Do not invent transitions.

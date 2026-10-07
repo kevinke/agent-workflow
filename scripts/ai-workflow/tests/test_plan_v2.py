@@ -189,7 +189,8 @@ class PlanV2Test(V2CLITestCase):
         self.assertEqual(self.state_bytes(), before)
 
     def test_v1_ticket_rejected(self):
-        rel = self.write_plan(1)  # setUp leaves a fresh v1 ticket
+        self.seed_v1("requirement")  # setUp's `start` now yields v2 (Task 2)
+        rel = self.write_plan(1)
         before = self.state_bytes()
         proc = self._register(rel, 1)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)

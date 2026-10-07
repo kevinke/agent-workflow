@@ -280,7 +280,9 @@ class EscalationV2Test(V2CLITestCase):
     # -- v1 compatibility ----------------------------------------------------
 
     def test_v1_escalate_and_clear_unchanged(self):
-        # setUp leaves a v1 ticket; seed_v2 is deliberately not called.
+        # Explicit v1 ticket; seed_v2 is deliberately not called. setUp's `start`
+        # no longer leaves v1 now that the bundled default is v2 (Task 2).
+        self.seed_v1("requirement")
         proc = self.cli("escalate", self.TICKET, "--scope", "human",
                         "--reason", "blocked on decision")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)

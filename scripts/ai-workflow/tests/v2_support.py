@@ -27,6 +27,77 @@ KIT_CLI = os.path.join(
 CODE_FIXTURE = os.path.join("src", "app.py")
 CODE_TEXT = "def main():\n    return 42\n"
 
+# An unupgraded v1 `templates/state.yaml` (the pre-flip shipped default). Tests
+# that assert v1 semantics plant this into a target so `start`/`adopt` resolve
+# it (Ruling C) instead of the kit's v2 bundled template. Task 2 flips that
+# default, so v1 is never assumed implicitly.
+V1_TEMPLATE = """\
+schema_version: 1
+workflow_version: 1
+ticket:
+  id: <ticket-id>
+  title: <ticket title>
+phase: requirement
+status: active
+repository:
+  base_commit: <base commit hash>
+  branch: <branch name>
+source_artifacts:
+  spec:
+    path: null
+  ticket:
+    path: null
+  plan:
+    path: null
+artifacts:
+  evidence: evidence.md
+  evidence_audit: evidence-audit.md
+  decision: decision.md
+  progress: progress.md
+  handoff: handoff.md
+evidence:
+  round: 0
+  gate: insufficient
+implementation:
+  current_task: 0
+  total_tasks: 0
+  completed_tasks: []
+escalation:
+  required: false
+  scope: machine
+  reason: null
+claim:
+  harness: null
+  model: null
+  claimed_at: null
+next_action:
+  role: checkpoint-handoff
+  action: advance phase from requirement to evidence_collection
+  task: null
+provenance:
+  last_harness: null
+  last_model: null
+updated_at: <ISO-8601 timestamp>
+"""
+
+
+def install_v1_templates(root):
+    """Plant an unupgraded v1 state.yaml template into `root`.
+
+    After Task 2 the kit's bundled default is v2, so a target without this
+    explicit v1 template would scaffold v2 work. Writing only `state.yaml` into
+    the installed template dir keeps the v1 version semantics while report
+    scaffolds (if `init` already installed them) stay untouched. Returns the
+    path written.
+    """
+    tmpl_dir = os.path.join(root, ".ai", "workflow", "templates")
+    os.makedirs(tmpl_dir, exist_ok=True)
+    dest = os.path.join(tmpl_dir, "state.yaml")
+    with open(dest, "w", encoding="utf-8", newline="") as fh:
+        fh.write(V1_TEMPLATE)
+    return dest
+
+
 # Phase-appropriate next_action routes for seeded v2 tickets.
 ROUTES = {
     "requirement": ("workflow-bootstrap",

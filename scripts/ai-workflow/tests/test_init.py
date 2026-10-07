@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import init  # noqa: E402
+import state  # noqa: E402
 
 
 def _count_marker(text, marker):
@@ -39,6 +40,23 @@ class InitTest(unittest.TestCase):
         agents = self._read_agents()
         self.assertEqual(_count_marker(agents, init.BEGIN_MARKER), 1)
         self.assertEqual(_count_marker(agents, init.END_MARKER), 1)
+
+    def test_installs_v2_default_template(self):
+        # The shipped default is workflow_version 2 (SCOUT-007 Task 2) while the
+        # schema stays 1: pending review/bindings, an empty task-hash list, and
+        # the requirement route handed to workflow-bootstrap.
+        init.init(self.target)
+        tmpl = os.path.join(self.target, ".ai", "workflow", "templates",
+                            "state.yaml")
+        data = state.load_file(tmpl)
+        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["workflow_version"], 2)
+        self.assertEqual(data["evidence"]["report_sha256"], None)
+        self.assertEqual(data["evidence"]["audit_sha256"], None)
+        self.assertEqual(data["implementation"]["task_hashes"], [])
+        self.assertEqual(data["artifacts"]["review"], "review.md")
+        self.assertEqual(data["review"]["verdict"], "pending")
+        self.assertEqual(data["next_action"]["role"], "workflow-bootstrap")
 
     def test_second_run_is_noop(self):
         init.init(self.target)

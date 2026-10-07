@@ -14,6 +14,7 @@ audited.
 import os
 import subprocess
 
+import init
 import parser
 import state
 import validate
@@ -21,15 +22,6 @@ import validate
 __all__ = ["start"]
 
 _WORK_DIR_REL = os.path.join(".ai", "work")
-
-
-def _kit_root():
-    # this file: scripts/ai-workflow/start.py
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def _template_dir():
-    return os.path.join(_kit_root(), ".ai", "workflow", "templates")
 
 
 def _git(root, *args):
@@ -44,11 +36,14 @@ def _git(root, *args):
     return None
 
 
-def _template_state(ticket_id, title, phase, base_commit, branch,
+def _template_state(root, ticket_id, title, phase, base_commit, branch,
                     spec_path, ticket_path, plan_path):
-    """Build the ticket's state.yaml from the shipped template (single source
-    of truth): parse the template, then fill in the real ticket identity."""
-    tmpl = os.path.join(_template_dir(), "state.yaml")
+    """Build the ticket's state.yaml from the resolved template (single source
+    of truth): parse the template, then fill in the real ticket identity.
+
+    The template is resolved from the installed target when it has one, else the
+    bundled kit, so an unupgraded v1 install keeps scaffolding v1 Tickets."""
+    tmpl = os.path.join(init.templates_dir(root), "state.yaml")
     with open(tmpl, encoding="utf-8") as fh:
         data = parser.parse(fh.read())
     ph = phase if phase in validate.PHASES else "requirement"
@@ -63,15 +58,18 @@ def _template_state(ticket_id, title, phase, base_commit, branch,
     }
     if ph != "requirement":
         # The template's canned action only fits the requirement entry point.
+        # A later-phase v2 Ticket keeps the template's workflow-bootstrap role
+        # (senior reconstruction), never an executor's; it has no current
+        # evidence/Plan contracts yet.
         data["next_action"]["action"] = "continue work from %s" % ph
     return data
 
 
-def _scaffold_template(dst_path, name, created, ticket_id=None):
-    """Copy a bundled template into dst_path if absent (idempotent)."""
+def _scaffold_template(root, dst_path, name, created, ticket_id=None):
+    """Copy a resolved template into dst_path if absent (idempotent)."""
     if os.path.exists(dst_path):
         return
-    src = os.path.join(_template_dir(), name)
+    src = os.path.join(init.templates_dir(root), name)
     try:
         with open(src, encoding="utf-8") as fh:
             text = fh.read()
@@ -104,14 +102,14 @@ def start(root, ticket_id, title=None, phase=None,
     branch = branch or _git(root, "rev-parse", "--abbrev-ref", "HEAD")
 
     data = _template_state(
-        ticket_id, title, phase, base_commit, branch,
+        root, ticket_id, title, phase, base_commit, branch,
         spec_path, ticket_path, plan_path,
     )
     state.save_file(state_path, data)
     created.append(state_path)
 
-    _scaffold_template(os.path.join(work_dir, "evidence.md"), "evidence.md", created, ticket_id)
-    _scaffold_template(os.path.join(work_dir, "handoff.md"), "handoff.md", created, ticket_id)
-    _scaffold_template(os.path.join(work_dir, "progress.md"), "progress.md", created, ticket_id)
+    _scaffold_template(root, os.path.join(work_dir, "evidence.md"), "evidence.md", created, ticket_id)
+    _scaffold_template(root, os.path.join(work_dir, "handoff.md"), "handoff.md", created, ticket_id)
+    _scaffold_template(root, os.path.join(work_dir, "progress.md"), "progress.md", created, ticket_id)
 
     return created

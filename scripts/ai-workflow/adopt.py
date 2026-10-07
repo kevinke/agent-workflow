@@ -16,6 +16,7 @@ six checkpoint items.
 import os
 import subprocess
 
+import init
 import state
 import validate
 
@@ -23,15 +24,6 @@ __all__ = ["adopt", "MIGRATION_REPORT_NAME"]
 
 MIGRATION_REPORT_NAME = "migration-report.md"
 _WORK_DIR_REL = os.path.join(".ai", "work")
-
-
-def _kit_root():
-    # this file: scripts/ai-workflow/adopt.py
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def _template_dir():
-    return os.path.join(_kit_root(), ".ai", "workflow", "templates")
 
 
 def _git(root, *args):
@@ -158,12 +150,28 @@ def _migration_report(root, facts):
     return "\n".join(lines)
 
 
-def _build_state(ticket_id, title, phase, base_commit, branch,
+def _resolved_version(root):
+    """The workflow version a newly adopted Ticket must use.
+
+    Read from the same template source `start`/`adopt` resolve for scaffolds:
+    the installed target's template when it has one, else the bundled kit. An
+    unreadable/unsupported value degrades to v1.
+    """
+    tmpl = os.path.join(init.templates_dir(root), "state.yaml")
+    try:
+        data = state.load_file(tmpl)
+    except state.StateError:
+        return 1
+    ver = data.get("workflow_version", 1)
+    return ver if ver in (1, 2) else 1
+
+
+def _build_state(version, ticket_id, title, phase, base_commit, branch,
                  spec_path, ticket_path, plan_path):
     ph = phase if phase in validate.PHASES else "requirement"
-    return {
+    data = {
         "schema_version": 1,
-        "workflow_version": 1,
+        "workflow_version": version,
         "ticket": {"id": ticket_id, "title": title or ""},
         "phase": ph,
         "status": "active",
@@ -206,13 +214,29 @@ def _build_state(ticket_id, title, phase, base_commit, branch,
             "continuation_safe": False,
         },
     }
+    if version == 2:
+        # The shipped v2 shape: pending review/bindings and an empty task-hash
+        # list. The adoption/migration blocks above are retained verbatim; the
+        # six checkpoint booleans stay false so this Ticket is v2 but cannot
+        # execute until a senior confirms the checkpoint.
+        data["artifacts"]["review"] = "review.md"
+        data["evidence"]["report_sha256"] = None
+        data["evidence"]["audit_sha256"] = None
+        data["implementation"]["task_hashes"] = []
+        data["review"] = {
+            "verdict": "pending",
+            "artifact_sha256": None,
+            "reviewed_commit": None,
+            "plan_sha256": None,
+        }
+    return data
 
 
-def _scaffold_template(dst_path, name, created, ticket_id=None):
-    """Copy a bundled template into dst_path if absent (idempotent)."""
+def _scaffold_template(root, dst_path, name, created, ticket_id=None):
+    """Copy a resolved template into dst_path if absent (idempotent)."""
     if os.path.exists(dst_path):
         return
-    src = os.path.join(_template_dir(), name)
+    src = os.path.join(init.templates_dir(root), name)
     try:
         with open(src, encoding="utf-8") as fh:
             text = fh.read()
@@ -256,7 +280,7 @@ def adopt(root, ticket_id, phase=None, title=None,
     branch = branch or _git(root, "rev-parse", "--abbrev-ref", "HEAD")
 
     data = _build_state(
-        ticket_id, title, phase, base_commit, branch,
+        _resolved_version(root), ticket_id, title, phase, base_commit, branch,
         spec_path, ticket_path, plan_path,
     )
     state.save_file(state_path, data)
@@ -265,8 +289,8 @@ def adopt(root, ticket_id, phase=None, title=None,
     # 3. Operational artifact scaffolds (evidence/handoff/progress). decision.md
     #    is reconstructed by the senior during adoption and is not fake-started
     #    here; evidence-audit.md comes when evidence is audited.
-    _scaffold_template(os.path.join(work_dir, "evidence.md"), "evidence.md", created, ticket_id)
-    _scaffold_template(os.path.join(work_dir, "handoff.md"), "handoff.md", created, ticket_id)
-    _scaffold_template(os.path.join(work_dir, "progress.md"), "progress.md", created, ticket_id)
+    _scaffold_template(root, os.path.join(work_dir, "evidence.md"), "evidence.md", created, ticket_id)
+    _scaffold_template(root, os.path.join(work_dir, "handoff.md"), "handoff.md", created, ticket_id)
+    _scaffold_template(root, os.path.join(work_dir, "progress.md"), "progress.md", created, ticket_id)
 
     return created

@@ -272,7 +272,8 @@ class ReviewV2Test(V2CLITestCase):
     # -- ticket / phase / completeness rejections ---------------------------
 
     def test_v1_ticket_rejected(self):
-        # setUp leaves a fresh v1 ticket in `requirement`.
+        # setUp's `start` now yields v2 (Task 2); the v1 version is explicit.
+        self.seed_v1("requirement")
         self._assert_rejected()
 
     def test_wrong_phase_rejected(self):

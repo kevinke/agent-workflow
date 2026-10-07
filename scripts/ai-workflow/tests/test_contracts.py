@@ -337,7 +337,9 @@ class ValidateV2IntegrationTest(V2CLITestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_v1_ticket_semantics_unchanged(self):
-        # v1 ticket, loosely-written evidence: still validates clean.
+        # v1 ticket, loosely-written evidence: still validates clean. setUp's
+        # `start` now yields v2, so the v1 version is seeded explicitly.
+        self.seed_v1("requirement")
         with open(os.path.join(self.work, "evidence.md"), "w",
                   encoding="utf-8", newline="") as fh:
             fh.write("## Facts\n- FACT source artifact spec section\n")

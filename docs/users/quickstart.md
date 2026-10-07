@@ -9,7 +9,8 @@ ai-workflow init --with-skills
 ```
 
 - 装协议文档 + 模板到 `.ai/workflow/`，在 `AGENTS.md` 追加托管块（原有内容一个字不动）。
-- `--with-skills` 顺带把 7 个角色技能装进 `.agents/skills/`（幂等：已最新则跳过，变了才覆盖）。
+- `--with-skills` 顺带把 8 个角色技能装进 `.agents/skills/`（幂等：已最新则跳过，变了才覆盖）。
+- 新开票默认 `workflow_version: 2`：结构化 artifact 契约、字节身份门禁、review 结论与已注册 Plan 生效。已有 v1 Ticket 保持 v1 语义（见 [adopting-existing.md](adopting-existing.md) 的升级说明）。
 
 ## 1. 开 ticket
 
@@ -72,10 +73,11 @@ ai-workflow advance TICKET-001 --to planning
 `executor-plan` 把决策拆成有序、每个都能被便宜模型在单步内执行的任务，写进 `progress.md`（或引用 docs 文件），声明任务总数。然后：
 
 ```bash
+ai-workflow register-plan TICKET-001 --path progress.md --total 3   # v2：注册 Plan（绑定字节哈希与各任务哈希）
 ai-workflow advance TICKET-001 --to implementation
 ```
 
-任务计数不用你预设——执行者在完成第一个任务时用 `complete-task --total N` 一次性设定。
+任务计数不用你预设——v2 由 `register-plan --total N` 设定（`complete-task --total` 不能覆盖已注册值，不一致会被拒绝）；v1 仍由执行者完成第一个任务时用 `complete-task --total N` 设定。
 
 ## 6. 实现（implementation）
 
@@ -93,11 +95,16 @@ ai-workflow complete-task TICKET-001 --total 3               # 每完成一个�
 ai-workflow advance TICKET-001 --to review
 ```
 
-`checkpoint-handoff` 先跑 `ai-workflow validate`（必须无 ERROR），写 `handoff.md`（固定小节 + Repository State 块），然后：
+v2 由独立上下文的 `reviewer` 读取 `decision.md` 与已注册 Plan，独立核对验收标准后写 `review.md`，再用 `set-review` 记录结论：
 
 ```bash
+ai-workflow set-review TICKET-001 --verdict pass        # 或 changes_requested
 ai-workflow advance TICKET-001 --to done
 ```
+
+`changes_requested` 走 append-only 返工：`register-plan` 追加任务 → `advance --to implementation` 把失败结论清为 `pending` 并路由到首个追加任务，返工完成后再评审直到 `pass`。
+
+v1 仍由 `checkpoint-handoff` 跑 `ai-workflow validate`（必须无 ERROR）、写 `handoff.md`（固定小节 + Repository State 块）后 `advance --to done`。
 
 `advance --to done` 会自动清空 `next_action`（协议要求 done 必须清空）。
 

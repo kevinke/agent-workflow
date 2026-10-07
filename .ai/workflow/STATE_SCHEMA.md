@@ -4,27 +4,30 @@
 
 ## Versions
 
-- `schema_version: 1`
-- `workflow_version: 1`
+- `schema_version: 1` (fixed)
+- `workflow_version: 1` or `2`
 
-### `workflow_version` (v2 extension)
+### `workflow_version`
 
 `schema_version` stays fixed at 1. `workflow_version` selects the rule set and
 is additive:
 
-- `1` — the frozen v1 semantics. Existing v1 Tickets and a v1 installed template
-  keep this value; an absent field means `1`, so every pre-existing State reads
-  as v1.
-- `2` — an explicit upgrade to the stricter v2 contracts, performed only by
-  `upgrade-ticket` on one interpretable active v1 Ticket.
+- `2` — the shipped default. `init` installs a v2 template, so every greenfield
+  `start` ticket and every `adopt` on a current install begins on the stricter v2
+  contracts.
+- `1` — the frozen v1 semantics, retained for existing work. An existing v1
+  Ticket keeps this value, an unupgraded v1 install (whose
+  `.ai/workflow/templates/state.yaml` still reads `workflow_version: 1`) keeps
+  producing v1 Tickets, and an absent field means `1`, so every pre-existing
+  State reads as v1.
 
 Only the integers `1` and `2` are accepted. A boolean (`true`/`false`), zero,
 a string such as `"2"`, or any future value such as `3` is rejected: `validate`
 reports it as an ERROR Finding and a mutation refuses it before writing State,
 without a traceback and without changing the State bytes. A Ticket's version is
 never promoted in place: `ai-workflow upgrade` upgrades only the installed
-protocol and never rewrites a Ticket's `state.yaml`; converting a Ticket is the
-explicit `upgrade-ticket` command (see `MIGRATION.md`).
+protocol and never rewrites a Ticket's `state.yaml`; converting an existing v1
+Ticket is the explicit `upgrade-ticket` command (see `MIGRATION.md`).
 
 ## Phases
 
@@ -58,7 +61,7 @@ No other phase transitions exist. The `review -> implementation` edge is v2-only
 | Field | Type | Meaning |
 |---|---|---|
 | schema_version | int | fixed at 1 |
-| workflow_version | int | 1 or 2; a Ticket reaches 2 only through `upgrade-ticket` |
+| workflow_version | int | 1 or 2; new work defaults to 2, an existing v1 Ticket reaches 2 only through `upgrade-ticket` |
 | ticket | map {id, title} | ticket identity |
 | phase | scalar | one of the phases above |
 | status | scalar | one of the lateral statuses above |

@@ -2,12 +2,14 @@
 
 Status: confirmed via grilling (2026-09-21). Source decisions: [ADR-0001](../adr/0001-repo-native-protocol-over-harness-skills.md), [ADR-0002](../adr/0002-restricted-yaml-subset-parser-over-pyyaml.md).
 
-This document records the version 1 baseline. The planned Decision Scout and
-structured model handoff enhancement is specified separately in
+This document records the version 1 baseline. The Decision Scout and structured
+model handoff enhancement is specified separately in
 [the feature spec](../../.scratch/decision-scout-port/spec.md), with its
-[delivery tickets](../../.scratch/decision-scout-port/tickets.md). Its version 2
-gates are not implemented by writing those documents; installed version 1 rules
-remain authoritative until the explicit release and Ticket upgrade described there.
+[delivery tickets](../../.scratch/decision-scout-port/tickets.md). Its
+`workflow_version: 2` contracts are now the shipped default: a fresh install
+produces v2 Tickets, while existing v1 Tickets keep v1 rules until an explicit
+`upgrade-ticket`. Where this document describes v1, the v2 differences live in the
+installed `.ai/workflow/` protocol and the feature spec.
 
 ## 1. Goal
 
@@ -51,7 +53,8 @@ repo/
 │   │       ├── evidence-audit.md
 │   │       ├── decision.md
 │   │       ├── progress.md
-│   │       └── handoff.md
+│   │       ├── handoff.md
+│   │       └── review.md
 │   └── work/
 │       └── <ticket-id>/
 │           ├── state.yaml
@@ -59,7 +62,8 @@ repo/
 │           ├── evidence-audit.md
 │           ├── decision.md
 │           ├── progress.md
-│           └── handoff.md
+│           ├── handoff.md
+│           └── review.md
 ├── .agents/
 │   └── skills/
 │       ├── repo-scout/            # SKILL.md
@@ -67,6 +71,7 @@ repo/
 │       ├── technical-decision/    # SKILL.md
 │       ├── executor-plan/         # SKILL.md
 │       ├── ticket-executor/       # SKILL.md
+│       ├── reviewer/              # SKILL.md
 │       ├── checkpoint-handoff/    # SKILL.md
 │       └── workflow-bootstrap/    # SKILL.md
 └── docs/
@@ -98,7 +103,7 @@ status: blocked
 
 ## 5. `state.yaml` schema
 
-`schema_version: 1`, `workflow_version: 1` from day one. Key blocks:
+`schema_version: 1`; `workflow_version` is `2` for new work (the shipped default) or `1` for pre-existing Tickets. The blocks below are the v1 baseline; v2 additionally carries `artifacts.review`, `evidence.report_sha256`/`audit_sha256`, `implementation.task_hashes`, and a `review` binding block. Key blocks:
 
 ```yaml
 schema_version: 1
@@ -139,6 +144,7 @@ Rules:
 | technical-decision | senior | technical_decision |
 | executor-plan | senior | planning |
 | ticket-executor | cheap | implementation (bounded) |
+| reviewer | senior | review (independent context, v2) |
 | checkpoint-handoff | any | phase transitions, handoff |
 | workflow-bootstrap | senior | legacy adoption |
 
@@ -155,7 +161,10 @@ Two scopes: `machine` (default, resolved by a senior role) and `human` (interrup
 - `ai-workflow validate` — two severities: ERROR (illegal schema, gate-violating transition, missing artifact) must be fixed before handoff; WARN may proceed but must be recorded. Validates the workflow itself, not code.
 - `ai-workflow start <ticket-id>` — create `.ai/work/<ticket-id>/` from template; set phase per path (greenfield → REQUIREMENT; migration → adopted phase); write `source_artifacts` pointers.
 - `ai-workflow adopt` — legacy repo migration (see §10).
-- `ai-workflow upgrade` — explicit protocol upgrade using `workflow_version`.
+- `ai-workflow register-plan <ticket-id>` — register a referenced execution Plan on a v2 Ticket (byte and task-hash binding); `ai-workflow set-review <ticket-id>` — record the Reviewer verdict on a v2 Ticket (see the installed `.ai/workflow/` protocol).
+- `ai-workflow resume <ticket-id>` — print a read-only continuation brief; `ai-workflow complete-task`, `ai-workflow set-status`, `ai-workflow claim`/`release`, `ai-workflow escalate`.
+- `ai-workflow upgrade` — explicit protocol upgrade using `workflow_version` (never rewrites a Ticket).
+- `ai-workflow upgrade-ticket <ticket-id>` — explicitly convert one active v1 Ticket to `workflow_version: 2` (records the senior reconstruction; never fabricates history).
 
 ## 10. Legacy adoption
 

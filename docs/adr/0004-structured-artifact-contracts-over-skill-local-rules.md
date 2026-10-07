@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Structured artifact contracts over Skill-local rules
@@ -12,9 +12,9 @@ Scout output usable without a senior model repeating the whole investigation.
 
 This proposal comes from the 2026-10-07 discussion and
 [the implementation spec](../../.scratch/decision-scout-port/spec.md). Its stricter
-gates are planned, not installed. Version 1 history remains valid until explicit
-per-Ticket upgrade; structural checks cannot prove natural-language facts or
-authenticate model tiers.
+gates are now the shipped default (`workflow_version: 2`); Version 1 history
+remains valid until explicit per-Ticket upgrade; structural checks cannot prove
+natural-language facts or authenticate model tiers.
 
 The alternatives are placing full rules in each Harness's Skills, which permits
 drift, or introducing a new orchestration service, which adds deployment and
