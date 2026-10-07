@@ -49,6 +49,20 @@ class EvidenceV2Test(V2CLITestCase):
                                   "technical_decision").returncode, 1)
         self.assertEqual(self.state_bytes(), before)
 
+    def test_validate_flags_stale_binding_after_evidence_change(self):
+        self.seed_v2("evidence_audit")
+        self.write_evidence()
+        self.write_audit()
+        self.assertEqual(self.cli("set-gate", "T1", "--gate", "sufficient",
+                                  "--round", "1").returncode, 0)
+        path = Path(self.root) / ".ai/work/T1/evidence.md"
+        path.write_text(path.read_text() + "\nAdditional observation.\n")
+        proc = self.cli("validate", "T1")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn(
+            "evidence.md changed since the evidence gate was recorded "
+            "(stale binding: re-audit and set-gate again)", proc.stdout)
+
     def test_unchanged_rerun_keeps_gate_fresh(self):
         self.seed_v2("evidence_audit")
         self.write_evidence()
