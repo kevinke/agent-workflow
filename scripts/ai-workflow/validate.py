@@ -141,7 +141,7 @@ def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
     if phase == "done" and verdict != "pass":
         bad("phase=done but review.verdict is %r (a current `pass` is required "
             "to complete)" % (verdict,))
-    if verdict in ("pending", "pass", "changes_requested") \
+    if verdict in ("pass", "changes_requested") \
             and phase in ("review", "done"):
         for key in ("artifact_sha256", "reviewed_commit", "plan_sha256"):
             if not isinstance(block.get(key), str):

@@ -534,6 +534,45 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("validate: OK", proc.stdout)
 
+    def test_validate_and_resume_accept_pending_review_state(self):
+        """A Ticket freshly advanced to `review` is valid at pending/pending.
+
+        `advance --to review` never records a verdict, so `verdict == pending`
+        with the three null bindings is the normal entry state -- not "a verdict
+        is recorded". `validate` must stay clean and `resume` must not exit 1.
+        """
+        self._seed_review()  # phase=review, review.verdict=pending, all null
+        data = self.read_state()
+        self.assertEqual(data["phase"], "review")
+        self.assertEqual(data["review"]["verdict"], "pending")
+        for key in ("artifact_sha256", "reviewed_commit", "plan_sha256"):
+            self.assertIsNone(data["review"][key])
+
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("is missing but a verdict is recorded", proc.stdout)
+
+        brief = self.cli("resume", self.TICKET)
+        self.assertEqual(brief.returncode, 0, brief.stdout + brief.stderr)
+
+    def test_converted_v1_review_has_no_false_binding_error(self):
+        """A v1 Ticket at `review` converted to v2 keeps the pending scaffold.
+
+        Conversion requires senior reconstruction (so validate is not clean),
+        but it must never invent a recorded-verdict binding error for the
+        `pending` scaffold it just wrote.
+        """
+        self.seed_v1("review")
+        proc = self.cli("upgrade-ticket", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        data = self.read_state()
+        self.assertEqual(data["workflow_version"], 2)
+        self.assertEqual(data["phase"], "review")
+        self.assertEqual(data["review"]["verdict"], "pending")
+
+        proc = self.cli("validate", self.TICKET)
+        self.assertNotIn("is missing but a verdict is recorded", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
