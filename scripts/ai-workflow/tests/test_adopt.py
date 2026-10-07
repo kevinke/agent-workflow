@@ -71,6 +71,13 @@ class AdoptTest(unittest.TestCase):
         errors = [f.message for f in findings if f.severity == "ERROR"]
         self.assertEqual(errors, [])
 
+    def test_adopt_against_v1_templates_stays_v1(self):
+        # Ruling E: an unupgraded v1 install keeps producing v1 Tickets. Guards
+        # against a regression that always emits v2.
+        adopt.adopt(self.root, "T1")
+        data = state.load_file(os.path.join(self.root, ".ai", "work", "T1", "state.yaml"))
+        self.assertEqual(data["workflow_version"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

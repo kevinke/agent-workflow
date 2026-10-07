@@ -55,15 +55,17 @@ ai-workflow install-skills          # 或 init --with-skills
 # 2. 开一个 ticket
 ai-workflow start TICKET-001 --title "..."
 
-# 3. 走阶段机（每个阶段写对应 artifact，validate 在阶段边界把关）
+# 3. 走阶段机（每个阶段写对应 artifact，validate 在阶段边界把关；新票默认 v2）
 ai-workflow advance TICKET-001 --to evidence_collection   # 写 evidence.md
 ai-workflow advance TICKET-001 --to evidence_audit        # 写 evidence-audit.md
 ai-workflow set-gate TICKET-001 --gate sufficient --round 1
 ai-workflow advance TICKET-001 --to technical_decision    # 写 decision.md
 ai-workflow advance TICKET-001 --to planning              # 写 plan
+ai-workflow register-plan TICKET-001 --path progress.md --total 3  # v2：注册 Plan（实现前必需）
 ai-workflow advance TICKET-001 --to implementation
-ai-workflow complete-task TICKET-001 --total 3            # 每完成一个任务跑一次
+ai-workflow complete-task TICKET-001                      # 每完成一个任务跑一次
 ai-workflow advance TICKET-001 --to review
+ai-workflow set-review TICKET-001 --verdict pass          # v2：记录 Reviewer 结论（done 前必需）
 ai-workflow advance TICKET-001 --to done
 
 # 4. 随时看状态 / 校验
