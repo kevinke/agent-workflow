@@ -6,7 +6,7 @@
 artifact_type: plan
 format_version: 1
 ticket_id: PILOT-FEAT-01
-task_count: 1
+task_count: 2
 ```
 
 ## Task 1
@@ -61,3 +61,59 @@ N/A
   editing demo.py, or adding files, imports, or tests.
 - The reviewer requires live-reference semantics or a different signature or
   return value for `reload`.
+
+## Task 2
+
+### Objective
+Complete the persisted handoff for the reload change: replace every placeholder
+in .ai/work/PILOT-FEAT-01/handoff.md with concrete, verified contents so the
+cross-harness handoff obligation is satisfied. No production-code change.
+
+### Inputs
+- review.md finding (verdict changes_requested): the only gap is the unfilled
+  handoff template; the reload implementation and both acceptance commands
+  already pass.
+- Current repository identity (branch, HEAD, uncommitted state) and the artifact
+  hashes as re-verified during this task.
+- Task 1's acceptance commands, re-run to produce fresh execution evidence.
+
+### Allowed changes
+- .ai/work/PILOT-FEAT-01/handoff.md
+- .ai/work/PILOT-FEAT-01/progress.md
+- .ai/work/PILOT-FEAT-01/state.yaml (written only through the workflow CLI)
+
+### Protected scope
+- Do not modify service.py, demo.py, or any other production file.
+- Do not modify review.md (its verdict and hash are bound in state.yaml),
+  plan.md (registered), evidence.md, or evidence-audit.md.
+- Do not alter Task 1's registered section; its canonical hash must survive.
+
+### Invariants
+- Task 1 canonical hash remains 9063ea957a720252ac54b734e96fdec5f91025750f9766dac58902676c173294.
+- review.md raw-byte sha256 remains 8bc6e0e6fddee140b0a8812a979e0672ddd12cff02f12870ccf9f6433ff80d1c.
+- state.yaml is only ever written by the ai-workflow CLI.
+
+### Acceptance criteria
+- handoff.md has every required section filled with verified values; the
+  placeholder probe `Select-String -Path .ai\work\PILOT-FEAT-01\handoff.md -Pattern '<[a-z ]+>'`
+  returns no matches.
+- Both Task 1 acceptance commands re-run green: prints 5, then prints 7.
+- `validate PILOT-FEAT-01` reports OK with no ERROR findings.
+
+### Verification
+Command 1 (placeholder probe; expect no matches):
+`Select-String -Path .ai\work\PILOT-FEAT-01\handoff.md -Pattern '<[a-z ]+>'`
+Command 2 (expect prints 5, exit 0):
+`$env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; c = CachedValue({'value': 1}); c.reload({'value': 5}); print(c.read())"`
+Command 3 (expect prints 7, exit 0):
+`$env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; src = {'value': 7}; c = CachedValue({'value': 1}); c.reload(src); src['value'] = 9; print(c.read())"`
+Command 4 (expect validate OK):
+`python d:\Codegent-workflow\scriptsi-workflow\main.py validate PILOT-FEAT-01`
+
+### Dependencies
+Task 1 (the reload implementation whose handoff this task completes).
+
+### Escalation conditions
+- Completing the handoff would require touching a protected file (review.md,
+  plan.md, evidence.md, evidence-audit.md, service.py, demo.py).
+- The re-review demands further production-code changes or a different design.

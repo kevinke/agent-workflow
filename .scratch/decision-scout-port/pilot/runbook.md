@@ -1,9 +1,11 @@
 # Runbook — Measured Live Model/Harness Handoff Pilot (SCOUT-008)
 
-Status: ready (Task 1 complete). The pilot **report** remains pending; see
-[report.md](report.md). This runbook is the reproducible procedure for the actual
-runs performed in Task 2. It records only what was actually observed/probed on
-2026-10-07; it contains no model outputs, tool counts, or savings.
+Status: **complete (Tasks 1–2 executed 2026-10-07)**. The pilot report is final —
+both tickets reached `done`, including persisted cross-Harness handoffs (A → B);
+see [report.md](report.md). This runbook is the reproducible procedure for the
+actual runs performed in Task 2. It records only what was actually
+observed/probed on 2026-10-07; it contains no model outputs, tool counts, or
+savings.
 
 Plan: [2026-10-07-scout-08.md](../../../docs/superpowers/plans/2026-10-07-scout-08.md)
 Task 2. Spec: [spec.md](../spec.md) (Testing Decisions + live-pilot decision).
@@ -67,7 +69,7 @@ not substitute a simulated harness for them.
 | Harness | Model label | Basis |
 |---|---|---|
 | A — Trae session | `DeepSeek-V4.1-Flash` | model label stated in the session environment |
-| B — codex CLI | **UNKNOWN** | not determined; pinning a model requires running a session (`codex exec -m <model>`), which Task 1 must not do |
+| B — codex CLI | `gpt-6.1-sol` | observed at run time in all four logged sessions (#7–#10, 2026-10-07); Task 1 correctly recorded UNKNOWN before any session ran |
 
 Tier mapping (cheap/senior per [`ROLES.md`](../../../.ai/workflow/ROLES.md)) is a
 Harness-local default, not an identity check. The Trae session label above is the
@@ -439,18 +441,26 @@ Rules:
   evidence-audit, decision, Plan, Progress, Handoff and Review files, plus the
   session records and raw logs.
 
-## 8. Planned handoff across Harnesses (Task 2)
+## 8. Cross-Harness handoff (Task 2) — as actually performed
 
-At least one persisted handoff must cross two actual Harnesses with no inherited
-sender conversation:
+The required persisted A → B crossing was performed at both **review**
+boundaries: the implementation ran on **Harness A** (Trae) and the independent
+review started in a **fresh Harness-B context** (`codex` CLI, read-only, launched
+with `-c windows.sandbox="unelevated"`; see [report.md](report.md) for the
+policy-block history). Receivers got only repo/Ticket/`resume` + referenced
+artifacts (prompt §5.5 style) and never the sender's conversation; each receiver's
+first action was `resume <ticket>`, recorded in its Review's "Session log".
 
-1. Scout runs on **Harness A** (Trae session), writes `evidence.md`, stops with a
-   checkpoint-handoff.
-2. Senior starts a **fresh** session on **Harness B** (codex CLI), receives only
-   `resume <ticket>` + referenced artifacts (prompt §5.5), and records its first
-   resumed action.
+1. Bug: A completed task 1 (`4a92d74`); B (session `01a116af-…`) ran 32 commands
+   and recorded `pass` (persisted `review.md`, reviewed `4a92d74`).
+2. Feature: A completed task 1 (`da08060`); B (session `01a116b7-…`) recorded
+   `changes_requested` (sole finding: unfilled handoff); after the recorded
+   rework task, a fresh B context (session `01a116cb-…`) re-reviewed `98a2720`
+   and recorded `pass`.
 
-Record the receiver inputs and the first resumed action for this transition.
+Raw receiver logs: [pilot/logs/](logs/). (The Task-1 *planned* scout→senior
+crossing was not used: the senior ran on Harness A; the actual crossing happened
+at the review boundaries above.)
 
 ## 9. Task 1 self-checklist
 

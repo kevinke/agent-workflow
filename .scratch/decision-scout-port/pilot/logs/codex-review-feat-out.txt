@@ -1,0 +1,104 @@
+## Metadata
+
+```yaml
+artifact_type: review
+format_version: 1
+ticket_id: PILOT-FEAT-01
+reviewed_commit: da08060bb21c608cad2f019ae55889fe8a81eb78
+plan_sha256: fab175916bc710e3cf5517abab0dbadf4b6e17b61de51d04145137064bac487e
+verdict: changes_requested
+```
+
+## Acceptance results
+
+- **Reload replaces the cached value:** Passed. The Plan’s first acceptance command printed `5`, exit `0`.
+- **Snapshot semantics:** Passed. The second acceptance command printed `7` after the source mapping was mutated to `9`, exit `0`.
+- **Protected behavior and production scope:** Passed. The implementation adds three lines within `CachedValue`. `__init__` and `read` are unchanged; `demo.py` is untouched; no imports, modules, or files were added. The commit also updates the workflow-required `progress.md` and `state.yaml`; these are administrative artifacts rather than production scope expansion.
+- **Invariants:** Static inspection confirms the specified signature, exactly one `config["value"]` extraction, storage only of the extracted value, no retained mapping reference, and an implicit `None` return.
+- **Workflow handoff:** Failed. The persisted `handoff.md` remains an unfilled template. This requires administrative rework before completing the cross-harness handoff.
+
+## Verification results
+
+The following records every shell command executed. Commands after command 1 used PowerShell with profile loading disabled.
+
+| # | Command | Observed result |
+|---|---|---|
+| 1 | `python d:\Code\agent-workflow\scripts\ai-workflow\main.py resume PILOT-FEAT-01` | Exit `0`. Phase `review`, status `active`, gate `sufficient` round `1`, next role `reviewer`, action `review and hand off`, task absent. Branch `pilot/feat`; clean repository. Evidence-anchor relevance assessment requested; checks reported no findings. PowerShell profile startup diagnostics preceded the successful resume output. |
+| 2 | `Get-Content .ai\work\PILOT-FEAT-01\state.yaml` | Exit `0`. Confirmed registered Plan identity, completed task `1/1`, sufficient gate bindings, and pending review. |
+| 3 | `Get-Content C:\Users\Kevin\.codex\skills\.system\superpowers\SKILL.md` | Exit `1`. Auxiliary skill lookup failed because the path does not exist. The correct catalog path was subsequently read in command 5. |
+| 4 | `Get-Content C:\Users\Kevin\.codex\skills\code-review\SKILL.md` | Exit `0`. Read standards/spec review instructions. |
+| 5 | `Get-Content C:\Users\Kevin\.codex\plugins\cache\openai-curated-remote\superpowers\6.4.2\skills\using-superpowers\SKILL.md` | Exit `0`. Read the skill at its actual catalog path. |
+| 6 | `Get-Content .ai\workflow\PROTOCOL.md, .ai\workflow\ROLES.md, .ai\workflow\ARTIFACTS.md` | Exit `0`. Read workflow contracts. Combined tool output was truncated; roles and artifact contracts were reread in command 8. |
+| 7 | `Get-Content .ai\work\PILOT-FEAT-01\evidence.md, .ai\work\PILOT-FEAT-01\evidence-audit.md, .ai\work\PILOT-FEAT-01\decision.md, .ai\work\PILOT-FEAT-01\progress.md, .ai\work\PILOT-FEAT-01\handoff.md, .scratch\PILOT-FEAT-01\plan.md` | Exit `0`. Read all requested ticket artifacts and the registered Plan. Observed snapshot decision, recorded acceptance results, and unresolved handoff placeholders. |
+| 8 | `Get-Content .ai\workflow\ROLES.md, .ai\workflow\ARTIFACTS.md` | Exit `0`. Obtained untruncated role and artifact contracts, including the Review and handoff requirements. |
+| 9 | `git show da08060 --stat` | Exit `0`. Three changed files: ticket `progress.md`, ticket `state.yaml`, and `service.py`; total `31 insertions`, `14 deletions`. |
+| 10 | `git show da08060 -- service.py` | Exit `0`. Exactly three added lines: a blank line, the `reload` declaration, and `self._value = config["value"]`. |
+| 11 | `$env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; c = CachedValue({'value': 1}); c.reload({'value': 5}); print(c.read())"` | Printed `5`; exit `0`. |
+| 12 | `$env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; src = {'value': 7}; c = CachedValue({'value': 1}); c.reload(src); src['value'] = 9; print(c.read())"` | Printed `7`; exit `0`. |
+| 13 | `git rev-parse 'da08060^{commit}'` | Printed `da08060bb21c608cad2f019ae55889fe8a81eb78`; exit `0`. |
+| 14 | `git merge-base --is-ancestor da08060 HEAD` | No output; exit `0`. Reviewed commit is an ancestor of HEAD. |
+| 15 | `Get-FileHash .scratch\PILOT-FEAT-01\plan.md -Algorithm SHA256` | Exit `0`. Actual hash, normalized to lowercase: `fab175916bc710e3cf5517abab0dbadf4b6e17b61de51d04145137064bac487e`. Matches both the sender’s expected value and State registration. |
+| 16 | `git status --porcelain=v1 --untracked-files=all` | No output; exit `0`. Clean worktree. |
+| 17 | `git rev-parse HEAD` | Printed `f06cec248d8792d1869ca967ca818a109e11b614`; exit `0`. |
+| 18 | `git diff da08060 HEAD --stat` | Exit `0`. Only ticket `state.yaml` changed: `4 insertions`, `4 deletions`. No reviewed-code or Plan drift. |
+| 19 | `Get-Content service.py, demo.py` | Exit `0`. Confirmed current class implementation and unchanged demo flow. |
+| 20 | `git diff 0a98f424ff7cb352b842176ac3e72ba91c164a43 HEAD -- service.py demo.py` | Exit `0`. Only the three-line `reload` addition appeared. Constructor, reader, and demo remain unchanged from the evidence snapshot. |
+| 21 | `Get-FileHash .ai\work\PILOT-FEAT-01\evidence.md, .ai\work\PILOT-FEAT-01\evidence-audit.md -Algorithm SHA256` | Exit `0`. Evidence hash `930cd02b9275ddabc786d5d88ee170247f7fa905d4ba66fbc9590eb54dc46d4b`; audit hash `8cc535552c3126e1ebdff44af49b3be9945de8d3d5178525015ae9d4447add9c`. Both match State bindings. |
+| 22 | `python d:\Code\agent-workflow\scripts\ai-workflow\main.py validate PILOT-FEAT-01` | Printed `validate: OK (no ERROR findings).`; exit `0`. |
+| 23 | `git status --porcelain=v1 --untracked-files=all` | No output; exit `0`. Final worktree remains clean. |
+
+Evidence gate binding is fresh. Evidence anchor F-01 describes the historical absence of `reload`; it remains valid for the observed commit but is superseded by this implementation. F-02’s constructor and reader facts remain applicable because their source is unchanged. The historical demo observation remains relevant to the unchanged demo flow; the demo was not rerun in this session.
+
+The failed auxiliary lookup in command 3 was recovered and leaves no acceptance-verification gap. No command was rejected by execution policy.
+
+## Findings
+
+1. **Incomplete persisted handoff — `.ai/work/PILOT-FEAT-01/handoff.md`.** Required sections still contain placeholders, including `<summary>`, `<remaining work>`, artifact `<path>`/`<hash>` values, `<exact next role / action / task...>`, and the Repository State fields. `PROTOCOL.md` §9 requires a completed handoff before stopping and sufficient persisted information for continuation from State plus handoff. `ROLES.md` assigns this responsibility to checkpoint-handoff, and `ARTIFACTS.md` specifies the required sections and repository-state values. The successful structural validation does not establish that these placeholder contents satisfy the handoff obligation.
+
+No production-code defect was found against the registered Plan.
+
+## Required rework
+
+The controller harness must complete `handoff.md` with concrete, verified contents:
+
+- Summarize the completed reload implementation and both passing acceptance commands.
+- Record artifact identities, verification limits, and the evidence-anchor relevance assessment.
+- Replace every remaining placeholder, using explicit `None` where appropriate.
+- Record branch `pilot/feat`, current HEAD, uncommitted-file status, validation result, and acceptance-test status.
+- State the remaining workflow action and responsible role consistently with State after recording this Review.
+
+No change to `service.py`, `demo.py`, or the registered implementation design is required. Persist this Review and perform the workflow’s applicable verdict and handoff steps from a write-enabled controller session.
+
+## Session log
+
+The first action was the requested resume invocation. It reported phase `review`, an active ticket, a sufficient round-1 gate, and next-action role `reviewer`. Subsequent hash checks confirmed fresh gate bindings. Resume flagged older evidence anchors; their relevance was assessed above.
+
+Commands ran in this order, using the complete invocations and results numbered in Verification results:
+
+1. Resume check — command 1.
+2. Read State — command 2.
+3. Auxiliary skill lookup at a nonexistent path — command 3.
+4. Read code-review skill — command 4.
+5. Read using-superpowers skill at its catalog path — command 5.
+6. Read workflow contracts — command 6.
+7. Read ticket artifacts and Plan — command 7.
+8. Reread roles and artifact contracts — command 8.
+9. Inspect implementation commit statistics — command 9.
+10. Inspect implementation source diff — command 10.
+11. Run replacement acceptance command — command 11.
+12. Run snapshot acceptance command — command 12.
+13. Resolve reviewed commit — command 13.
+14. Verify ancestry — command 14.
+15. Hash registered Plan — command 15.
+16. Check worktree status — command 16.
+17. Resolve HEAD — command 17.
+18. Check post-implementation drift — command 18.
+19. Read current source and demo — command 19.
+20. Assess source drift from evidence snapshot — command 20.
+21. Verify evidence/audit hash bindings — command 21.
+22. Run workflow validation — command 22.
+23. Check final worktree status — command 23.
+
+Two supplementary standards/spec reviewers assessed supplied observations without running commands or modifying files. Their findings supported code conformance and identified the incomplete handoff.
+
+No repository file was written, added, removed, committed, or pushed. State, claim, and persisted handoff remain unchanged; this response supplies the Review artifact for the controller to persist.

@@ -1,0 +1,137 @@
+## Metadata
+
+```yaml
+artifact_type: review
+format_version: 1
+ticket_id: PILOT-BUG-01
+reviewed_commit: null
+plan_sha256: null
+verdict: changes_requested
+```
+
+## Acceptance results
+
+All acceptance checks are **inconclusive** because execution policy rejected every shell invocation before execution.
+
+| Criterion supplied in the handoff | Observed result |
+|---|---|
+| `read()` reflects configuration mutations | Unverified; implementation and registered Plan could not be read. |
+| Acceptance run prints `initial=1`, `configured=2`, `actual=2` and exits 0 | Unverified; `demo.py` did not execute. |
+| Commit `4a92d74` changes only `service.py` and this ticket’s workflow artifacts | Unverified; commit inspection was blocked. |
+| Public signatures remain unchanged | Unverified; source diff was unavailable. |
+| No new imports | Unverified; source diff was unavailable. |
+| Nothing else modified | Unverified; worktree status check was blocked. |
+| Reviewed commit resolves and is an ancestor of HEAD | Unverified; both Git checks were blocked. |
+| Registered Plan matches the expected SHA256 | Unverified; hashing was blocked. Actual hash is unavailable. |
+| Any additional acceptance criteria or invariants in the registered Plan | Unverified; Plan contents were unavailable. |
+
+The metadata uses `null` because neither the full commit identity nor the actual Plan hash was observed. Supplying the requested verified hexadecimal values would require inventing evidence.
+
+## Verification results
+
+The following commands were submitted in the order shown. **Every invocation returned `CreateProcess … rejected: blocked by policy`.** None produced command output or a process exit status. Commands within each parallel batch had no observed execution order.
+
+1. Resume check:
+
+   ```powershell
+   python d:\Code\agent-workflow\scripts\ai-workflow\main.py resume PILOT-BUG-01
+   ```
+
+2. Authoritative state read:
+
+   ```powershell
+   Get-Content -LiteralPath '.ai/work/PILOT-BUG-01/state.yaml'
+   ```
+
+3. Skill instruction reads:
+
+   ```powershell
+   Get-Content -LiteralPath 'C:/Users/Kevin/.codex/plugins/cache/openai-curated-remote/superpowers/6.4.2/skills/using-superpowers/SKILL.md','C:/Users/Kevin/.codex/skills/code-review/SKILL.md'
+   ```
+
+4. Workflow contracts, ticket artifacts, and registered Plan reads:
+
+   ```powershell
+   Get-Content -LiteralPath '.ai/workflow/PROTOCOL.md','.ai/workflow/ROLES.md','.ai/workflow/ARTIFACTS.md','.ai/work/PILOT-BUG-01/evidence.md','.ai/work/PILOT-BUG-01/evidence-audit.md','.ai/work/PILOT-BUG-01/decision.md','.ai/work/PILOT-BUG-01/progress.md','.ai/work/PILOT-BUG-01/handoff.md','.scratch/PILOT-BUG-01/plan.md'
+   ```
+
+5. Commit statistics:
+
+   ```powershell
+   git show 4a92d74 --stat
+   ```
+
+6. Implementation diff:
+
+   ```powershell
+   git show 4a92d74 -- service.py
+   ```
+
+7. Acceptance execution:
+
+   ```powershell
+   $env:PYTHONDONTWRITEBYTECODE=1; python demo.py
+   ```
+
+8. Commit identity:
+
+   ```powershell
+   git rev-parse '4a92d74^{commit}'
+   ```
+
+9. Commit ancestry:
+
+   ```powershell
+   git merge-base --is-ancestor 4a92d74 HEAD
+   ```
+
+10. Registered Plan hash:
+
+    ```powershell
+    Get-FileHash .scratch\PILOT-BUG-01\plan.md -Algorithm SHA256
+    ```
+
+11. Worktree status:
+
+    ```powershell
+    git status --short
+    ```
+
+12. HEAD identity:
+
+    ```powershell
+    git rev-parse HEAD
+    ```
+
+13. Changed-file scope:
+
+    ```powershell
+    git diff-tree --no-commit-id --name-only -r 4a92d74
+    ```
+
+## Findings
+
+1. **Blocking verification gap:** execution policy prevented the resume check, contract and artifact reads, implementation inspection, acceptance execution, identity checks, and Plan hashing. This review cannot establish correctness or compliance with the registered Plan.
+2. **Artifact identity remains unverified:** `4a92d74`, HEAD `a50a955`, and expected Plan hash `67a62c313ba78db8013d03b1a8dd1e804d44d9580cf2db04ad958ee33a0b152c` are sender inputs only.
+3. No source defect was established. The `changes_requested` verdict follows the instruction to use that verdict when verification is inconclusive.
+
+## Required rework
+
+Restore an environment that permits the specified read-only verification, then repeat the independent review:
+
+1. Run resume first and observe phase, evidence gate freshness, and next-action role.
+2. Read all specified contracts and artifacts, including the registered Plan.
+3. Inspect the implementation commit and verify every Plan acceptance criterion and invariant.
+4. Run the acceptance command and observe its output and exit status.
+5. Verify commit identity, ancestry, HEAD, changed-file scope, worktree status, and actual Plan SHA256.
+6. Replace the unavailable metadata values with observed identities and issue an evidence-supported verdict.
+
+No implementation change is justified by the evidence available in this session.
+
+## Session log
+
+- The first action was submission of the required resume command. It was rejected before execution.
+- Resume output summary: **phase unknown; evidence gate freshness unknown; next-action role unknown**. The sender’s reported `review` phase was not independently confirmed.
+- No shell command actually ran. The ordered list of attempted commands is entries 1–13 in “Verification results”; entries 2–3 and 4–13 were submitted as separate parallel batches.
+- Between entries 1 and 2, a tool metadata lookup completed. It provided no repository evidence.
+- No repository file was modified, added, or removed. No commit or push was attempted. Workflow state and handoff files remain untouched as required.

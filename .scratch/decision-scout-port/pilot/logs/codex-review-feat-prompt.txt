@@ -1,0 +1,56 @@
+You are the independent Reviewer for ticket PILOT-FEAT-01 in the repository at
+C:\Users\Kevin\AppData\Local\Temp\scout008-target (branch pilot/feat). This is a
+live cross-harness handoff: the controller harness (Harness A, "Trae subagent")
+completed the implementation and advanced the ticket to phase `review`. You are
+Harness B (codex CLI) in a read-only sandbox (this session is launched with
+`-c windows.sandbox="unelevated"`). Do not modify, add, or remove any
+file in the repository; run only read-only commands and produce text.
+If any command is rejected by the execution policy, quote the exact rejected
+invocation and error text in your "Session log" section, and use verdict
+`changes_requested` with that verification gap described.
+
+Sender inputs for your handoff note:
+- Ticket: PILOT-FEAT-01 ("feature: CachedValue.reload(config)"); artifacts in .ai/work/PILOT-FEAT-01/
+- Repo HEAD after handoff: f06cec2 (phase-boundary commit; only state.yaml changed there)
+- The implemented code commit to review: da08060bb21c608cad2f019ae55889fe8a81eb78 ("ai-workflow(PILOT-FEAT-01): task 1 complete - add CachedValue.reload (snapshot semantics)")
+- Registered Plan: .scratch/PILOT-FEAT-01/plan.md; expected sha256 fab175916bc710e3cf5517abab0dbadf4b6e17b61de51d04145137064bac487e (verify it yourself and report the actual value)
+- Workflow CLI (Windows PowerShell, use `python`, never python3):
+  python d:\Code\agent-workflow\scripts\ai-workflow\main.py <command>
+  Your working directory is already the repository root.
+
+STEP 1 - your FIRST action MUST be the resume check. Run:
+  python d:\Code\agent-workflow\scripts\ai-workflow\main.py resume PILOT-FEAT-01
+Report its key output (phase, evidence gate freshness, next_action role) in the
+"Session log" section of your final message.
+
+STEP 2 - read the contracts and the ticket artifacts:
+- .ai/workflow/PROTOCOL.md, .ai/workflow/ROLES.md, .ai/workflow/ARTIFACTS.md (see the review.md contract)
+- .ai/work/PILOT-FEAT-01/: state.yaml, evidence.md, evidence-audit.md, decision.md, progress.md, handoff.md
+- .scratch/PILOT-FEAT-01/plan.md (the registered Plan; review the change against this Plan, not a redesigned one)
+
+STEP 3 - verify (read-only commands):
+- git show da08060 --stat  and  git show da08060 -- service.py
+- The Plan's two acceptance commands, expected to print 5 and 7 with exit 0:
+  $env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; c = CachedValue({'value': 1}); c.reload({'value': 5}); print(c.read())"
+  $env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; src = {'value': 7}; c = CachedValue({'value': 1}); c.reload(src); src['value'] = 9; print(c.read())"
+- Check the Plan's protected scope and invariants: __init__/read unchanged, reload performs exactly one extraction of config["value"] and holds no reference to the mapping afterwards (snapshot semantics), no new imports/files, demo.py untouched.
+- Confirm the reviewed commit resolves and is an ancestor of HEAD:
+  git rev-parse da08060^{commit}  and  git merge-base --is-ancestor da08060 HEAD
+- Compute the Plan hash: Get-FileHash .scratch\PILOT-FEAT-01\plan.md -Algorithm SHA256
+- git status --porcelain=v1 --untracked-files=all  (expect clean)
+
+STEP 4 - your final message must BE the Review artifact content, exactly in this structure:
+- H2 heading "Metadata", then a fenced yaml block with exactly these fields:
+  artifact_type: review
+  format_version: 1
+  ticket_id: PILOT-FEAT-01
+  reviewed_commit: <full 40-hex you verified>
+  plan_sha256: <lowercase sha256 you verified>
+  verdict: pass | changes_requested
+- then H2 sections in this exact order: "Acceptance results", "Verification results", "Findings", "Required rework".
+  - "Acceptance results" and "Verification results" must be substantive (list each acceptance criterion and its observed result; list every command you ran with its observed output/exit status).
+  - If verdict is `pass`: "Findings" and "Required rework" may be the explicit text `None`.
+  - If verdict is `changes_requested`: both must be substantive, with precise required rework.
+- After "Required rework" you may append ONE extra section "Session log" (this is the only allowed extra H2, and it must come last) containing: the resume output summary, the ordered list of commands you actually ran, and any handoff observations.
+
+Rules: read-only - do not write files, do not commit, do not push, do not alter the worktree. If any verification fails or is inconclusive, use verdict `changes_requested` and state the required rework precisely. Never claim a result you did not observe.

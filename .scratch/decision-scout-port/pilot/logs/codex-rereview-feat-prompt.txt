@@ -1,0 +1,101 @@
+You are the independent Reviewer for ticket PILOT-FEAT-01 in the repository at
+C:\Users\Kevin\AppData\Local\Temp\scout008-target (branch pilot/feat). This is a
+live cross-harness handoff and a RE-REVIEW after a recorded
+`changes_requested` verdict. You are Harness B (codex CLI) in a read-only
+sandbox (this session is launched with `-c windows.sandbox="unelevated"`). Do
+not modify, add, or remove any file in the repository; run only read-only
+commands and produce text.
+If any command is still rejected by the execution policy, quote the exact
+rejected invocation and error text in your "Session log" section, and use
+verdict `changes_requested` with that verification gap described.
+
+Context of this re-review:
+- The previous Review artifact (.ai/work/PILOT-FEAT-01/review.md, verdict
+  changes_requested, reviewed_commit da08060) found exactly ONE gap: the
+  persisted handoff.md was still an unfilled template. No production-code
+  defect was found; both acceptance commands already passed there.
+- The rework commit 72a3a21 completed handoff.md with concrete values (and
+  updated progress.md/state.yaml). No production code changed.
+- HEAD after rework: 98a2720 (a phase-boundary commit; only state.yaml changed
+  there). The worktree is clean.
+
+Sender inputs for your handoff note:
+- Ticket: PILOT-FEAT-01 ("feature: CachedValue.reload(config)"); artifacts in
+  .ai/work/PILOT-FEAT-01/
+- Implementation commits: da08060 (task 1: added CachedValue.reload), 72a3a21
+  (task 2: complete persisted handoff)
+- Registered Plan: .scratch/PILOT-FEAT-01/plan.md (now 2 tasks — task 2 is the
+  handoff rework); expected sha256
+  349913c6bd74570f9bedeb18d652192b62bee358906b98bafa2cf0555f8a107d
+  (verify it yourself and report the actual value)
+- Workflow CLI (Windows PowerShell, use `python`, never python3):
+  python d:\Code\agent-workflow\scripts\ai-workflow\main.py <command>
+  Your working directory is already the repository root.
+
+STEP 1 - your FIRST action MUST be the resume check. Run:
+  python d:\Code\agent-workflow\scripts\ai-workflow\main.py resume PILOT-FEAT-01
+Report its key output (phase, evidence gate freshness, next_action role) in the
+"Session log" section of your final message.
+
+STEP 2 - read the contracts and the ticket artifacts:
+- .ai/workflow/PROTOCOL.md, .ai/workflow/ROLES.md, .ai/workflow/ARTIFACTS.md
+  (see the review.md contract)
+- .ai/work/PILOT-FEAT-01/: state.yaml, evidence.md, evidence-audit.md,
+  decision.md, progress.md, handoff.md (the reworked deliverable), review.md
+  (the previous changes_requested review)
+- .scratch/PILOT-FEAT-01/plan.md (the registered Plan; review the change
+  against this Plan, not a redesigned one)
+
+STEP 3 - verify (read-only commands):
+- git show 72a3a21 --stat   (expect ONLY .ai/work/PILOT-FEAT-01/handoff.md,
+  progress.md, state.yaml changed in the rework commit)
+- git diff da08060 HEAD -- service.py demo.py   (expect NO output: no
+  production change since the reviewed implementation commit)
+- handoff.md completeness: every required section is filled with concrete
+  values and no placeholder remains — check e.g. with
+  Select-String -Path .ai\work\PILOT-FEAT-01\handoff.md -Pattern '<[a-z ]+>'
+  (expect no matches)
+- Re-run BOTH acceptance commands on this worktree:
+  $env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; c = CachedValue({'value': 1}); c.reload({'value': 5}); print(c.read())"
+  (expect prints 5, exit 0) and
+  $env:PYTHONDONTWRITEBYTECODE=1; python -c "from service import CachedValue; src = {'value': 7}; c = CachedValue({'value': 1}); c.reload(src); src['value'] = 9; print(c.read())"
+  (expect prints 7, exit 0)
+- Plan acceptance criteria/invariants: only service.py plus the ticket's own
+  workflow artifacts changed in the implementation; public signatures
+  unchanged; no new imports; demo.py untouched
+- reviewed_commit: use the full 40-hex of `git rev-parse HEAD` as it resolves
+  in your session (expected 98a2720; verify), and confirm it is an ancestor of
+  itself trivially is not needed — instead confirm 72a3a21 is an ancestor of
+  HEAD: git merge-base --is-ancestor 72a3a21 HEAD
+- Compute the Plan hash: Get-FileHash .scratch\PILOT-FEAT-01\plan.md -Algorithm SHA256
+- git status --porcelain=v1 --untracked-files=all   (expect clean)
+- python d:\Code\agent-workflow\scripts\ai-workflow\main.py validate PILOT-FEAT-01
+  (expect OK, no ERROR findings)
+
+STEP 4 - your final message must BE the Review artifact content, exactly in
+this structure:
+- H2 heading "Metadata", then a fenced yaml block with exactly these fields:
+  artifact_type: review
+  format_version: 1
+  ticket_id: PILOT-FEAT-01
+  reviewed_commit: <full 40-hex you verified from git rev-parse HEAD>
+  plan_sha256: <lowercase sha256 you verified>
+  verdict: pass | changes_requested
+- then H2 sections in this exact order: "Acceptance results", "Verification
+  results", "Findings", "Required rework".
+  - "Acceptance results" and "Verification results" must be substantive (list
+    each acceptance criterion and its observed result; list every command you
+    ran with its observed output/exit status).
+  - If verdict is `pass`: "Findings" and "Required rework" may be the explicit
+    text `None`.
+  - If verdict is `changes_requested`: both must be substantive, with precise
+    required rework.
+- After "Required rework" you may append ONE extra section "Session log" (this
+  is the only allowed extra H2, and it must come last) containing: the resume
+  output summary, the ordered list of commands you actually ran, and any
+  handoff observations.
+
+Rules: read-only - do not write files, do not commit, do not push, do not
+alter the worktree. If any verification fails or is inconclusive, use verdict
+`changes_requested` and state the required rework precisely. Never claim a
+result you did not observe.

@@ -76,3 +76,19 @@ CLI checks alone cannot establish the truth or usefulness of model-generated fac
   executor/reviewer sessions were not run (budget exhausted). Real records archived
   at [pilot/bug](pilot/bug/) and [pilot/feature](pilot/feature/); report at
   [pilot/report.md](pilot/report.md). No acceptance criterion was checked.
+- 2026-10-07 — **SCOUT-008 complete.** Both pilot tickets (`PILOT-BUG-01`,
+  `PILOT-FEAT-01`) reached `done` through real live sessions: Harness A (Trae;
+  scout, senior audit/decision/Plan, executors) and Harness B (`codex-cli 0.160.0`,
+  model `gpt-6.1-sol`, read-only) for the independent reviews. Persisted
+  clean-context handoffs crossed A → B at both review boundaries; the feature
+  review's `changes_requested` (unfilled handoff) was fixed via a recorded rework
+  task and cleared by a scoped re-review (`pass`). The host codex policy block
+  was resolved with `-c windows.sandbox="unelevated"` (86 logged commands green
+  across the three successful receiver sessions). Observed friction: byte-exact
+  v2 gate vs `core.autocrlf=true` (required `set-gate` re-attestation; archived
+  audits needed byte-form recovery). Budget 5 (first cap) + 10 (raised cap)
+  sessions; 205,882 codex tokens measured, Trae-side UNKNOWN. All ACs checked
+  with notes in [issues/08](issues/08-live-model-harness-pilot.md); records:
+  [pilot/report.md](pilot/report.md), [pilot/bug](pilot/bug/),
+  [pilot/feature](pilot/feature/), [pilot/logs](pilot/logs/). Kit commit not
+  pushed.
