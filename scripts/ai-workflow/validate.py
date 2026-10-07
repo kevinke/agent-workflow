@@ -254,8 +254,11 @@ def _validate_escalation(data, bad):
 
 def _git_dirty(root):
     try:
+        # `--no-optional-locks` keeps this strictly read-only: a plain
+        # `git status` opportunistically refreshes the stat cache and rewrites
+        # `.git/index`, which would break `resume`'s read-only guarantee.
         out = subprocess.run(
-            ["git", "-C", root, "status", "--porcelain"],
+            ["git", "--no-optional-locks", "-C", root, "status", "--porcelain"],
             capture_output=True, text=True, timeout=10,
         )
         if out.returncode != 0:

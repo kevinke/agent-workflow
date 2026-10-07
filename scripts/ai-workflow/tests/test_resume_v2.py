@@ -84,6 +84,38 @@ class ResumeV2Test(V2CLITestCase):
         self.assertEqual(self.capture_files(), before)
         self.assertEqual(self._mtimes(), before_mtimes)
 
+    def test_resume_does_not_refresh_git_index(self):
+        """Read-only covers Git internals too, not just tracked files.
+
+        A plain `git status` (as `validate._git_dirty` runs) opportunistically
+        refreshes the stat cache and rewrites `.git/index`; only
+        `--no-optional-locks` prevents that. Touch a tracked file so its cached
+        stat is stale, then assert the index is byte- and mtime-identical across
+        a resume call. This fails if the lock-safety flag is removed.
+        """
+        self.seed_v2("requirement")
+        index = os.path.join(self.root, ".git", "index")
+        self.assertTrue(os.path.exists(index), "fixture must have a Git index")
+
+        # Force a stale stat entry: a plain `git status` must then refresh (and
+        # rewrite) the index to record the new stat.
+        tracked = os.path.join(self.root, "src", "app.py")
+        stale = os.stat(tracked).st_mtime_ns + 5_000_000_000
+        os.utime(tracked, ns=(stale, stale))
+
+        with open(index, "rb") as fh:
+            before_bytes = fh.read()
+        before_mtime = os.stat(index).st_mtime_ns
+
+        result = self.cli("resume", "T1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        with open(index, "rb") as fh:
+            self.assertEqual(fh.read(), before_bytes,
+                             ".git/index bytes changed: resume refreshed it")
+        self.assertEqual(os.stat(index).st_mtime_ns, before_mtime,
+                         ".git/index mtime changed: resume refreshed it")
+
     def test_brief_sections_present_and_ordered(self):
         self.seed_v2("requirement")
         result = self.cli("resume", "T1")

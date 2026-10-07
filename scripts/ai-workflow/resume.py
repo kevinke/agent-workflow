@@ -285,8 +285,8 @@ def _render_next_action(lines, data):
         lines.append("  task    : %s (no executable task)" % _PLACEHOLDER)
     else:
         lines.append("  task    : %s (executable task)" % task)
-    lines.append("  handoff : checkpoint-handoff (record handoff.md before "
-                 "stopping)")
+    lines.append("  reminder: record handoff.md before stopping (the "
+                 "checkpoint-handoff role owns the handoff discipline)")
 
 
 def _render_repository(lines, root):
