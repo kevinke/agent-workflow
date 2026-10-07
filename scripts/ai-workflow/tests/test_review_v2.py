@@ -243,6 +243,32 @@ class ReviewV2Test(V2CLITestCase):
         self.write_review("pass", reviewed_commit=side)
         self._assert_rejected()
 
+    def _index_tmpdirs(self):
+        """Names of the review probe's temp index dirs in the system temp dir."""
+        return {name for name in os.listdir(tempfile.gettempdir())
+                if name.startswith("ai-workflow-index-")}
+
+    def test_unreadable_index_is_a_contract_error(self):
+        """An index-copy failure degrades to ContractError (no traceback/leak).
+
+        A directory at the index path is unreadable-as-a-file on every platform
+        (IsADirectoryError on POSIX, PermissionError on Windows), so the copy in
+        `_changed_paths` fails deterministically.
+        """
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        index = os.path.join(self.root, ".git", "index")
+        os.remove(index)
+        os.mkdir(index)
+        try:
+            before = self._index_tmpdirs()
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review.code_drift(self.root, self.TICKET, head,
+                                  ".ai/work/T1/plan.md")
+            self.assertIn("cannot read the Git index", str(ctx.exception))
+            self.assertEqual(self._index_tmpdirs(), before)  # no temp-dir leak
+        finally:
+            os.rmdir(index)
+
     # -- ticket / phase / completeness rejections ---------------------------
 
     def test_v1_ticket_rejected(self):

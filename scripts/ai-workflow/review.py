@@ -99,15 +99,20 @@ def _changed_paths(root, reviewed_commit):
     """
     env = None
     tmpdir = None
-    index = _git_index_path(root)
-    if index is not None:
-        tmpdir = tempfile.mkdtemp(prefix="ai-workflow-index-")
-        env = dict(os.environ)
-        env["GIT_INDEX_FILE"] = os.path.join(tmpdir, "index")
-        if os.path.exists(index):
-            shutil.copyfile(index, env["GIT_INDEX_FILE"])
-
     try:
+        index = _git_index_path(root)
+        if index is not None:
+            tmpdir = tempfile.mkdtemp(prefix="ai-workflow-index-")
+            env = dict(os.environ)
+            env["GIT_INDEX_FILE"] = os.path.join(tmpdir, "index")
+            if os.path.exists(index):
+                try:
+                    shutil.copyfile(index, env["GIT_INDEX_FILE"])
+                except OSError as exc:
+                    raise contracts.ContractError(
+                        "cannot read the Git index for a read-only drift "
+                        "check: %s" % exc)
+
         paths = []
         for args in (
             ["diff", "--name-only", "-z", "--no-renames",
