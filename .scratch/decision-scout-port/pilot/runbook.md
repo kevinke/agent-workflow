@@ -17,6 +17,11 @@ Issue: [08-live-model-harness-pilot.md](../issues/08-live-model-harness-pilot.md
 > `git --version`, verify `ai-workflow --help` works. It must NOT authenticate or
 > run any paid/real model session.
 
+Provenance: this ruling was issued by the SDD controller for plan
+`2026-10-07-scout-08.md` when dispatching Task 1, to prevent any task from
+launching real model sessions that spend the user's external quota without
+consent.
+
 Consequence: this runbook records prerequisites and the exact procedure. No real
 model session was launched while producing it. Task 2 may only run real sessions
 after the user has explicitly consented to spend their external model quota. If
@@ -109,39 +114,40 @@ reach git or the CLI is a blocker to record, not something to simulate.
 ## 2. Disposable target setup (verified end to end)
 
 Use a throwaway target outside the kit repo. Verified commands (Windows,
-PowerShell 7), where `<KIT>` = `d:\Code\agent-workflow`:
+PowerShell 7), where `<KIT>` = `d:\Code\agent-workflow`. The CLI resolves its root
+from the **current directory**, so `ai-workflow` commands run after
+`Set-Location $T` (the section below shows the exact points).
 
 ```powershell
 $T = "$env:TEMP\scout008-target"          # disposable; delete when done
 Remove-Item -Recurse -Force $T -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $T | Out-Null
-git -C $T init -q
+git -C $T init -q -b main                 # pin the default branch name
 git -C $T config user.email "pilot@example.invalid"
 git -C $T config user.name  "Pilot"
 
-# install the protocol (idempotent). CLI root = cwd for everything else.
+# install the protocol (idempotent, target = $T), then ONE ROOT baseline commit
 python <KIT>\scripts\ai-workflow\main.py init $T
-
-Set-Location $T
-
-# === BUG ticket, on its OWN branch: branch -> start -> baseline commit ===
-# create+switch branch BEFORE start and BEFORE the baseline commit
-git -C $T checkout -b pilot/bug
-python <KIT>\scripts\ai-workflow\main.py start PILOT-BUG-01 --title "bug: read after config change"
-# copy the fixture and record the task base (stable observed_commit) on pilot/bug
 Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
 Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\demo.py    $T\demo.py
-git -C $T add service.py demo.py
-git -C $T commit -q -m "pilot: add scout-fixture baseline"
+git -C $T add -A
+git -C $T commit -q -m "pilot: root baseline (protocol + fixture)"
+#    -> this single commit on `main` is the common root and the stable base
 
-# === FEATURE ticket, on its OWN branch: branch -> start -> baseline commit ===
-# create+switch branch BEFORE start and BEFORE the baseline commit
-git -C $T checkout -b pilot/feat
+Set-Location $T              # ai-workflow resolves its root from the cwd
+
+# === BUG ticket: branch FROM THE ROOT, then start (NO second baseline) ===
+git checkout -b pilot/bug
+python <KIT>\scripts\ai-workflow\main.py start PILOT-BUG-01 --title "bug: read after config change"
+git add -A                   # commit the ticket's own scaffold so the tree stays clean
+git commit -q -m "pilot(PILOT-BUG-01): scaffold ticket"
+
+# === FEATURE ticket: branch from the SAME root, NOT from pilot/bug ===
+git checkout main            # return to the root first
+git checkout -b pilot/feat
 python <KIT>\scripts\ai-workflow\main.py start PILOT-FEAT-01 --title "feature: CachedValue.reload(config)"
-# feature only needs service.py
-Copy-Item <KIT>\.ai\workflow\examples\scout-fixture\service.py $T\service.py
-git -C $T add service.py
-git -C $T commit -q -m "pilot: add scout-fixture baseline"
+git add -A
+git commit -q -m "pilot(PILOT-FEAT-01): scaffold ticket"
 ```
 
 Two Tickets on two branches keep bug and feature from interfering:
@@ -149,21 +155,42 @@ Two Tickets on two branches keep bug and feature from interfering:
 - Bug: branch `pilot/bug`, Ticket `PILOT-BUG-01`.
 - Feature: branch `pilot/feat`, Ticket `PILOT-FEAT-01`.
 
-Switch points (do not infer them — follow these exactly; the code block above
-already runs them in order):
+Both branches are created **from the same root baseline commit on `main`**, so they
+share a common base and neither contains the other's work. Creating `pilot/feat`
+from `pilot/bug` would make the two branches point at the **same** commit (the
+feature branch would inherit the bug's files and its "baseline" commit would have
+nothing to record) — do not do that.
 
-1. Bug: `git -C $T checkout -b pilot/bug` runs **before** `start PILOT-BUG-01`
-   and **before** the bug baseline commit, so `start`'s files and the baseline
-   commit both land on `pilot/bug`.
-2. Feature: `git -C $T checkout -b pilot/feat` runs **before**
-   `start PILOT-FEAT-01` and **before** the feature baseline commit, so both land
-   on `pilot/feat`. It switches away from `pilot/bug`, whose baseline commit is
-   already recorded at that point.
-3. Each Ticket block is self-contained (`branch -> start -> baseline commit`), so
-   HEAD is on the correct branch at every step; never run both `start`s on one
-   branch.
-4. To resume the bug's work later, switch back explicitly:
-   `git -C $T checkout pilot/bug` (or `git -C $T switch pilot/bug`).
+Switch points (follow these exactly; the code block above runs them in order):
+
+1. **Root baseline** — one commit on `main`, right after `init` + the fixture copy.
+   It carries the protocol install and both fixture files, and is the shared base
+   for both Tickets.
+2. **Bug** — `git checkout -b pilot/bug` is created **from `main`**; `start
+   PILOT-BUG-01` then records `repository.base_commit` = the root commit and
+   `repository.branch` = `pilot/bug`. There is **no second fixture baseline**: the
+   root commit is the base. The following `git commit` is the ticket's own
+   **scaffold** commit (its `state.yaml`/artifacts), not a baseline.
+3. **Feature** — `git checkout main` returns to the root first, then `git checkout
+   -b pilot/feat` branches from the **same root** (never from `pilot/bug`).
+   `start PILOT-FEAT-01` records the same base commit; again no duplicate
+   fixture baseline.
+4. Because each branch commits its **own** scaffold, the branches stay isolated:
+   the bug's untracked scaffold cannot leak into a feature commit, and vice versa.
+   To move between them later use `git switch pilot/bug` / `git switch pilot/feat`.
+
+Stable base / `observed_commit`: it comes from the **root baseline commit** on
+`main`. `start` records it as `repository.base_commit` and `repository.branch`.
+Note: `start` on an **unborn HEAD** (no commit yet) records
+`base_commit: null`, so make the root baseline commit **before** running `start`.
+
+Verify isolation from the target (dry-run evidence, 2026-10-07):
+
+```powershell
+git merge-base pilot/bug pilot/feat                                # prints the root commit
+git ls-tree -r --name-only pilot/feat | Select-String PILOT-BUG-01  # empty
+git ls-tree -r --name-only pilot/bug  | Select-String PILOT-FEAT-01 # empty
+```
 
 Artifacts are written under `.ai/work/<ticket-id>/` (verified: `start` created
 `state.yaml`, `evidence.md`, `handoff.md`, `progress.md`; `decision.md`,
