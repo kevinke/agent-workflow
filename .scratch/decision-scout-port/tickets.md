@@ -52,3 +52,16 @@ CLI checks alone cannot establish the truth or usefulness of model-generated fac
   probes re-verified unchanged. See
   [issues/08](issues/08-live-model-harness-pilot.md) and
   [pilot/report.md](pilot/report.md). No Ticket was flipped to done.
+- 2026-10-07 — Implementation of SCOUT-001..008 is complete. 01–02 were
+  fast-forward merged into `master` (`24228e2`); 03–08 live on branch
+  `decision-scout-port` (not pushed, pending the user's merge decision). A
+  branch-wide final review (spanning all 22 commits) found one load-bearing
+  cross-Ticket defect: a Ticket in the normal `review` phase with the scaffold
+  `review.verdict: pending` was reported by `validate` as "a verdict is recorded"
+  and made `resume` exit 1, contradicting the same file's `reconstruction_problems`
+  and STATE_SCHEMA. Fixed in `8c280d4` (one-line narrowing + two regression tests);
+  scoped re-review resolved it and the full suite passed (309 tests, skipped=1).
+  Every other review finding was triaged as safe-to-defer. SCOUT-008 remains
+  pending/blocked (see above). Per-issue `Status:` lines and acceptance-criteria
+  boxes were left unchanged: this tracker documents no terminal `Status` value for
+  `Type: task` tickets, so none was invented.
