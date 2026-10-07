@@ -56,7 +56,7 @@ A phase changes only via the transitions above. Do not invent transitions.
 
 ## 7. Writing artifacts
 
-Artifact contracts are in ARTIFACTS.md. In brief: evidence.md is the Scout Report, collected by a scout; evidence-audit.md answers only sufficiency questions; decision.md is senior-only; progress.md logs at task granularity; handoff.md has fixed sections plus a Repository State block. Each artifact's writer is defined in ROLES.md.
+Artifact contracts are in ARTIFACTS.md. In brief: evidence.md is the Scout Report, collected by a scout; evidence-audit.md answers only sufficiency questions; decision.md is senior-only; progress.md logs at task granularity per its template (`.ai/workflow/templates/progress.md`: actual changes, verification/results, deviations, unresolved problems); handoff.md has fixed sections plus a Repository State block. Each artifact's writer is defined in ROLES.md.
 
 ### Scouting and auditing
 

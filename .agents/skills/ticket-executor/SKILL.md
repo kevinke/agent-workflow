@@ -29,10 +29,10 @@ A thin operational procedure. All business rules live in the protocol under
    registered, unchanged Plan is required and `--total N` cannot override the
    registered count; if the ticket is not ready the command rejects the change
    and leaves the State untouched.
-7. Write `progress.md` per the contract in `.ai/workflow/ARTIFACTS.md`: for the
-   completed task, the actual changes, the verification and its observed result,
-   any deviation from the plan, and unresolved problems. Never copy the Plan's
-   task contracts; not every shell command.
+7. Write `progress.md` per the contract in `.ai/workflow/templates/progress.md`:
+   for the completed task, the actual changes, the verification and its observed
+   result, any deviation from the plan, and unresolved problems. Never copy the
+   Plan's task contracts; not every shell command.
 8. Commit per the protocol's commit discipline and per-task granularity.
 9. When all tasks are complete, write `handoff.md` and report readiness for
    the `review` transition; otherwise write `handoff.md` before stopping.
