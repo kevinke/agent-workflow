@@ -14,8 +14,10 @@ Read-only: never writes state.yaml.
 import os
 import subprocess
 
+import contracts
 import parser
 import state
+import workflow_v2
 from status import list_tickets
 
 __all__ = ["validate_ticket", "validate_repo", "PHASES", "STATUSES", "GATES",
@@ -37,6 +39,63 @@ ROLES = {
 # Phases that require a sufficient evidence gate before they may be entered.
 # Public: shared with the `mutate` module so write-time checks use one rule.
 DECISIONWARDS = {"technical_decision", "planning", "implementation", "review", "done"}
+
+# Phases whose Evidence report must be a structurally valid concrete report
+# on v2 Tickets (requirement/evidence_collection reports may still be
+# pending scaffolds and are only WARNed about, per the common phase rules).
+_V2_EVIDENCE_STRUCTURAL_PHASES = {
+    "evidence_audit", "followup_evidence",
+    "technical_decision", "planning", "implementation", "review", "done",
+}
+_V2_AUDIT_STRUCTURAL_PHASES = {
+    "technical_decision", "planning", "implementation", "review", "done",
+}
+_V2_PENDING_PHASES = {"requirement", "evidence_collection"}
+
+
+def _validate_v2_artifacts(work_dir, ticket, data, filenames, phase, bad, warn):
+    """Structural artifact contracts for v2 Tickets; v1 semantics unchanged."""
+    evidence_block = data.get("evidence") or {}
+    gate = evidence_block.get("gate")
+    round_no = evidence_block.get("round")
+
+    ev_path = os.path.join(work_dir, filenames.get("evidence", "evidence.md"))
+    audit_path = os.path.join(
+        work_dir, filenames.get("evidence_audit", "evidence-audit.md"))
+
+    if phase in _V2_PENDING_PHASES:
+        # A scaffold is not a completed report: surface shape problems as
+        # WARN so placeholders here are never structural failures.
+        if os.path.exists(ev_path):
+            try:
+                report = contracts.read_artifact(ev_path, "evidence")
+                problems = contracts.validate_evidence(report, ticket)
+            except contracts.ContractError as exc:
+                warn("evidence.md is not a structured report yet (%s)" % exc)
+            else:
+                for msg in problems:
+                    warn("evidence.md pending scaffold: %s" % msg)
+        return
+
+    if phase in _V2_EVIDENCE_STRUCTURAL_PHASES and os.path.exists(ev_path):
+        try:
+            report = contracts.read_artifact(ev_path, "evidence")
+            problems = contracts.validate_evidence(report, ticket)
+        except contracts.ContractError as exc:
+            bad("evidence.md violates the artifact grammar: %s" % exc)
+        else:
+            for msg in problems:
+                bad("evidence.md: %s" % msg)
+
+    if phase in _V2_AUDIT_STRUCTURAL_PHASES and os.path.exists(audit_path):
+        try:
+            report = contracts.read_artifact(audit_path, "evidence-audit")
+            problems = contracts.validate_audit(report, ticket, gate, round_no)
+        except contracts.ContractError as exc:
+            bad("evidence-audit.md violates the artifact grammar: %s" % exc)
+        else:
+            for msg in problems:
+                bad("evidence-audit.md: %s" % msg)
 
 _HANDOFF_SECTIONS = [
     "What was done",
@@ -96,6 +155,17 @@ def validate_ticket(root, ticket, findings):
 
     bad = lambda msg: findings.append(Finding("ERROR", "[%s] %s" % (ticket, msg)))
     warn = lambda msg: findings.append(Finding("WARN", "[%s] %s" % (ticket, msg)))
+
+    # --- workflow version + shared v2 State problems ---------------------------
+    version_problems = workflow_v2.problems(root, data)
+    for msg in version_problems:
+        bad(msg)
+    ver = None
+    if not version_problems:
+        try:
+            ver = workflow_v2.version(data)
+        except contracts.ContractError:
+            ver = None  # already reported above
 
     # --- schema scalar enums -------------------------------------------------
     phase = data.get("phase")
@@ -192,6 +262,11 @@ def validate_ticket(root, ticket, findings):
     if phase in {"planning", "implementation", "review", "done"} \
             and not artifact_exists("decision"):
         bad("missing artifact decision.md for phase=%s" % phase)
+
+    # --- v2 structured artifact contracts --------------------------------------
+    if ver == 2:
+        _validate_v2_artifacts(work_dir, ticket, data, filenames, phase,
+                               bad, warn)
 
     # --- handoff field completeness -----------------------------------------
     handoff_path = os.path.join(work_dir, filenames["handoff"])

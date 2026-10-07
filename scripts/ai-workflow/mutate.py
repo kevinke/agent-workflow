@@ -10,8 +10,10 @@ violations at write time instead of relying on a later `validate` pass.
 import datetime
 import os
 
+import contracts
 import state
 import validate
+import workflow_v2
 
 __all__ = ["MutateError", "TRANSITIONS", "DEFAULT_NEXT",
            "advance", "claim", "complete_task", "set_gate", "escalate",
@@ -60,9 +62,14 @@ def _load(root, ticket_id):
         raise MutateError(
             "no ticket %s under .ai/work/ (run `start` or `adopt` first)" % ticket_id)
     try:
-        return state.load_file(path)
+        data = state.load_file(path)
     except state.StateError as exc:
         raise MutateError(str(exc))
+    try:
+        workflow_v2.version(data)
+    except contracts.ContractError as exc:
+        raise MutateError(str(exc))
+    return data
 
 
 def _save(root, ticket_id, data):

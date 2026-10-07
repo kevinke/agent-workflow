@@ -7,6 +7,22 @@
 - `schema_version: 1`
 - `workflow_version: 1`
 
+### `workflow_version` (v2 extension)
+
+`schema_version` stays fixed at 1. `workflow_version` selects the rule set and
+is additive:
+
+- `1` — the current fixed default. Existing Tickets and the template keep this
+  value; an absent field means `1`, so every pre-existing State reads as v1.
+- `2` — an explicit upgrade to the stricter v2 contracts.
+
+Only the integers `1` and `2` are accepted. A boolean (`true`/`false`), zero,
+a string such as `"2"`, or any future value such as `3` is rejected: `validate`
+reports it as an ERROR Finding and a mutation refuses it before writing State,
+without a traceback and without changing the State bytes. Version 1 Tickets
+retain their exact semantics until explicitly upgraded; the template is not
+bumped by this extension.
+
 ## Phases
 
 `requirement`, `evidence_collection`, `evidence_audit`, `followup_evidence`, `technical_decision`, `planning`, `implementation`, `review`, `done`. `UNINITIALIZED` is the repo-level state before any ticket exists.
@@ -69,6 +85,26 @@ Unknown fields are silently ignored — never an error, never deleted. A harness
 ## Updating
 
 Every save stamps `updated_at` with the current ISO-8601 timestamp.
+
+## v2 Ticket structural validation
+
+`validate` reads `workflow_version` first. Version 1 Tickets keep their existing
+validation unchanged. A Version 2 Ticket is additionally checked against the
+artifact grammar in `ARTIFACTS.md`:
+
+- In `requirement` and `evidence_collection`, an Evidence report may still be a
+  pending scaffold. Shape problems there are WARN, and a scaffold is never
+  treated as a completed report (its placeholders are not structural failures).
+- From `evidence_audit` onward, a present `evidence.md` must be a structurally
+  valid report: a grammar violation or any structural problem is an ERROR.
+- From `technical_decision` onward, a present `evidence-audit.md` must be
+  structurally valid, and its Metadata `round` and `gate` must match the State
+  and CLI values.
+
+Structural validity is not proof that acceptance criteria passed; it checks
+required sections, IDs, references, tags, metadata and anchor presence only.
+This extension adds only version selection and structural validation; the
+remaining additive v2 State fields are introduced by later Tickets.
 
 ## Migration blocks (adopted repos only)
 

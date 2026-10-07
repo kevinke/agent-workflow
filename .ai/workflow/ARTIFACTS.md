@@ -144,3 +144,40 @@ Execution log at task granularity: completed task, files changed, tests run, dev
 ## handoff.md
 
 Fixed sections: What was done / What remains / Important discoveries / Current failure if any / Do not repeat / Next recommended action. Plus a Repository State block: branch, HEAD, uncommitted files, test status.
+
+## v2 structural validation (workflow_version 2)
+
+The grammar above is enforced structurally for Version 2 Tickets; Version 1
+Tickets keep their existing semantics. Structural validation checks shapes, not
+truth: it never proves a claim or judges a design.
+
+Reading rules:
+
+- Only H2/H3 headings **outside code fences** become sections/records; a fenced
+  fake heading is never a boundary.
+- Metadata is the **first** fenced yaml block under the exact H2 `Metadata`;
+  only that block goes through the restricted parser. Duplicate Metadata keys
+  and duplicate DQ/F IDs are errors, as are constructs outside the restricted
+  YAML subset (ADR-0002).
+
+Reported structural problems include:
+
+- missing required Metadata fields or required H2 sections, sections out of order
+- illegal IDs (DQ-NN / F-NN), missing or illegal finding tag, illegal
+  `Method`/`Answer` values
+- empty values or bare `<placeholder>` stand-ins in required fields
+- dangling references: `Facts` naming an unknown F-ID, `Questions`/`Basis`
+  naming an unknown DQ-ID (an explicit `UNKNOWN` fact-link stays valid)
+- an `INFERENCE` finding without a `Basis`
+- a `code:` source with neither a line reference nor a named symbol/key
+- a Metadata `ticket_id` that does not match the Ticket
+
+The Audit keeps exactly the four sufficiency-question H2s; its Metadata
+`round`/`gate` must match the State and CLI values, and `evidence_sha256` must
+be a SHA-256 digest.
+
+Pending scaffold reports are only WARNed in `requirement`/`evidence_collection`
+and are never treated as completed reports; from `evidence_audit` onward the
+present reports must be structurally valid. Structural validity is not proof
+that acceptance criteria passed.
+
