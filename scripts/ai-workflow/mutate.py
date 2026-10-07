@@ -592,14 +592,18 @@ def register_plan(root, ticket_id, path, total):
         raise MutateError(
             "the new Plan has %d tasks but %d are already complete; a new total "
             "cannot be less than the completed count" % (len(tasks), current))
-    if current and len(old_hashes) < current:
-        raise MutateError(
-            "implementation.task_hashes does not cover the %d completed tasks; "
-            "reconcile the registered Plan before re-registering" % current)
-    if current and [t["sha256"] for t in tasks[:current]] != old_hashes[:current]:
-        raise MutateError(
-            "cannot re-register: the contract of a completed task (1..%d) "
-            "changed; completed tasks must stay unchanged" % current)
+    if mode != "reconstruction":
+        # A recorded senior reconstruction first *records* the completed task
+        # hashes from the reconstructed Plan (there were none on v1), so the
+        # completed-prefix identity checks do not apply to that one conversion.
+        if current and len(old_hashes) < current:
+            raise MutateError(
+                "implementation.task_hashes does not cover the %d completed tasks; "
+                "reconcile the registered Plan before re-registering" % current)
+        if current and [t["sha256"] for t in tasks[:current]] != old_hashes[:current]:
+            raise MutateError(
+                "cannot re-register: the contract of a completed task (1..%d) "
+                "changed; completed tasks must stay unchanged" % current)
     if mode == "review" and len(tasks) <= len(old_hashes):
         raise MutateError(
             "changes_requested review rework must strictly append tasks "
@@ -804,6 +808,21 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False,
                 "a human escalation must record the user's answer: mention the "
                 "user and the answer in --resolution")
 
+        # A converted v1 Ticket may only be cleared once the retained phase's
+        # current contracts are genuinely satisfied. The check excludes only the
+        # reconstruction flag's own blocker (it is being cleared here), never the
+        # artifact/counter/Plan/gate/adoption errors; it is computed before any
+        # mutation so a rejection leaves State bytes unchanged.
+        upgrade_block = data.get("upgrade") or {}
+        reconstructing = bool(upgrade_block.get("requires_reconstruction"))
+        if reconstructing:
+            problems = validate.reconstruction_problems(root, ticket_id, data)
+            if problems:
+                raise MutateError(
+                    "cannot clear the reconstruction: the retained phase's "
+                    "current contracts are not yet satisfied: %s"
+                    % "; ".join(problems))
+
         previous = esc.get("previous_status")
         if previous == "escalation_required":
             raise MutateError(
@@ -820,6 +839,12 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False,
         data["escalation"] = esc
         data["status"] = previous
         data["next_action"] = workflow_v2.next_action(data, data.get("phase"))
+        if reconstructing:
+            # Clear the reconstruction flag in the same save: the retained phase
+            # was just checked against its current contracts above.
+            cleared_upgrade = dict(upgrade_block)
+            cleared_upgrade["requires_reconstruction"] = False
+            data["upgrade"] = cleared_upgrade
         _save(root, ticket_id, data)
         return "%s: escalation cleared (status=%s)" % (ticket_id, previous)
 

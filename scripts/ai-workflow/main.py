@@ -17,6 +17,7 @@ Usage:
     ai-workflow resume <ticket-id>
     ai-workflow install-skills [target]
     ai-workflow upgrade
+    ai-workflow upgrade-ticket <ticket-id>
 
 Subcommands implement the workflow state machine (spec §9); the semantic
 mutators (advance/claim/release/complete-task/set-gate/escalate/set-status)
@@ -39,7 +40,8 @@ import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
             "release", "complete-task", "register-plan", "set-gate", "escalate",
-            "set-status", "set-review", "resume", "install-skills", "upgrade"}
+            "set-status", "set-review", "resume", "install-skills", "upgrade",
+            "upgrade-ticket"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
@@ -68,6 +70,8 @@ commands:
   resume <ticket-id>  print a read-only continuation brief (exit 1 on ERROR blockers)
   install-skills [target]  install the eight role skills into the target repo (idempotent)
   upgrade             explicit protocol upgrade using workflow_version
+  upgrade-ticket <ticket-id>  explicitly convert one active v1 Ticket to
+                      workflow_version 2 (records the senior reconstruction)
 """
 
 
@@ -256,6 +260,21 @@ def cmd_upgrade(args, root):
         print("bumped tickets:")
         for t in bumped:
             print("  %s" % t)
+    return 0
+
+
+def cmd_upgrade_ticket(args, root):
+    """Explicitly convert one v1 Ticket to v2: usage -> 2, protocol reject -> 1."""
+    rest = args[1:]
+    if not rest or rest[0].startswith("--") or len(rest) > 1:
+        sys.stderr.write("usage: ai-workflow upgrade-ticket <ticket-id>\n")
+        return 2
+    ticket_id = rest[0]
+    try:
+        print(upgrade.upgrade_ticket(root, ticket_id))
+    except upgrade.UpgradeError as exc:
+        sys.stderr.write("upgrade-ticket: %s\n" % exc)
+        return 1
     return 0
 
 
@@ -449,6 +468,8 @@ def main(argv=None):
         return cmd_start(argv, root)
     if cmd == "upgrade":
         return cmd_upgrade(argv, root)
+    if cmd == "upgrade-ticket":
+        return cmd_upgrade_ticket(argv, root)
     if cmd == "advance":
         return cmd_advance(argv, root)
     if cmd == "claim":

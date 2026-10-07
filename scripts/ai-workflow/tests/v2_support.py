@@ -41,6 +41,11 @@ ROUTES = {
     "done": (None, None),
 }
 
+# v1 Tickets keep the frozen route table: in `review` the route is the
+# mechanical checkpoint-handoff, not the v2 independent `reviewer`.
+V1_ROUTES = dict(ROUTES)
+V1_ROUTES["review"] = ("checkpoint-handoff", "review and hand off")
+
 DECISION_TEMPLATE = '''\
 # Decision - %(ticket)s
 
@@ -366,6 +371,55 @@ class V2CLITestCase(unittest.TestCase):
         data["next_action"] = {"role": role, "action": action, "task": None}
         self.write_state(data)
 
+    def seed_v1(self, phase):
+        """Explicit workflow_version=1 state at `phase`, phase-appropriate route.
+
+        Never assumes the bundled template is v1 (Task 2 flips it): the version
+        is written explicitly. The `review` route is the frozen v1
+        checkpoint-handoff, not the v2 reviewer.
+        """
+        role, action = V1_ROUTES[phase]
+        data = self.read_state()
+        data["workflow_version"] = 1
+        data["phase"] = phase
+        data["status"] = "active"
+        data["evidence"] = {"round": 0, "gate": "insufficient"}
+        data["next_action"] = {"role": role, "action": action, "task": None}
+        self.write_state(data)
+
+    def prepare_v2_review(self, total=1):
+        """Bring a v2 ticket to `review` with a coherent completed Plan + audit.
+
+        Drives the public commands: a current sufficient gate, a registered
+        `total`-task Plan with every task complete, and `decision.md` written and
+        committed. The tree is committed so the returned commit is a clean,
+        reviewed HEAD ready for `write_review` + `set-review`.
+        """
+        self.seed_v2("evidence_audit")
+        self.write_evidence(round_no=1)
+        self.write_audit(gate="sufficient", round_no=1)
+        proc = self.cli("set-gate", self.TICKET, "--gate", "sufficient",
+                        "--round", "1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        for target in ("technical_decision", "planning"):
+            proc = self.cli("advance", self.TICKET, "--to", target)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rel = self.write_plan(total)
+        proc = self.cli("register-plan", self.TICKET, "--path", rel,
+                        "--total", str(total))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_decision()
+        self.commit_code("src/feature.py", "def feature():\n    return 1\n")
+        for _ in range(total):
+            proc = self.cli("complete-task", self.TICKET, "--total", str(total))
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "review")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.commit_all("fixture: prepare review tree")
+        return self._git("rev-parse", "HEAD").stdout.strip()
+
     # -- artifacts -----------------------------------------------------------------
 
     def _write_artifact(self, name, text):
@@ -438,5 +492,12 @@ class V2CLITestCase(unittest.TestCase):
             fh.write(text)
         self.assertEqual(self._git("add", "-A").returncode, 0)
         commit = self._git("commit", "-q", "-m", "fixture: %s" % path)
+        self.assertEqual(commit.returncode, 0, commit.stderr)
+        return self._git("rev-parse", "HEAD").stdout.strip()
+
+    def commit_all(self, message="fixture: commit tree"):
+        """Stage and commit every change; return the new HEAD."""
+        self.assertEqual(self._git("add", "-A").returncode, 0)
+        commit = self._git("commit", "-q", "-m", message)
         self.assertEqual(commit.returncode, 0, commit.stderr)
         return self._git("rev-parse", "HEAD").stdout.strip()

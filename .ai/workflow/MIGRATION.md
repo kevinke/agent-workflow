@@ -84,6 +84,34 @@ executor (`ticket-executor`). If any item is not confirmed, a senior resolves th
 uncertainty first; escalate via `state.yaml.escalation` if the gap cannot be
 closed in-repo.
 
+## Explicit Ticket reconstruction (`ai-workflow upgrade-ticket`)
+
+`ai-workflow upgrade` upgrades only the installed protocol; it never rewrites a
+Ticket's `state.yaml` and never promotes a Ticket's `workflow_version` in place.
+Converting a Ticket is a separate, explicit act: `upgrade-ticket <ticket-id>`
+converts one interpretable **active** v1 Ticket to `workflow_version: 2` once.
+
+The conversion keeps the phase, source references, counters, ordered completed
+history and unknown maps, and records the additive `upgrade` block
+(`from_version`, `previous_gate`, `requires_reconstruction`). It resets the gate
+to `insufficient` and the review to `pending`, and creates an unresolved `machine`
+escalation whose resolver is `workflow-bootstrap`, preserving the interrupted
+`next_action`. It fabricates no past audit, registered Plan or review pass, and a
+historical `done` Ticket stays v1. A version that cannot be interpreted (boolean,
+zero, or future) or a state too malformed to reconstruct is rejected with the
+State bytes unchanged; an already-v2 Ticket is a byte-preserving no-op.
+
+A converted Ticket is `escalation_required` and not yet valid: the retained
+phase's current contracts must be reconstructed before it can continue. The senior
+resolver supplies them through the public commands (`set-gate`, `register-plan`,
+and the required artifacts), then clears the reconstruction with
+`escalate --clear --resolution ...`. Clearing requires the current phase's
+contracts (a pending Review is acceptable unless entering `done`), a current
+sufficient audit when the phase is decisionward, and a confirmed adoption
+checkpoint when the repo is adopted. Registering the reconstructed Plan first
+records the completed task hashes while preserving the numeric history. See
+`STATE_SCHEMA.md` for the exact `upgrade` fields.
+
 ## Rules that never bend
 
 - Never fabricate artifacts for phases never executed.

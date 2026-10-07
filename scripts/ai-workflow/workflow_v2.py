@@ -15,7 +15,7 @@ __all__ = ["version", "problems", "check_transition", "next_action",
            "readiness_problems", "counter_problems", "executable_task",
            "is_nonneg_int", "escalated_next_action", "ADOPTION_CONFIRMATIONS",
            "TRANSITIONS", "V2_TRANSITIONS", "NEXT_ACTIONS", "ESCALATION_RESOLVERS",
-           "SUPPORTED_VERSIONS"]
+           "SUPPORTED_VERSIONS", "RECONSTRUCTION_ROLE", "RECONSTRUCTION_ACTION"]
 
 SUPPORTED_VERSIONS = (1, 2)
 
@@ -88,6 +88,15 @@ ESCALATION_RESOLVERS = {
 # Kept free of the restricted-YAML-reserved characters so it round-trips plainly.
 ESCALATION_ACTION = ("resolve the escalation and clear it with "
                      "escalate --clear --resolution")
+
+# The senior resolver recorded when an active v1 Ticket is explicitly converted
+# to v2 and its State must be reconstructed (spec decision 8). Unlike a routine
+# escalation it is always workflow-bootstrap, regardless of the retained phase,
+# because reconstruction is a bootstrap act. The action stays free of the
+# restricted-YAML-reserved characters.
+RECONSTRUCTION_ROLE = "workflow-bootstrap"
+RECONSTRUCTION_ACTION = ("reconstruct the Ticket and clear the escalation with "
+                         "escalate --clear --resolution")
 
 
 def version(data):
@@ -173,6 +182,13 @@ def problems(root, data):
     if "from_version" in upgrade and upgrade["from_version"] is not None \
             and not _is_int(upgrade["from_version"]):
         out.append("upgrade.from_version must be an integer")
+    if "previous_gate" in upgrade and upgrade["previous_gate"] is not None \
+            and upgrade["previous_gate"] not in ("sufficient", "insufficient"):
+        out.append("upgrade.previous_gate must be sufficient|insufficient or null")
+    if "requires_reconstruction" in upgrade \
+            and upgrade["requires_reconstruction"] is not None \
+            and not isinstance(upgrade["requires_reconstruction"], bool):
+        out.append("upgrade.requires_reconstruction must be a boolean")
 
     return out
 
@@ -306,7 +322,7 @@ def counter_problems(implementation):
     return problems
 
 
-def readiness_problems(root, ticket_id, data):
+def readiness_problems(root, ticket_id, data, require_active=True):
     """v2 execution-readiness problems; [] means a v2 executor may proceed.
 
     Read-only. Every condition here is v2-only, so a v1 Ticket always returns
@@ -316,6 +332,11 @@ def readiness_problems(root, ticket_id, data):
     repo — the six-item `adoption_checkpoint` is fully confirmed. The fresh
     evidence binding is enforced separately by `mutate`/`validate` so the stale
     gate rule has a single source of truth.
+
+    `require_active` is turned off only by the reconstruction clear check: a
+    reconstructed paused/blocked Ticket must satisfy its Plan/counter/adoption
+    contracts without the active-Status execution gate, so it stays reconstructed
+    rather than silently executable.
     """
     if version(data) != 2:
         return []
@@ -364,7 +385,7 @@ def readiness_problems(root, ticket_id, data):
 
     # 6: only an active ticket may execute.
     status = data.get("status")
-    if status != "active":
+    if require_active and status != "active":
         out.append("ticket status is %r; only an active ticket may be executed "
                    "(resolve the block or resume it first)" % status)
 

@@ -61,32 +61,36 @@ class UpgradeTest(unittest.TestCase):
         proto = os.path.join(self.root, ".ai", "workflow", "PROTOCOL.md")
         self.assertTrue(os.path.exists(proto))
 
-    def test_upgrade_bumps_older_tickets(self):
-        self._install_kit(0)
+    def test_upgrade_preserves_older_ticket_state(self):
+        self._install_kit(0)  # an older installed protocol than the kit's
         start.start(self.root, "T1", title="old ticket")
         state_path = os.path.join(self.root, ".ai", "work", "T1", "state.yaml")
         data = state.load_file(state_path)
-        data["workflow_version"] = 0  # started under an older protocol
+        data["workflow_version"] = 1  # a v1 Ticket started under the old protocol
         state.save_file(state_path, data)
+        with open(state_path, "rb") as fh:
+            before = fh.read()
 
         updated, bumped = upgrade.upgrade(self.root)
         self.assertTrue(updated)
-        self.assertEqual(bumped, ["T1"])
+        # The protocol is overwritten, but no Ticket State is rewritten.
+        self.assertEqual(bumped, [])
 
+        with open(state_path, "rb") as fh:
+            self.assertEqual(fh.read(), before)  # byte-identical: no Ticket write
         data = state.load_file(state_path)
-        self.assertEqual(data["workflow_version"], upgrade.kit_workflow_version())
-        # Bumping preserves every other field.
+        self.assertEqual(data["workflow_version"], 1)  # left at the old version
         self.assertEqual(data["ticket"]["title"], "old ticket")
         self.assertEqual(data["phase"], "requirement")
 
     def test_upgrade_leaves_current_tickets_alone(self):
-        self._install_kit(0)
-        start.start(self.root, "T1")  # starts at the kit's current version
+        self._install_kit(upgrade.kit_workflow_version())
+        start.start(self.root, "T1")  # starts at the installed kit's version
         updated, bumped = upgrade.upgrade(self.root)
         self.assertEqual(bumped, [])
         data = state.load_file(
             os.path.join(self.root, ".ai", "work", "T1", "state.yaml"))
-        self.assertEqual(data["workflow_version"], 1)
+        self.assertEqual(data["workflow_version"], upgrade.kit_workflow_version())
 
     def test_upgrade_is_idempotent(self):
         self._install_kit(0)

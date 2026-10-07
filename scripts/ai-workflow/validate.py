@@ -21,8 +21,8 @@ import state
 import workflow_v2
 from status import list_tickets
 
-__all__ = ["validate_ticket", "validate_repo", "PHASES", "STATUSES", "GATES",
-           "SCOPES", "ROLES", "DECISIONWARDS"]
+__all__ = ["validate_ticket", "validate_repo", "reconstruction_problems",
+           "PHASES", "STATUSES", "GATES", "SCOPES", "ROLES", "DECISIONWARDS"]
 
 
 PHASES = {
@@ -222,7 +222,11 @@ def _validate_escalation(data, bad):
             "(record the escalation or restore a valid status)")
 
     if required:
-        expected = workflow_v2.ESCALATION_RESOLVERS.get(phase)
+        reconstructing = (data.get("upgrade") or {}).get("requires_reconstruction")
+        if reconstructing:
+            expected = workflow_v2.RECONSTRUCTION_ROLE
+        else:
+            expected = workflow_v2.ESCALATION_RESOLVERS.get(phase)
         if expected is None:
             bad("escalation.required is true in phase %r, which has no senior "
                 "resolver" % phase)
@@ -331,6 +335,13 @@ def validate_ticket(root, ticket, findings):
     # --- v2 escalation/Status/route divergence -------------------------------
     if ver == 2:
         _validate_escalation(data, bad)
+        # A converted v1 Ticket is not valid until a senior reconstructs the
+        # retained phase and clears the flag; the mutation-time clear check
+        # excludes exactly this one blocker.
+        if (data.get("upgrade") or {}).get("requires_reconstruction"):
+            bad("workflow reconstruction is required for this converted v1 "
+                "Ticket: a senior resolver must reconstruct the retained phase "
+                "and clear it with `escalate --clear --resolution`")
 
     next_action = data.get("next_action") or {}
     # `done` clears next_action; an emptied block must not trip the role enum
@@ -416,6 +427,89 @@ def validate_ticket(root, ticket, findings):
     dirty = _git_dirty(root)
     if dirty:
         warn("uncommitted work in repository")
+
+
+def reconstruction_problems(root, ticket, data):
+    """Problems that block clearing a v1->v2 reconstruction; [] means clearable.
+
+    Read-only. The reconstruction flag's own blocker and the unresolved
+    escalation are provisionally cleared here, so this judges only whether the
+    *retained phase's current contracts* are genuinely satisfied:
+
+    - the phase's required artifacts are present on disk;
+    - a decisionward phase has a current sufficient gate, freshly bound to the
+      audited Evidence and its audit;
+    - the v2 structured artifact contracts hold (see `_validate_v2_artifacts`);
+    - an execution phase has a current registered Plan, coherent counters and a
+      confirmed adoption checkpoint.
+
+    The active-Status execution requirement is deliberately excluded: a
+    reconstructed paused/blocked Ticket is not silently made executable. Review
+    is not checked here — a pending Review is acceptable, and the current
+    `pass`/`done` rules apply only once a verdict is recorded or `done` is
+    entered (which a `done` v1 Ticket never is).
+    """
+    work_dir = os.path.join(root, ".ai", "work", ticket)
+    phase = data.get("phase")
+    problems = []
+    if phase not in PHASES:
+        return ["retained phase %r is not a valid phase" % phase]
+
+    evidence = data.get("evidence") or {}
+    gate = evidence.get("gate")
+    artifacts = data.get("artifacts") or {}
+    filenames = {
+        "evidence": artifacts.get("evidence", "evidence.md"),
+        "evidence_audit": artifacts.get("evidence_audit", "evidence-audit.md"),
+        "decision": artifacts.get("decision", "decision.md"),
+        "handoff": artifacts.get("handoff", "handoff.md"),
+        "review": artifacts.get("review", "review.md"),
+    }
+
+    def missing(key):
+        return not os.path.exists(os.path.join(work_dir, filenames[key]))
+
+    if missing("handoff"):
+        problems.append("missing artifact %s for phase=%s"
+                        % (filenames["handoff"], phase))
+    if phase in {"evidence_audit", "followup_evidence", "technical_decision",
+                 "planning", "implementation", "review", "done"} \
+            and missing("evidence"):
+        problems.append("missing artifact %s for phase=%s"
+                        % (filenames["evidence"], phase))
+    if phase in {"technical_decision", "planning", "implementation", "review",
+                 "done"} and missing("evidence_audit"):
+        problems.append("missing artifact %s for phase=%s"
+                        % (filenames["evidence_audit"], phase))
+    if phase in {"planning", "implementation", "review", "done"} \
+            and missing("decision"):
+        problems.append("missing artifact %s for phase=%s"
+                        % (filenames["decision"], phase))
+
+    if phase in DECISIONWARDS and gate != "sufficient":
+        problems.append("phase=%s requires a current sufficient evidence gate "
+                        "(evidence.gate=%r)" % (phase, gate))
+
+    _validate_v2_artifacts(work_dir, ticket, data, filenames, phase,
+                           problems.append, lambda _msg: None)
+    # The registered-Plan / counter / adoption contracts apply only to the
+    # execution phases (as in `validate_ticket`); an earlier retained phase has
+    # no Plan to register yet. The active-Status requirement is excluded so a
+    # reconstructed paused/blocked Ticket stays reconstructed, not executable.
+    if phase in _V2_EXECUTION_PHASES:
+        problems.extend(workflow_v2.readiness_problems(
+            root, ticket, data, require_active=False))
+        if phase == "review":
+            impl = data.get("implementation") or {}
+            if workflow_v2.executable_task(impl) is not None:
+                problems.append(
+                    "phase=review requires every registered task complete "
+                    "(current_task=%r of total_tasks=%r)"
+                    % (impl.get("current_task"), impl.get("total_tasks")))
+    elif "implementation" in data:
+        problems.extend(
+            workflow_v2.counter_problems(data.get("implementation") or {}))
+    return problems
 
 
 def validate_repo(root):

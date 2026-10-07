@@ -147,3 +147,7 @@ model/Harness switching is supported and no automatic dispatch is assumed.
 ## 11. Legacy adoption
 
 For repos adopted from existing state (existing specs, tickets, plans, half-done work), follow MIGRATION.md: discovery -> migration report -> phase reconstruction -> retroactive minimum evidence -> decision reconstruction -> adoption checkpoint. Never fabricate artifacts for phases that were never executed.
+
+### Explicit version conversion (`ai-workflow upgrade-ticket`)
+
+`ai-workflow upgrade` upgrades only the installed protocol; it never rewrites a Ticket's `state.yaml` and never promotes its `workflow_version` in place. Converting a Ticket is explicit: `upgrade-ticket <ticket-id>` converts one interpretable active v1 Ticket to `workflow_version: 2` once, keeping its phase and history, resetting the gate to `insufficient` and the review to `pending`, and recording `upgrade.requires_reconstruction` together with an unresolved machine escalation whose resolver is `workflow-bootstrap` (preserving the interrupted `next_action`). It fabricates no audit, Plan or review pass, and a historical `done` Ticket stays v1. The converted Ticket is not valid until a senior resolver reconstructs the retained phase's current contracts through the public commands and clears the flag with `escalate --clear --resolution`. See MIGRATION.md and STATE_SCHEMA.md.

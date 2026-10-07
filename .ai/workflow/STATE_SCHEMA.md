@@ -12,16 +12,19 @@
 `schema_version` stays fixed at 1. `workflow_version` selects the rule set and
 is additive:
 
-- `1` — the current fixed default. Existing Tickets and the template keep this
-  value; an absent field means `1`, so every pre-existing State reads as v1.
-- `2` — an explicit upgrade to the stricter v2 contracts.
+- `1` — the frozen v1 semantics. Existing v1 Tickets and a v1 installed template
+  keep this value; an absent field means `1`, so every pre-existing State reads
+  as v1.
+- `2` — an explicit upgrade to the stricter v2 contracts, performed only by
+  `upgrade-ticket` on one interpretable active v1 Ticket.
 
 Only the integers `1` and `2` are accepted. A boolean (`true`/`false`), zero,
 a string such as `"2"`, or any future value such as `3` is rejected: `validate`
 reports it as an ERROR Finding and a mutation refuses it before writing State,
-without a traceback and without changing the State bytes. Version 1 Tickets
-retain their exact semantics until explicitly upgraded; the template is not
-bumped by this extension.
+without a traceback and without changing the State bytes. A Ticket's version is
+never promoted in place: `ai-workflow upgrade` upgrades only the installed
+protocol and never rewrites a Ticket's `state.yaml`; converting a Ticket is the
+explicit `upgrade-ticket` command (see `MIGRATION.md`).
 
 ## Phases
 
@@ -55,7 +58,7 @@ No other phase transitions exist. The `review -> implementation` edge is v2-only
 | Field | Type | Meaning |
 |---|---|---|
 | schema_version | int | fixed at 1 |
-| workflow_version | int | fixed at 1; bumped only by an explicit upgrade |
+| workflow_version | int | 1 or 2; a Ticket reaches 2 only through `upgrade-ticket` |
 | ticket | map {id, title} | ticket identity |
 | phase | scalar | one of the phases above |
 | status | scalar | one of the lateral statuses above |
@@ -66,6 +69,7 @@ No other phase transitions exist. The `review -> implementation` edge is v2-only
 | implementation | map {current_task, total_tasks, completed_tasks: [], [, task_hashes: []]} | task progress; on v2 task_hashes is the ordered canonical hash of each registered task |
 | review | map {verdict, artifact_sha256, reviewed_commit, plan_sha256} | additive v2 Review binding; verdict: pending / pass / changes_requested |
 | escalation | map {required, scope, reason[, previous_status, interrupted_action, interrupted_phase, resolution]} | scope: machine / human; the four bracketed fields are additive v2 escalation facts |
+| upgrade | map {from_version, previous_gate, requires_reconstruction} | additive v2 conversion facts written by `upgrade-ticket`; absent on v1 |
 | claim | map {harness, model, claimed_at} | soft claim, advisory |
 | next_action | map {role, action, task} | intended next step |
 | provenance | map {last_harness, last_model} | who wrote last |
@@ -214,6 +218,42 @@ hash and `plan_sha256` still matching, and no code drift since `reviewed_commit`
 `validate` reports the same mismatch as an ERROR and a `done` phase without a
 `pass` is an ERROR. In `review` the v2 route is `reviewer`, not
 `checkpoint-handoff`.
+
+## v2 upgrade and reconstruction
+
+A Ticket is never upgraded in place. `ai-workflow upgrade` upgrades only the
+installed protocol (`.ai/workflow/`); it never rewrites a Ticket's `state.yaml`.
+Converting one Ticket is the explicit `upgrade-ticket <ticket-id>` command.
+
+`upgrade-ticket` converts one interpretable *active* v1 Ticket to v2 once. It
+keeps the phase, source references, counters, ordered completed history and
+unknown maps, records the additive `upgrade` block, resets `evidence.gate` to
+`insufficient` and `review.verdict` to `pending`, and creates an unresolved
+`machine` escalation whose resolver is `workflow-bootstrap` (preserving
+`escalation.interrupted_action`). It fabricates no audit, registered Plan or
+review pass. A historical `done` Ticket, an uninterpretable `workflow_version`
+(boolean, zero, or future), or a state too malformed to reconstruct is rejected
+with the State bytes unchanged; an already-v2 Ticket is a byte-preserving no-op.
+
+The conversion records:
+
+- `upgrade.from_version` — the previous version (`1`).
+- `upgrade.previous_gate` — the gate in effect before conversion (or `null`).
+- `upgrade.requires_reconstruction` — `true` until the senior reconstruction is
+  cleared.
+
+While `requires_reconstruction` is true the retained phase's contracts are
+unsatisfied by design: `set-gate` and `register-plan` are permitted for the
+senior resolver, `validate` reports the reconstruction as an ERROR blocker, and
+the escalation resolver is `workflow-bootstrap`. The resolver supplies the
+current phase's artifacts through the public commands and clears the flag with
+`escalate --clear --resolution ...`. Clearing requires the current phase's
+contracts (a pending Review is acceptable unless entering `done`), a current
+sufficient audit when the phase is decisionward, and a confirmed adoption
+checkpoint when the repo is adopted; it clears the flag, restores the interrupted
+Status, and recomputes the phase-appropriate `next_action`. Registering the
+reconstructed Plan first records the task hashes while preserving the numeric
+history.
 
 ## Migration blocks (adopted repos only)
 
