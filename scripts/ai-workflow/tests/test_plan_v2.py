@@ -46,6 +46,16 @@ class PlanV2Test(V2CLITestCase):
         return self.cli("register-plan", self.TICKET, "--path", path,
                         "--total", str(total))
 
+    def _seed_implementation(self, total=1):
+        """Reach a ready v2 implementation: registered Plan + current audit."""
+        self._seed_planning()
+        rel = self.write_plan(total)
+        proc = self._register(rel, total)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return rel
+
     # -- happy path ----------------------------------------------------------
 
     def test_register_one_task_stores_plan_and_hashes(self):
@@ -199,8 +209,14 @@ class PlanV2Test(V2CLITestCase):
         self._seed_planning()
         rel = self.write_plan(2)
         self.assertEqual(self._register(rel, 2).returncode, 0)
-        self.assertEqual(
-            self.cli("complete-task", self.TICKET).returncode, 0)
+
+        # A completed task (earned in implementation; complete-task now requires
+        # that phase) must survive re-registration. The completed state is
+        # written directly here because re-registration itself is a planning act.
+        data = self.read_state()
+        data["implementation"]["current_task"] = 1
+        data["implementation"]["completed_tasks"] = [1]
+        self.write_state(data)
 
         before = self.read_state()["implementation"]
         proc = self._register(rel, 2)
@@ -214,8 +230,11 @@ class PlanV2Test(V2CLITestCase):
         self._seed_planning()
         rel = self.write_plan(2)
         self.assertEqual(self._register(rel, 2).returncode, 0)
-        self.assertEqual(
-            self.cli("complete-task", self.TICKET).returncode, 0)
+
+        data = self.read_state()
+        data["implementation"]["current_task"] = 1
+        data["implementation"]["completed_tasks"] = [1]
+        self.write_state(data)
 
         changed = valid_plan(self.TICKET, 2).replace(
             "Carry out bounded step 1 for the fixture.",
@@ -249,6 +268,186 @@ class PlanV2Test(V2CLITestCase):
         proc = self._register(rel, 1)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertEqual(self.state_bytes(), before)
+
+    # -- execution readiness: explicit next task ----------------------------
+
+    def test_initial_next_task_is_one(self):
+        self._seed_implementation(2)
+        data = self.read_state()
+        self.assertEqual(data["implementation"]["current_task"], 0)
+        self.assertEqual(data["next_action"]["task"], 1)
+
+    def test_completing_a_task_advances_next_task(self):
+        self._seed_implementation(2)
+        proc = self.cli("complete-task", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        data = self.read_state()
+        self.assertEqual(data["implementation"]["current_task"], 1)
+        self.assertEqual(data["implementation"]["completed_tasks"], [1])
+        self.assertEqual(data["next_action"]["task"], 2)
+
+    def test_completing_last_task_clears_next_task(self):
+        self._seed_implementation(1)
+        proc = self.cli("complete-task", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        data = self.read_state()
+        self.assertEqual(data["implementation"]["current_task"], 1)
+        self.assertIsNone(data["next_action"]["task"])
+
+    # -- execution readiness: registered Plan required ----------------------
+
+    def test_unregistered_plan_rejects_advance_to_implementation(self):
+        self._seed_planning()
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_changed_plan_byte_rejects_complete_task(self):
+        rel = self._seed_implementation(2)
+        with open(os.path.join(self.root, rel), "a", encoding="utf-8") as fh:
+            fh.write("\n<!-- drifted byte -->\n")
+        before = self.state_bytes()
+        proc = self.cli("complete-task", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_changed_plan_byte_rejects_advance_to_implementation(self):
+        self._seed_planning()
+        rel = self.write_plan(2)
+        self.assertEqual(self._register(rel, 2).returncode, 0)
+        with open(os.path.join(self.root, rel), "a", encoding="utf-8") as fh:
+            fh.write("\n<!-- drifted byte -->\n")
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    # -- execution readiness: counters and phase ----------------------------
+
+    def test_total_override_cannot_change_registered_count(self):
+        self._seed_implementation(2)
+        before = self.state_bytes()
+        proc = self.cli("complete-task", self.TICKET, "--total", "5")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_matching_total_override_accepted(self):
+        self._seed_implementation(2)
+        proc = self.cli("complete-task", self.TICKET, "--total", "2")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.read_state()["implementation"]["total_tasks"], 2)
+
+    def test_complete_task_wrong_phase_rejected(self):
+        self._seed_implementation(1)
+        data = self.read_state()
+        data["phase"] = "review"
+        self.write_state(data)
+        before = self.state_bytes()
+        proc = self.cli("complete-task", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_boolean_counter_rejected(self):
+        self._seed_implementation(2)
+        data = self.read_state()
+        data["implementation"]["current_task"] = True
+        data["implementation"]["completed_tasks"] = [1]
+        self.write_state(data)
+        before = self.state_bytes()
+        proc = self.cli("complete-task", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_negative_counter_rejected(self):
+        self._seed_implementation(2)
+        data = self.read_state()
+        data["implementation"]["current_task"] = -1
+        self.write_state(data)
+        before = self.state_bytes()
+        proc = self.cli("complete-task", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    # -- execution readiness: status and adoption ---------------------------
+
+    def test_blocked_status_rejects_advance_to_implementation(self):
+        self._seed_planning()
+        rel = self.write_plan(1)
+        self.assertEqual(self._register(rel, 1).returncode, 0)
+        data = self.read_state()
+        data["status"] = "blocked"
+        self.write_state(data)
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_unsafe_adoption_checkpoint_rejected(self):
+        self._seed_planning()
+        data = self.read_state()
+        data["migration"] = {"adopted_existing_repo": True,
+                             "adopted_at_phase": "planning"}
+        data["adoption_checkpoint"] = {
+            "repository_understood": True,
+            "active_ticket_identified": True,
+            "current_phase_identified": True,
+            "remaining_work_identified": False,
+            "critical_invariants_identified": True,
+            "continuation_safe": False,
+        }
+        self.write_state(data)
+        rel = self.write_plan(1)
+        self.assertEqual(self._register(rel, 1).returncode, 0)
+        before = self.state_bytes()
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_confirmed_adoption_checkpoint_allows_advance(self):
+        self._seed_planning()
+        data = self.read_state()
+        data["migration"] = {"adopted_existing_repo": True}
+        data["adoption_checkpoint"] = {
+            "repository_understood": True,
+            "active_ticket_identified": True,
+            "current_phase_identified": True,
+            "remaining_work_identified": True,
+            "critical_invariants_identified": True,
+            "continuation_safe": True,
+        }
+        self.write_state(data)
+        rel = self.write_plan(1)
+        self.assertEqual(self._register(rel, 1).returncode, 0)
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    # -- execution readiness: validate and status surfaces ------------------
+
+    def test_validate_reports_a_drifted_plan(self):
+        rel = self._seed_implementation(1)
+        with open(os.path.join(self.root, rel), "a", encoding="utf-8") as fh:
+            fh.write("\n<!-- drifted byte -->\n")
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("registered Plan", proc.stdout)
+
+    def test_status_shows_the_executable_task(self):
+        self._seed_implementation(2)
+        proc = self.cli("status", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("Task    : 0/2 (next 1)", proc.stdout)
+        self.assertEqual(self.cli("complete-task", self.TICKET).returncode, 0)
+        proc = self.cli("status", self.TICKET)
+        self.assertIn("Task    : 1/2 (next 2)", proc.stdout)
+
+    def test_status_shows_no_executable_task_when_finished(self):
+        self._seed_implementation(1)
+        self.assertEqual(self.cli("complete-task", self.TICKET).returncode, 0)
+        proc = self.cli("status", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("Task    : 1/1", proc.stdout)
+        self.assertNotIn("(next", proc.stdout)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,11 @@ _V2_AUDIT_STRUCTURAL_PHASES = {
 }
 _V2_PENDING_PHASES = {"requirement", "evidence_collection"}
 
+# Phases where a v2 executor may run: the execution-readiness gate and its
+# problems (registered Plan, coherence, active Status, adoption checkpoint)
+# apply here, and the shared counter rule is reported through it.
+_V2_EXECUTION_PHASES = {"implementation", "review", "done"}
+
 
 def _validate_v2_artifacts(work_dir, ticket, data, filenames, phase, bad, warn):
     """Structural artifact contracts for v2 Tickets; v1 semantics unchanged."""
@@ -220,33 +225,14 @@ def validate_ticket(root, ticket, findings):
         bad("gate-violating transition: phase=%s but evidence.gate=insufficient" % phase)
 
     # --- implementation counters --------------------------------------------
-    impl = data.get("implementation") or {}
-    try:
-        cur = int(impl.get("current_task", 0) or 0)
-        tot = int(impl.get("total_tasks", 0) or 0)
-    except (TypeError, ValueError):
-        cur = tot = -1
-    if cur > tot >= 0:
-        bad("implementation.current_task (%d) > total_tasks (%d)" % (cur, tot))
-
-    completed = impl.get("completed_tasks")
-    if cur >= 0 and tot >= 0 and "implementation" in data:
-        if not isinstance(completed, list):
-            bad("implementation.completed_tasks must be a list (got %r)" % (completed,))
-        else:
-            try:
-                nums = sorted(int(c) for c in completed)
-            except (TypeError, ValueError):
-                bad("implementation.completed_tasks contains non-integer entries: %r"
-                    % (completed,))
-            else:
-                if nums != list(range(1, cur + 1)):
-                    bad("implementation.completed_tasks %r does not match "
-                        "current_task=%d (expected [1..%d])"
-                        % (completed, cur, cur))
-                elif nums and tot > 0 and nums[-1] > tot:
-                    bad("implementation.completed_tasks contains task %d > "
-                        "total_tasks (%d)" % (nums[-1], tot))
+    # The shared counter rule (non-negative integers, completed == [1..current],
+    # current <= total, registered total == task-hash count) lives in
+    # workflow_v2 so `validate` and `mutate` cannot drift. On a ready v2
+    # execution phase it is reported through `readiness_problems` below.
+    execution_phase = ver == 2 and phase in _V2_EXECUTION_PHASES
+    if "implementation" in data and not execution_phase:
+        for msg in workflow_v2.counter_problems(data.get("implementation") or {}):
+            bad(msg)
 
     # --- DONE must clear next_action ----------------------------------------
     if phase == "done" and has_next:
@@ -282,6 +268,14 @@ def validate_ticket(root, ticket, findings):
     if ver == 2:
         _validate_v2_artifacts(work_dir, ticket, data, filenames, phase,
                                bad, warn)
+
+    # --- v2 execution readiness ------------------------------------------------
+    # In an execution phase a v2 Ticket must be genuinely ready: a current
+    # registered Plan, coherent counters, an active Status, and (adopted repos)
+    # a confirmed adoption checkpoint. v1 Tickets skip this entirely.
+    if execution_phase:
+        for msg in workflow_v2.readiness_problems(root, ticket, data):
+            bad(msg)
 
     # --- handoff field completeness -----------------------------------------
     handoff_path = os.path.join(work_dir, filenames["handoff"])

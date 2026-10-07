@@ -192,6 +192,14 @@ def advance(root, ticket_id, to):
     if workflow_v2.version(data) == 2 and to in validate.DECISIONWARDS:
         _require_fresh_binding(root, ticket_id, data)
 
+    # v2 execution readiness: entering implementation needs a current registered
+    # Plan, coherent counters, an active Status, and a safe adoption checkpoint.
+    if workflow_v2.version(data) == 2 and to == "implementation":
+        problems = workflow_v2.readiness_problems(root, ticket_id, data)
+        if problems:
+            raise MutateError(
+                "cannot enter implementation: %s" % "; ".join(problems))
+
     data["phase"] = to
     data["next_action"] = workflow_v2.next_action(data, to)
     _save(root, ticket_id, data)
@@ -210,18 +218,46 @@ def claim(root, ticket_id, harness=None, model=None):
 
 
 def complete_task(root, ticket_id, total=None):
-    """Mark one implementation task complete (increment current_task)."""
+    """Mark one implementation task complete (increment current_task).
+
+    On a v2 Ticket the task must be a bounded, registered, current one: the
+    phase is `implementation`, the registered Plan is present and unchanged,
+    the counters cohere, the gate binding is fresh, and no `--total` may
+    override the registered count. Counters are non-negative integers on both
+    versions (booleans are never integers). On completion the explicit
+    `next_action.task` is refreshed. Every rejection leaves State unchanged.
+    """
     data = _load(root, ticket_id)
+    ver = workflow_v2.version(data)
+    phase = data.get("phase")
     impl = data.get("implementation") or {}
-    try:
-        current = int(impl.get("current_task", 0) or 0)
-        total_tasks = int(impl.get("total_tasks", 0) or 0)
-    except (TypeError, ValueError):
-        raise MutateError("implementation counters are not integers")
+
+    if ver == 2:
+        if phase != "implementation":
+            raise MutateError(
+                "cannot complete a task outside implementation (phase=%r)"
+                % phase)
+        problems = workflow_v2.readiness_problems(root, ticket_id, data)
+        if problems:
+            raise MutateError(
+                "cannot complete a task: %s" % "; ".join(problems))
+        _require_fresh_binding(root, ticket_id, data)
+
+    current = impl.get("current_task", 0)
+    total_tasks = impl.get("total_tasks", 0)
+    current = 0 if current is None else current
+    total_tasks = 0 if total_tasks is None else total_tasks
+    if not workflow_v2.is_nonneg_int(current):
+        raise MutateError(
+            "implementation.current_task must be a non-negative integer "
+            "(got %r); reconcile against `git log --grep ai-workflow(` and "
+            "progress.md" % (current,))
+    if not workflow_v2.is_nonneg_int(total_tasks):
+        raise MutateError(
+            "implementation.total_tasks must be a non-negative integer (got %r)"
+            % (total_tasks,))
     completed = list(impl.get("completed_tasks") or [])
-    try:
-        completed = [int(c) for c in completed]
-    except (TypeError, ValueError):
+    if not all(workflow_v2.is_nonneg_int(c) for c in completed):
         raise MutateError(
             "implementation.completed_tasks contains non-integer entries; "
             "reconcile against `git log --grep ai-workflow(` and progress.md")
@@ -231,8 +267,20 @@ def complete_task(root, ticket_id, total=None):
             "completed_tasks=%s (expected [1..%d]); reconcile against "
             "`git log --grep ai-workflow(` and progress.md — do not "
             "hand-edit current_task" % (current, completed, current))
+
     if total is not None:
-        total_tasks = int(total)
+        if ver == 2:
+            if not workflow_v2.is_nonneg_int(total) or int(total) != total_tasks:
+                raise MutateError(
+                    "cannot override the registered task count: --total %r "
+                    "disagrees with implementation.total_tasks=%d (the "
+                    "registered Plan is authoritative)" % (total, total_tasks))
+        else:
+            try:
+                total_tasks = int(total)
+            except (TypeError, ValueError):
+                raise MutateError("--total must be a positive integer")
+
     if total_tasks <= 0:
         raise MutateError(
             "cannot complete a task: total_tasks=%s (set --total N first)" % total_tasks)
@@ -245,6 +293,8 @@ def complete_task(root, ticket_id, total=None):
     impl["total_tasks"] = total_tasks
     impl["completed_tasks"] = completed
     data["implementation"] = impl
+    if ver == 2:
+        data["next_action"] = workflow_v2.next_action(data, phase)
     _save(root, ticket_id, data)
     return "%s: task %d/%d complete" % (ticket_id, current, total_tasks)
 

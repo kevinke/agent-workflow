@@ -8,6 +8,7 @@ import glob
 import os
 
 import state
+import workflow_v2
 
 __all__ = ["status_for_ticket", "list_tickets", "WORK_DIR_REL"]
 
@@ -28,13 +29,23 @@ def list_tickets(root):
 
 
 def _fmt_task(data):
+    """The completed count over the total, plus the explicit executable task.
+
+    `current_task`/`total_tasks` keep their meaning (completed / registered);
+    the executable task is the same `current_task + 1` the State records in
+    `next_action.task`, shown without changing the completed count.
+    """
     impl = data.get("implementation") or {}
     try:
         cur = int(impl.get("current_task", 0) or 0)
         tot = int(impl.get("total_tasks", 0) or 0)
     except (TypeError, ValueError):
         cur, tot = 0, 0
-    return "%d/%d" % (cur, tot)
+    text = "%d/%d" % (cur, tot)
+    executable = workflow_v2.executable_task(impl)
+    if executable is not None:
+        text += " (next %d)" % executable
+    return text
 
 
 def status_for_ticket(root, ticket):

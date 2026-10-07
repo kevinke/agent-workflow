@@ -16,19 +16,23 @@ A thin operational procedure. All business rules live in the protocol under
 
 1. Read `.ai/work/<ticket-id>/state.yaml` first — it is authoritative.
 2. Confirm `next_action.role` is `ticket-executor`. If not, hand back.
-3. Read the plan (from `source_artifacts.plan` or `progress.md`), `decision.md`,
-   and `evidence.md`.
+3. Read the registered Plan referenced by `source_artifacts.plan` (a referenced
+   source artifact, never a copy), plus `decision.md` and `evidence.md`.
+   `progress.md` is the execution log, not a substitute for the Plan.
 4. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
-5. Execute exactly the current task (`implementation.current_task`). Do not
-   redesign; plan deviations go to escalation per `.ai/workflow/ESCALATION.md`.
-6. When a task is done, record it:
-   `ai-workflow complete-task <ticket-id> [--total N]`.
-   Pass `--total N` on the first task to set the plan's task count; afterwards
-   the command increments `current_task` and appends to `completed_tasks`.
-7. Write `progress.md` per the contract in `.ai/workflow/ARTIFACTS.md`:
-   completed task, files changed, tests run, deviation from plan, open issues.
-   Not every shell command.
+5. Execute exactly the current task named by `next_action.task` (the completed
+   count plus one). Do not redesign; plan deviations go to escalation per
+   `.ai/workflow/ESCALATION.md`.
+6. When a task is done, record it with
+   `ai-workflow complete-task <ticket-id>`. On a `workflow_version: 2` Ticket a
+   registered, unchanged Plan is required and `--total N` cannot override the
+   registered count; if the ticket is not ready the command rejects the change
+   and leaves the State untouched.
+7. Write `progress.md` per the contract in `.ai/workflow/ARTIFACTS.md`: for the
+   completed task, the actual changes, the verification and its observed result,
+   any deviation from the plan, and unresolved problems. Never copy the Plan's
+   task contracts; not every shell command.
 8. Commit per the protocol's commit discipline and per-task granularity.
 9. When all tasks are complete, write `handoff.md` and report readiness for
    the `review` transition; otherwise write `handoff.md` before stopping.

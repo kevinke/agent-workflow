@@ -24,6 +24,10 @@ class MutateTest(unittest.TestCase):
     def _state(self):
         return state.load_file(os.path.join(self.root, ".ai", "work", "T1", "state.yaml"))
 
+    def _bytes(self):
+        with open(os.path.join(self.root, ".ai", "work", "T1", "state.yaml"), "rb") as fh:
+            return fh.read()
+
     def _phase(self):
         return self._state()["phase"]
 
@@ -138,6 +142,28 @@ class MutateTest(unittest.TestCase):
         state.save_file(path, data)
         with self.assertRaises(mutate.MutateError):
             mutate.complete_task(self.root, "T1", total=5)
+
+    def test_complete_task_rejects_boolean_counters(self):
+        path = os.path.join(self.root, ".ai", "work", "T1", "state.yaml")
+        data = state.load_file(path)
+        data["implementation"] = {"current_task": True, "total_tasks": 2,
+                                  "completed_tasks": [1]}
+        state.save_file(path, data)
+        before = self._bytes()
+        with self.assertRaises(mutate.MutateError):
+            mutate.complete_task(self.root, "T1")
+        self.assertEqual(self._bytes(), before)
+
+    def test_complete_task_rejects_negative_counters(self):
+        path = os.path.join(self.root, ".ai", "work", "T1", "state.yaml")
+        data = state.load_file(path)
+        data["implementation"] = {"current_task": -1, "total_tasks": 3,
+                                  "completed_tasks": []}
+        state.save_file(path, data)
+        before = self._bytes()
+        with self.assertRaises(mutate.MutateError):
+            mutate.complete_task(self.root, "T1")
+        self.assertEqual(self._bytes(), before)
 
     def test_set_gate(self):
         mutate.set_gate(self.root, "T1", "sufficient", round_no=2)

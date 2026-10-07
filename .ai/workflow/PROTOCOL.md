@@ -71,6 +71,22 @@ A scout turns an engineering request into a bounded, traceable report:
 
 The evidence-auditor reads the report and answers the four sufficiency questions in evidence-audit.md, then records the gate. On a `workflow_version: 2` Ticket the recorded verdict is bound to the audited Evidence and its audit artifact: changing either after a sufficient verdict is recorded makes the gate stale, and `validate` and decisionward advances report the same blocker until the auditor re-audits and records the gate again. Report readiness and evidence sufficiency are distinct: a ready report with a critical UNKNOWN still leaves the Gate insufficient until the auditor decides otherwise.
 
+### Registered execution readiness (workflow_version 2)
+
+On a `workflow_version: 2` Ticket an executor may not enter `implementation` or complete a task unless the ticket is genuinely ready. Before the `planning -> implementation` transition and before every `complete-task`, the kit requires:
+
+- a registered Plan (`source_artifacts.plan.path` + `sha256`); a missing or unregistered Plan is rejected;
+- Plan byte identity and task-contract (task-hash) identity — changing the Plan or one of its task sections after registration is drift and is rejected;
+- coherent counters — non-negative integers only (booleans are never integers), `completed_tasks == [1..current_task]`, `current_task <= total_tasks`, and the registered total matching the task-hash count;
+- a current sufficient evidence gate (the fresh gate binding); and
+- an active ticket — `blocked`, `paused`, `abandoned`, or `escalation_required` Status may not execute.
+
+When the State marks the repo as adopted (`migration.adopted_existing_repo`), the `adoption_checkpoint` must carry all six confirmation booleans as true — `continuation_safe` included — before an executor proceeds; an adopted but unconfirmed ticket is rejected. `validate` reports the same problems as ERROR findings in `implementation`, `review`, and `done`. Version 1 Tickets are unaffected: every one of these conditions is v2-only. `complete-task` requires `implementation` and the current registered Plan on v2; its optional `--total` cannot override the registered count (a disagreeing value is rejected, not written), and on completion the explicit `next_action.task` is refreshed.
+
+### Counter meaning (both versions)
+
+`implementation.current_task` is the number of completed tasks and `implementation.total_tasks` is the registered total. `next_action.task` is the explicit executable task number — `current_task + 1` while `current_task < total_tasks`, and `null` once every task is complete. Initial registration sets `current_task = 0`; entering `implementation` makes `next_action.task` `1`. `status` shows the same executable task without changing the completed count, so State and status use one meaning of "task".
+
 ## 8. Escalation
 
 Escalations are recorded in `state.yaml` (`escalation` block) and handled per ESCALATION.md. Two scopes: `machine` (default — resolved by a senior role, never interrupts the user) and `human` (the only scope that interrupts the user).

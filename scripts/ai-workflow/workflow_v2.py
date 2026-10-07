@@ -7,12 +7,27 @@ ticket's State follows v1 semantics or the stricter v2 contracts;
 can convert them into ERROR Findings.
 """
 
+import os
+
 import contracts
 
 __all__ = ["version", "problems", "check_transition", "next_action",
-           "TRANSITIONS", "NEXT_ACTIONS", "SUPPORTED_VERSIONS"]
+           "readiness_problems", "counter_problems", "executable_task",
+           "is_nonneg_int", "ADOPTION_CONFIRMATIONS", "TRANSITIONS",
+           "NEXT_ACTIONS", "SUPPORTED_VERSIONS"]
 
 SUPPORTED_VERSIONS = (1, 2)
+
+# The six adoption_checkpoint booleans; all must be true before a cheap
+# executor may run on an adopted ticket (STATE_SCHEMA.md, MIGRATION.md).
+ADOPTION_CONFIRMATIONS = (
+    "repository_understood",
+    "active_ticket_identified",
+    "current_phase_identified",
+    "remaining_work_identified",
+    "critical_invariants_identified",
+    "continuation_safe",
+)
 
 # Allowed phase transitions, a literal encoding of STATE_SCHEMA.md. This is
 # the pure table shared by `mutate` and `validate`; the v2 gate/route checks
@@ -131,10 +146,164 @@ def next_action(data, phase):
 
     Always carries exactly the keys role/action/task; entering `done` clears the
     block. Shared by the mutator and available to validate for route checks.
+    In `implementation` the `task` key is the explicit executable task number
+    (see `executable_task`); every other phase has no executable task.
     """
     if phase == "done":
         return {"role": None, "action": None, "task": None}
     if phase not in NEXT_ACTIONS:
         raise contracts.ContractError("no next action for phase %r" % phase)
     role, action = NEXT_ACTIONS[phase]
-    return {"role": role, "action": action, "task": None}
+    task = None
+    if phase == "implementation":
+        task = executable_task((data or {}).get("implementation") or {})
+    return {"role": role, "action": action, "task": task}
+
+
+def is_nonneg_int(value):
+    """True for a real integer >= 0; booleans are never integers here."""
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
+def executable_task(implementation):
+    """The explicit executable task number, or None when none remains.
+
+    `current_task` is the completed count (both versions), so the executable
+    task is `current_task + 1` while it is below `total_tasks`; once every task
+    is complete there is no executable task. Malformed counters yield None.
+    """
+    if not isinstance(implementation, dict):
+        return None
+    current = implementation.get("current_task")
+    total = implementation.get("total_tasks")
+    current = 0 if current is None else current
+    total = 0 if total is None else total
+    if not is_nonneg_int(current) or not is_nonneg_int(total):
+        return None
+    return current + 1 if current < total else None
+
+
+def counter_problems(implementation):
+    """Coherence problems of the implementation counters; [] means coherent.
+
+    Shared by `validate` and the mutator so the "task" counters have one rule:
+    non-negative integers only (booleans are rejected), `completed_tasks` is
+    exactly `[1..current_task]`, `current_task <= total_tasks`, and — when a
+    registered Plan recorded them — the registered total matches the number of
+    task hashes. The registered total stays authoritative.
+    """
+    problems = []
+    current = implementation.get("current_task", 0)
+    total = implementation.get("total_tasks", 0)
+    current = 0 if current is None else current
+    total = 0 if total is None else total
+
+    if not is_nonneg_int(current):
+        problems.append("implementation.current_task must be a non-negative "
+                        "integer (got %r)" % (current,))
+        current = None
+    if not is_nonneg_int(total):
+        problems.append("implementation.total_tasks must be a non-negative "
+                        "integer (got %r)" % (total,))
+        total = None
+
+    completed = implementation.get("completed_tasks")
+    if not isinstance(completed, list):
+        problems.append("implementation.completed_tasks must be a list (got %r)"
+                        % (completed,))
+    elif not all(is_nonneg_int(c) for c in completed):
+        problems.append("implementation.completed_tasks must contain only "
+                        "non-negative integers (got %r)" % (completed,))
+    elif current is not None and sorted(completed) != list(range(1, current + 1)):
+        problems.append("implementation.completed_tasks %r does not match "
+                        "current_task=%d (expected [1..%d])"
+                        % (completed, current, current))
+    elif total is not None and completed and completed[-1] > total:
+        problems.append("implementation.completed_tasks contains task %d > "
+                        "total_tasks (%d)" % (completed[-1], total))
+
+    if current is not None and total is not None:
+        if current > total:
+            problems.append("implementation.current_task (%d) > total_tasks (%d)"
+                            % (current, total))
+        else:
+            hashes = implementation.get("task_hashes")
+            if isinstance(hashes, list) and len(hashes) != total:
+                problems.append(
+                    "implementation.total_tasks (%d) does not match the %d "
+                    "registered task hashes" % (total, len(hashes)))
+    return problems
+
+
+def readiness_problems(root, ticket_id, data):
+    """v2 execution-readiness problems; [] means a v2 executor may proceed.
+
+    Read-only. Every condition here is v2-only, so a v1 Ticket always returns
+    []. A v2 executor may not enter `implementation` or complete a task unless
+    a registered Plan is present and unchanged (byte identity and task-hash
+    identity), the counters cohere, the Status is `active`, and — for an adopted
+    repo — the six-item `adoption_checkpoint` is fully confirmed. The fresh
+    evidence binding is enforced separately by `mutate`/`validate` so the stale
+    gate rule has a single source of truth.
+    """
+    if version(data) != 2:
+        return []
+
+    out = []
+    implementation = data.get("implementation") or {}
+
+    # 1-3: a registered Plan whose bytes and task contracts are unchanged.
+    sources = data.get("source_artifacts") or {}
+    plan_ref = sources.get("plan") or {}
+    plan_path = plan_ref.get("path")
+    plan_sha = plan_ref.get("sha256")
+    if not plan_path or not plan_sha:
+        out.append("no registered Plan (register one with `register-plan` in "
+                   "planning before implementing)")
+    else:
+        full = os.path.join(root, plan_path)
+        if not os.path.exists(full):
+            out.append("registered Plan %r is missing on disk" % plan_path)
+        else:
+            try:
+                current_sha = contracts.sha256_file(full)
+            except OSError as exc:
+                out.append("registered Plan %r cannot be read: %s"
+                           % (plan_path, exc))
+            else:
+                if not isinstance(plan_sha, str) or current_sha != plan_sha:
+                    out.append("registered Plan %r changed since registration "
+                               "(drifted Plan: re-register it)" % plan_path)
+                else:
+                    try:
+                        tasks = contracts.read_plan(full, ticket_id)
+                    except contracts.ContractError as exc:
+                        out.append("registered Plan %r is no longer a valid Plan: "
+                                   "%s" % (plan_path, exc))
+                    else:
+                        recorded = implementation.get("task_hashes")
+                        expected = [t["sha256"] for t in tasks]
+                        if not isinstance(recorded, list) \
+                                or [str(h) for h in recorded] != expected:
+                            out.append("registered Plan task contracts changed "
+                                       "since registration (task-hash drift)")
+
+    # 4: counter coherence (the registered total is authoritative).
+    out.extend(counter_problems(implementation))
+
+    # 6: only an active ticket may execute.
+    status = data.get("status")
+    if status != "active":
+        out.append("ticket status is %r; only an active ticket may be executed "
+                   "(resolve the block or resume it first)" % status)
+
+    # 7: an adopted repo needs a confirmed adoption checkpoint.
+    migration = data.get("migration") or {}
+    if migration.get("adopted_existing_repo"):
+        checkpoint = data.get("adoption_checkpoint") or {}
+        missing = [name for name in ADOPTION_CONFIRMATIONS
+                   if checkpoint.get(name) is not True]
+        if missing:
+            out.append("adoption checkpoint is not confirmed (%s must all be "
+                       "true before an executor proceeds)" % ", ".join(missing))
+    return out
