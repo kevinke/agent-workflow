@@ -15,15 +15,24 @@ Scout + senior + executor + independent-review sessions and a handoff crossing t
 because the binding prerequisite — **explicit user consent to spend the user's
 external model quota/credentials** — is still **missing**.
 
-Binding ruling (recorded verbatim; governs this outcome):
+Binding ruling (quoted verbatim from [runbook.md](runbook.md) §0; governs this
+outcome):
 
-> Do NOT launch, authenticate, or invoke any real model session that consumes the
-> user's external quota/credentials — not `codex exec`, not any paid call. Only
-> *availability* probes (version/help checks) are permitted, and they cost nothing.
+> No task may launch a real model session that spends the user's external
+> quota/credentials without the user's consent. Task 1 must ONLY *probe*
+> availability and record it — e.g. run version/help checks like `codex --version`,
+> `git --version`, verify `ai-workflow --help` works. It must NOT authenticate or
+> run any paid/real model session.
 
 Consequence: **no real role session was launched**, so there are **no run records
-and no findings**. Per plan Task 2 Step 5 and issue AC 7, the plan-sanctioned
-result in this situation is to **preserve pending status and the blocker** rather
+and no findings**. The precise basis for keeping this pending is **plan Task 2
+Step 5** ("If prerequisites were missing, preserve pending status and blocker").
+Note the blocker is an **authorization** constraint, not missing access: the
+models, tools and two Harnesses are available in principle, so issue AC 7's
+"access unavailable" condition does not technically apply. AC 7 is cited only as a
+result-consistency cross-reference: a run without the required actual model pairing
+cannot satisfy this Ticket, so it stays pending/blocked. The plan-sanctioned
+result is to **preserve pending status and the blocker** rather
 than fabricate runs. A pending outcome honestly recorded is the correct Task 2
 result here — it is not a failed Task and not a simulated success. The plan's
 "record live model and harness findings" commit wording was **not** used because no
@@ -46,7 +55,7 @@ real runs produce no findings; the commit is
 
 The pilot requires **actual** inexpensive Scout, senior, executor and independent
 review sessions plus at least one persisted handoff between two real Harnesses
-(spec Testing Decisions; issue AC 1–2, 7). Per the binding external-budget ruling
+(spec Testing Decisions; issue AC 1–2). Per the binding external-budget ruling
 (runbook §0), no real model session that spends the user's external
 quota/credentials may be launched without the user's explicit consent. No such
 consent has been given, so **no real session was launched** and no run record
@@ -79,9 +88,16 @@ them with placeholder or synthetic content would fabricate evidence and is
 forbidden. They may only be created once consented real sessions produce real
 records (runbook §7–8).
 
-## Availability probes re-verified in Task 2 (no paid session)
+**Plan Files-list deviation (visible to a future auditor).** The plan's Task 2
+Files list also says "Modify ... runbook.md" and "Create ... pilot/bug/ and
+.../feature/". Under the pending branch of Step 5 — no real records exist to copy,
+and the runbook needed no clarification — both were intentionally **not**
+satisfied: `runbook.md` is unchanged and `bug/`/`feature/` were not created.
 
-Re-probed 2026-10-07, cost-free; values **unchanged** from Task 1:
+## Availability probes re-run in Task 2 (no paid session)
+
+These zero-cost probes were re-run in Task 2 (2026-10-07); observed values are
+**unchanged** from Task 1:
 
 - `python --version` → `Python 3.13.5`
 - `git --version` → `git version 2.45.1.windows.1`

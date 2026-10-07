@@ -77,7 +77,13 @@ manufacture a completed pilot.
   crossing two **real** Harnesses. The binding precondition — **explicit user
   consent to spend the user's external model quota/credentials** — is still
   **missing**, so no real session was launched and **no run records or findings
-  exist**. Per Task 2 Step 5 and AC 7 the sanctioned result is to preserve pending
+  exist**. Note the blocker is an **authorization** constraint (missing consent),
+  not missing access: the models, tools and two Harnesses are available in
+  principle, so AC 7's "access unavailable" condition does not technically apply.
+  The precise basis for staying pending is **plan Task 2 Step 5** ("If
+  prerequisites were missing, preserve pending status and blocker"); AC 7 is only
+  a result-consistency cross-reference (a run without the required actual model
+  pairing cannot satisfy this Ticket). The sanctioned result is to preserve pending
   status and the blocker rather than simulate. `.scratch/decision-scout-port/pilot/bug/`
   and `.../feature/` were deliberately **not** created (no actual records to copy;
   placeholder content would be fabrication). Cost-free availability probes were
