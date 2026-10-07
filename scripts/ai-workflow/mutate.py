@@ -12,13 +12,14 @@ import os
 import re
 
 import contracts
+import review
 import state
 import validate
 import workflow_v2
 
 __all__ = ["MutateError", "TRANSITIONS", "DEFAULT_NEXT",
            "advance", "claim", "complete_task", "set_gate", "escalate",
-           "set_status", "release", "register_plan"]
+           "set_status", "release", "register_plan", "set_review"]
 
 _WORK_DIR_REL = os.path.join(".ai", "work")
 
@@ -444,6 +445,101 @@ def register_plan(root, ticket_id, path, total):
     _save(root, ticket_id, data)
     return "%s: registered plan %s (%d tasks, %d complete)" % (
         ticket_id, path, len(tasks), current)
+
+
+def set_review(root, ticket_id, verdict):
+    """Record the Reviewer's verdict on a v2 Ticket (SCOUT-005).
+
+    Requires the review phase, no unresolved escalation, a ready execution state
+    (current registered Plan, coherent counters, active Status), every registered
+    task complete, a structurally valid Review artifact whose Metadata `verdict`
+    equals the CLI value and whose `plan_sha256` equals the registered Plan hash,
+    and clean reviewed code (no drift since the reviewed commit). On success it
+    binds the verdict to the Review artifact's raw-byte hash, the reviewed commit
+    and the Plan hash in a single save. Every rejection leaves State unchanged.
+    """
+    data = _load(root, ticket_id)
+    if workflow_v2.version(data) != 2:
+        raise MutateError(
+            "set-review requires workflow_version 2 (this Ticket is v1; "
+            "upgrade it explicitly first)")
+    if verdict not in ("pass", "changes_requested"):
+        raise MutateError(
+            "unknown verdict %r (must be pass or changes_requested)" % verdict)
+    if data.get("phase") != "review":
+        raise MutateError(
+            "set-review is only allowed in the review phase (current phase=%r)"
+            % data.get("phase"))
+    if _escalation_required(data):
+        raise _escalation_block("record a review")
+
+    problems = workflow_v2.readiness_problems(root, ticket_id, data)
+    if problems:
+        raise MutateError("cannot record a review: %s" % "; ".join(problems))
+
+    impl = data.get("implementation") or {}
+    total_tasks = impl.get("total_tasks")
+    if not workflow_v2.is_nonneg_int(total_tasks) or total_tasks <= 0:
+        raise MutateError(
+            "cannot record a review: no registered task count "
+            "(implementation.total_tasks=%r)" % (total_tasks,))
+    if workflow_v2.executable_task(impl) is not None:
+        raise MutateError(
+            "cannot record a review: not all registered tasks are complete "
+            "(implementation.current_task=%r of total_tasks=%r)"
+            % (impl.get("current_task"), total_tasks))
+
+    artifact_path = _artifact_path(root, ticket_id, data, "review", "review.md")
+    try:
+        report = contracts.read_artifact(artifact_path, "review")
+    except contracts.ContractError as exc:
+        raise MutateError("cannot record a review: the Review artifact is not a "
+                          "structured report (%s)" % exc)
+    review_problems = contracts.validate_review(report, ticket_id, verdict)
+    if review_problems:
+        raise MutateError("cannot record a review: the Review artifact is "
+                          "structurally invalid: %s" % "; ".join(review_problems))
+
+    md = report.get("metadata") or {}
+    sources = data.get("source_artifacts") or {}
+    plan_ref = sources.get("plan") or {}
+    registered_plan_sha = plan_ref.get("sha256")
+    if md.get("plan_sha256") != registered_plan_sha:
+        raise MutateError(
+            "cannot record a review: the Review binds a different Plan than the "
+            "registered one (artifact plan_sha256=%r, registered=%r)"
+            % (md.get("plan_sha256"), registered_plan_sha))
+
+    reviewed_commit = md.get("reviewed_commit")
+    try:
+        drift = review.code_drift(root, ticket_id, reviewed_commit,
+                                  plan_ref.get("path"))
+    except contracts.ContractError as exc:
+        raise MutateError("cannot record a review: %s" % exc)
+    if drift:
+        raise MutateError(
+            "cannot record a review: the reviewed code changed since %s: %s"
+            % (reviewed_commit, "; ".join(drift)))
+
+    try:
+        artifact_sha = contracts.sha256_file(artifact_path)
+    except OSError as exc:
+        raise MutateError("cannot read the Review artifact: %s" % exc)
+
+    data["review"] = {
+        "verdict": verdict,
+        "artifact_sha256": artifact_sha,
+        "reviewed_commit": reviewed_commit,
+        "plan_sha256": md.get("plan_sha256"),
+    }
+    artifacts = dict(data.get("artifacts") or {})
+    if "review" not in artifacts:
+        artifacts["review"] = "review.md"
+    data["artifacts"] = artifacts
+
+    _save(root, ticket_id, data)
+    return "%s: review verdict=%s (commit %s)" % (
+        ticket_id, verdict, reviewed_commit)
 
 
 def set_gate(root, ticket_id, gate, round_no=None):

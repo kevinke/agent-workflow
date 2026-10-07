@@ -232,6 +232,58 @@ def valid_plan(ticket_id, total):
     return "".join(parts)
 
 
+REVIEW_TEMPLATE = '''\
+# Review - %(ticket)s
+
+## Metadata
+
+```yaml
+artifact_type: review
+format_version: 1
+ticket_id: %(ticket)s
+reviewed_commit: %(commit)s
+plan_sha256: %(plan_sha)s
+verdict: %(verdict)s
+```
+
+## Acceptance results
+
+%(acceptance)s
+
+## Verification results
+
+%(verification)s
+
+## Findings
+
+%(findings)s
+
+## Required rework
+
+%(rework)s
+'''
+
+
+def valid_review(ticket_id, verdict, reviewed_commit, plan_sha256):
+    """A concrete, structurally valid Review bound to a commit and Plan hash.
+
+    A `pass` uses the explicit `None` for Findings/Required rework; a
+    `changes_requested` records substantive findings and rework.
+    """
+    passing = verdict == "pass"
+    return REVIEW_TEMPLATE % {
+        "ticket": ticket_id, "verdict": verdict,
+        "commit": reviewed_commit, "plan_sha": plan_sha256,
+        "acceptance": "Task 1 acceptance criteria met: the reviewed change "
+                      "keeps main() returning 42.",
+        "verification": "Ran `python -c \"import app\"`; observed exit status 0.",
+        "findings": "None" if passing
+                    else "F-01: the reviewed change needs a boundary assertion.",
+        "rework": "None" if passing
+                  else "Append a task that adds the boundary assertion.",
+    }
+
+
 class V2CLITestCase(unittest.TestCase):
     """Temporary-repo fixture driving the real CLI (cwd is the target repo)."""
 
@@ -329,6 +381,21 @@ class V2CLITestCase(unittest.TestCase):
         with open(full, "w", encoding="utf-8", newline="") as fh:
             fh.write(valid_plan(self.TICKET, total))
         return os.path.relpath(full, self.root)
+
+    def write_review(self, verdict, reviewed_commit=None, name="review.md"):
+        """Write a concrete Review bound to the registered Plan and a commit.
+
+        `reviewed_commit` defaults to the repository HEAD; the Plan path/SHA are
+        read from State (`source_artifacts.plan`) so the artifact is genuinely
+        bound. Returns the artifact path.
+        """
+        if reviewed_commit is None:
+            reviewed_commit = self._git("rev-parse", "HEAD").stdout.strip()
+        data = self.read_state()
+        plan_ref = (data.get("source_artifacts") or {}).get("plan") or {}
+        text = valid_review(self.TICKET, verdict, reviewed_commit,
+                            plan_ref.get("sha256"))
+        return self._write_artifact(name, text)
 
     # -- repository ------------------------------------------------------------------
 

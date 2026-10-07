@@ -8,6 +8,7 @@ All artifacts live under `.ai/work/<ticket-id>/`. Each has one writer role, an a
 | evidence-audit.md | evidence-auditor | sufficiency answers only | recommendations, designs |
 | decision.md | technical-decision (senior-only) | chosen approach, rejected alternatives, invariants, compatibility, API/schema decisions, risks, escalation boundaries | undecided design questions |
 | plan.md | executor-plan (senior-only) | ordered bounded tasks, each with objective, Fact/decision inputs, allowed and protected scope, invariants, acceptance criteria, verification, dependencies, escalation conditions | an executor-selected or redesigned task |
+| review.md | reviewer (senior default, independent context) | reviewed commit, registered Plan identity, acceptance results, verification commands/results, findings, verdict, required rework | a verdict for another commit or an unregistered Plan |
 | progress.md | ticket-executor | task-granularity log: completed task, files changed, tests run, deviation, open issues | every shell command |
 | handoff.md | checkpoint-handoff (or the departing agent) | fixed sections + Repository State block | unverified claims |
 
@@ -173,6 +174,38 @@ checks the declared count, and records `source_artifacts.plan.path` and
 `implementation.task_hashes`. Registration is allowed only in `planning`, a
 recorded senior escalation resolution, or a strictly-appending
 `changes_requested` review; a rejected registration changes no State bytes.
+
+## review.md (format_version=1)
+
+The Review is the Reviewer's structural verdict on the current change and
+registered Plan. The Reviewer owns technical conformance in an independent
+context (senior default); mechanical checkpoint-handoff alone cannot supply it.
+
+### Metadata
+
+Metadata lives in the first fenced yaml block under an exact H2 Metadata
+heading, with required fields: `artifact_type: review`, `format_version: 1`,
+`ticket_id`, `reviewed_commit`, `plan_sha256`, and `verdict`
+(`pass` | `changes_requested`).
+
+### Required sections
+
+Required H2 sections, in order, after Metadata: `Acceptance results`,
+`Verification results`, `Findings`, `Required rework`. `Acceptance results` and
+`Verification results` must be substantive for BOTH verdicts; `Findings` and
+`Required rework` may be the explicit text `None` for a `pass` and must be
+substantive for a `changes_requested`. Extra nonreserved prose sections are
+allowed.
+
+Recording the verdict with `set-review <ticket-id> --verdict pass|changes_requested`
+binds it to the Review artifact's raw-byte SHA-256, the reviewed commit, and the
+registered Plan SHA-256 (see `STATE_SCHEMA.md`). A missing or placeholder
+artifact, a Metadata `verdict` that disagrees with the CLI, a `plan_sha256` that
+disagrees with the registered Plan, or any change to the reviewed code, tests,
+fixtures, or Plan since the reviewed commit rejects the command and leaves State
+unchanged. Only this Ticket's own `state.yaml`, `progress.md`, `handoff.md`, and
+`review.md` are exempt from the code-drift check. Structural validity is not
+proof that acceptance criteria passed.
 
 ## progress.md
 

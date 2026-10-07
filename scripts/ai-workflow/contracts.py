@@ -23,7 +23,7 @@ import re
 import parser
 
 __all__ = ["ContractError", "read_artifact", "read_plan", "sha256_file",
-           "validate_evidence", "validate_audit"]
+           "validate_evidence", "validate_audit", "validate_review"]
 
 
 class ContractError(Exception):
@@ -211,9 +211,9 @@ def _metadata_from_lines(block):
 def read_artifact(path, kind):
     """Read a bounded Markdown artifact into {metadata, sections, records}.
 
-    `kind` is "evidence" or "evidence-audit". Evidence records carry
+    `kind` is "evidence", "evidence-audit", or "review". Evidence records carry
     kind=question (Decision Questions) or kind=finding (Findings) with an
-    optional tag for findings; the audit has H2 sections only.
+    optional tag for findings; the audit and the review have H2 sections only.
     """
     try:
         with open(path, "rb") as fh:
@@ -234,6 +234,8 @@ def read_artifact(path, kind):
             else:
                 rec["kind"] = "record"
     elif kind == "evidence-audit":
+        records = []
+    elif kind == "review":
         records = []
     else:
         raise ContractError("unknown artifact kind %r" % kind)
@@ -617,4 +619,85 @@ def validate_audit(report, ticket_id, gate, round_no):
         problems.append("evidence-audit: unexpected extra H2 sections %s "
                         "(exactly the four sufficiency questions allowed)"
                         % ", ".join(repr(n) for n in extra))
+    return problems
+
+
+_REVIEW_VERDICTS = ("pass", "changes_requested")
+_REVIEW_REQUIRED_METADATA = [
+    "artifact_type", "format_version", "ticket_id", "reviewed_commit",
+    "plan_sha256", "verdict",
+]
+_REVIEW_SECTIONS = [
+    "Metadata", "Acceptance results", "Verification results",
+    "Findings", "Required rework",
+]
+
+
+def _is_none_text(value):
+    """True for the explicit `None` stand-in (optionally with a period)."""
+    text = (value or "").strip()
+    return text.rstrip(".").strip().lower() == "none"
+
+
+def _review_substantive(value):
+    """True when the body is neither a bare placeholder nor explicit `None`."""
+    text = (value or "").strip()
+    return not _is_placeholder(text) and not _is_none_text(text)
+
+
+def validate_review(report, ticket_id, verdict):
+    """Structural problems of a Review; [] means well-formed.
+
+    Structural only: it never infers that verification passed. The Metadata
+    `verdict` must equal the CLI `verdict`. `Acceptance results` and
+    `Verification results` must be substantive for BOTH verdicts; `Findings` and
+    `Required rework` may be the explicit text `None` only for a `pass` and must
+    be substantive for `changes_requested`.
+    """
+    problems = []
+    md = report.get("metadata") or {}
+
+    def flag(msg):
+        problems.append(msg)
+
+    _metadata_problems(flag, "review", md, _REVIEW_REQUIRED_METADATA, [
+        ("artifact_type", lambda v: v == "review"),
+        ("format_version", lambda v: _is_int(v) and v == 1),
+        ("reviewed_commit", lambda v: isinstance(v, str)
+         and not _is_placeholder(v)),
+        ("plan_sha256", lambda v: isinstance(v, str)
+         and bool(_SHA256_RE.match(v))),
+        ("verdict", lambda v: v in _REVIEW_VERDICTS),
+    ])
+    if md.get("ticket_id") and md.get("ticket_id") != ticket_id:
+        problems.append("review: Metadata ticket_id %r does not match %r"
+                        % (md.get("ticket_id"), ticket_id))
+    if md.get("verdict") and md["verdict"] != verdict:
+        problems.append("review: Metadata verdict %r does not match the CLI "
+                        "verdict %r" % (md.get("verdict"), verdict))
+
+    sections = report.get("sections") or {}
+    for name in _REVIEW_SECTIONS:
+        if name not in sections:
+            problems.append("review: missing required H2 section %r" % name)
+    present = [n for n in sections if n in _REVIEW_SECTIONS]
+    if present != [n for n in _REVIEW_SECTIONS if n in sections]:
+        problems.append("review: required H2 sections out of order "
+                        "(expected %s)" % ", ".join(_REVIEW_SECTIONS))
+
+    for name in ("Acceptance results", "Verification results"):
+        if name in sections and not _review_substantive(sections[name]):
+            problems.append(
+                "review: section %r has no substantive content" % name)
+    for name in ("Findings", "Required rework"):
+        if name not in sections:
+            continue
+        body = sections[name]
+        if verdict == "pass":
+            if not (_review_substantive(body) or _is_none_text(body)):
+                problems.append("review: section %r must be substantive or the "
+                                "explicit None for a passing review" % name)
+        elif not _review_substantive(body):
+            problems.append("review: section %r must be substantive for a "
+                            "changes_requested verdict" % name)
     return problems

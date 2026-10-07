@@ -37,7 +37,7 @@ import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
             "release", "complete-task", "register-plan", "set-gate", "escalate",
-            "set-status", "install-skills", "upgrade"}
+            "set-status", "set-review", "install-skills", "upgrade"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
@@ -60,6 +60,7 @@ commands:
   complete-task <ticket-id> [--total N]  mark one implementation task done
   register-plan <ticket-id> --path P --total N  register a referenced Plan (v2)
   set-gate <ticket-id> --gate G [--round N]  record evidence verdict (G: sufficient|insufficient)
+  set-review <ticket-id> --verdict V  record a Review verdict (V: pass|changes_requested)
   escalate <ticket-id> --scope S --reason "..." | --clear [--resolution TEXT]  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
   install-skills [target]  install the seven role skills into the target repo (idempotent)
@@ -337,6 +338,17 @@ def cmd_set_gate(args, root):
         args, root, {"--gate", "--round"}, apply)
 
 
+def cmd_set_review(args, root):
+    def apply(ticket_id, opts):
+        verdict = opts.get("verdict")
+        if not verdict:
+            raise _UsageError("--verdict <pass|changes_requested> is required")
+        return mutate.set_review(root, ticket_id, verdict)
+    return _cmd_mutate(
+        "set-review", "set-review <ticket-id> --verdict pass|changes_requested",
+        args, root, {"--verdict"}, apply)
+
+
 def cmd_set_status(args, root):
     def apply(ticket_id, opts):
         st = opts.get("status")
@@ -421,6 +433,8 @@ def main(argv=None):
         return cmd_register_plan(argv, root)
     if cmd == "set-gate":
         return cmd_set_gate(argv, root)
+    if cmd == "set-review":
+        return cmd_set_review(argv, root)
     if cmd == "escalate":
         return cmd_escalate(argv, root)
     if cmd == "set-status":

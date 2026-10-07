@@ -58,9 +58,10 @@ No other phase transitions exist. At `done`, `next_action` is cleared.
 | status | scalar | one of the lateral statuses above |
 | repository | map {base_commit, branch} | git anchor |
 | source_artifacts | map {spec: {path}, ticket: {path}, plan: {path[, sha256]}} | references only, never copies; on v2 the registered plan also records its raw-byte sha256 |
-| artifacts | map {evidence, evidence_audit, decision, progress, handoff} | artifact filenames |
+| artifacts | map {evidence, evidence_audit, decision, progress, handoff[, review]} | artifact filenames; on v2 `artifacts.review` defaults to `review.md` |
 | evidence | map {round, gate[, report_sha256, audit_sha256]} | gate: sufficient / insufficient; the two hashes bind a v2 verdict to the audited bytes |
 | implementation | map {current_task, total_tasks, completed_tasks: [], [, task_hashes: []]} | task progress; on v2 task_hashes is the ordered canonical hash of each registered task |
+| review | map {verdict, artifact_sha256, reviewed_commit, plan_sha256} | additive v2 Review binding; verdict: pending / pass / changes_requested |
 | escalation | map {required, scope, reason[, previous_status, interrupted_action, interrupted_phase, resolution]} | scope: machine / human; the four bracketed fields are additive v2 escalation facts |
 | claim | map {harness, model, claimed_at} | soft claim, advisory |
 | next_action | map {role, action, task} | intended next step |
@@ -174,6 +175,32 @@ documented `--resolution`, restores `previous_status`, and recomputes the
 phase-appropriate `next_action`. `validate` reports escalation/Status/route
 divergence (and malformed additive fields) as ERROR Findings. `required`, `scope`,
 and `reason` keep their v1 meanings; the four fields above are written only on v2.
+
+## v2 Review binding
+
+`set-review <ticket-id> --verdict pass|changes_requested` records the Reviewer's
+verdict on a `workflow_version: 2` Ticket. It is allowed only in `review`, with
+no unresolved escalation, a current registered Plan and coherent counters, every
+registered task complete, a structurally valid `review.md` whose Metadata
+`verdict` matches the CLI and whose `plan_sha256` matches the registered Plan,
+and no review-blocking code drift since the reviewed commit. On success it writes
+(additive, v2-only):
+
+- `review.verdict` — `pass` or `changes_requested` (`pending` is the scaffold
+  default before a verdict is recorded).
+- `review.artifact_sha256` — SHA-256 of the Review artifact's raw bytes.
+- `review.reviewed_commit` — the reviewed commit named by the Review Metadata.
+- `review.plan_sha256` — the registered Plan's raw-byte SHA-256.
+- `artifacts.review` — the Review filename (default `review.md`).
+
+Code drift is the union of committed, staged, unstaged, and untracked paths
+since the reviewed commit, read with Git subprocess argument lists and
+NUL-delimited output. Changing any path other than this Ticket's exact
+`state.yaml`, `progress.md`, `handoff.md`, and `review.md` (including the
+registered Plan) rejects the command. Missing Git, a Reviewed commit that does
+not resolve, or an unrelated history (not an ancestor of HEAD) also reject it.
+Every rejection leaves the State bytes unchanged; Version 1 Tickets keep their
+existing semantics.
 
 ## Migration blocks (adopted repos only)
 
