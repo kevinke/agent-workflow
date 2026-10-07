@@ -57,6 +57,30 @@ class ResumeV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return plan
 
+    def _seed_review(self, total=1):
+        """Reach `review` with a bound current `pass` verdict.
+
+        Drives public commands so resume's read path includes the review probe
+        (`review.code_drift`). `handoff.md` already exists from `start`, so the
+        `implementation -> review` entry guard is satisfied.
+        """
+        self._seed_implementation(total)
+        self.commit_code("src/feature.py", "def feature():\n    return 1\n")
+        for _ in range(total):
+            proc = self.cli("complete-task", self.TICKET,
+                            "--total", str(total))
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "review")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self._git("add", "-A").returncode, 0)
+        commit = self._git("commit", "-q", "-m", "fixture: reviewed tree")
+        self.assertEqual(commit.returncode, 0, commit.stderr)
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        self.write_review("pass", reviewed_commit=head)
+        proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return head
+
     def _write_file(self, rel, text):
         full = os.path.join(self.root, rel)
         os.makedirs(os.path.dirname(full), exist_ok=True)
@@ -100,6 +124,36 @@ class ResumeV2Test(V2CLITestCase):
         # Force a stale stat entry: a plain `git status` must then refresh (and
         # rewrite) the index to record the new stat.
         tracked = os.path.join(self.root, "src", "app.py")
+        stale = os.stat(tracked).st_mtime_ns + 5_000_000_000
+        os.utime(tracked, ns=(stale, stale))
+
+        with open(index, "rb") as fh:
+            before_bytes = fh.read()
+        before_mtime = os.stat(index).st_mtime_ns
+
+        result = self.cli("resume", "T1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        with open(index, "rb") as fh:
+            self.assertEqual(fh.read(), before_bytes,
+                             ".git/index bytes changed: resume refreshed it")
+        self.assertEqual(os.stat(index).st_mtime_ns, before_mtime,
+                         ".git/index mtime changed: resume refreshed it")
+
+    def test_resume_review_path_is_lock_safe(self):
+        """The review-freshness probe (`review.code_drift`) is lock-safe too.
+
+        A v2 Ticket in `review` with a current `pass` verdict makes resume call
+        `review.code_drift`, whose `git diff` (worktree vs index) would refresh
+        the stat cache and rewrite `.git/index` without
+        `--no-optional-locks`. Force a stale stat and assert the index is
+        untouched; this fails if `review._run_git` drops the flag.
+        """
+        self._seed_review()
+        index = os.path.join(self.root, ".git", "index")
+        self.assertTrue(os.path.exists(index), "fixture must have a Git index")
+
+        tracked = os.path.join(self.root, "src", "feature.py")
         stale = os.stat(tracked).st_mtime_ns + 5_000_000_000
         os.utime(tracked, ns=(stale, stale))
 

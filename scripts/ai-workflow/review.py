@@ -8,7 +8,10 @@ unrelated history raise `contracts.ContractError`; any other changed path is
 reported as a problem string so the caller can reject the mutation.
 """
 
+import os
+import shutil
 import subprocess
+import tempfile
 
 import contracts
 
@@ -20,11 +23,18 @@ __all__ = ["code_drift", "TICKET_EXEMPT_FILES"]
 TICKET_EXEMPT_FILES = ("state.yaml", "progress.md", "handoff.md", "review.md")
 
 
-def _run_git(root, args):
-    """Run `git -C root <args>` with an argument list; bytes out, no shell."""
+def _run_git(root, args, env=None):
+    """Run `git --no-optional-locks -C root <args>`; bytes out, no shell.
+
+    `--no-optional-locks` stops `git status` from refreshing the stat cache, but
+    on git 2.45 a worktree `git diff` rewrites `.git/index` anyway, so callers
+    that run `diff` also pass a throwaway `GIT_INDEX_FILE` (see
+    `_changed_paths`). Callers that only read (rev-parse, merge-base) need no
+    redirect.
+    """
     try:
-        return subprocess.run(["git", "-C", root] + list(args),
-                              capture_output=True)
+        return subprocess.run(["git", "--no-optional-locks", "-C", root] + list(args),
+                              capture_output=True, env=env)
     except OSError as exc:  # git binary missing
         raise contracts.ContractError("git is not available: %s" % exc)
 
@@ -54,9 +64,9 @@ def _require_ancestor(root, reviewed_commit):
             % (reviewed_commit,))
 
 
-def _names(root, args):
+def _names(root, args, env=None):
     """NUL-split the output of a `-z` Git command; [] when it is noise."""
-    proc = _run_git(root, args)
+    proc = _run_git(root, args, env)
     if proc.returncode != 0:
         raise contracts.ContractError(
             "git %s failed: %s"
@@ -66,21 +76,54 @@ def _names(root, args):
     return [p for p in text.split("\0") if p]
 
 
+def _git_index_path(root):
+    """Absolute path of this worktree's index, or None when unresolvable."""
+    proc = _run_git(root, ["rev-parse", "--git-path", "index"])
+    if proc.returncode != 0:
+        return None
+    path = proc.stdout.decode("utf-8", "surrogateescape").strip()
+    if not path:
+        return None
+    if not os.path.isabs(path):
+        path = os.path.join(root, path)
+    return path
+
+
 def _changed_paths(root, reviewed_commit):
-    """Union of committed, staged, unstaged, and untracked paths (forward /)."""
-    paths = []
-    for args in (
-        ["diff", "--name-only", "-z", "--no-renames",
-         "%s..HEAD" % reviewed_commit],
-        ["diff", "--name-only", "-z", "--no-renames", "--cached"],
-        ["diff", "--name-only", "-z", "--no-renames"],
-        ["ls-files", "-z", "--others", "--exclude-standard"],
-    ):
-        for path in _names(root, args):
-            path = path.replace("\\", "/")
-            if path not in paths:
-                paths.append(path)
-    return paths
+    """Union of committed, staged, unstaged, and untracked paths (forward /).
+
+    A worktree `git diff` rewrites `.git/index` even under `--no-optional-locks`
+    (git 2.45), so the diff/ls-files probes run against a byte-identical copy of
+    the index via `GIT_INDEX_FILE`; any refresh lands in the copy, never the real
+    index. The copy has the same tree, so the reported paths are unchanged.
+    """
+    env = None
+    tmpdir = None
+    index = _git_index_path(root)
+    if index is not None:
+        tmpdir = tempfile.mkdtemp(prefix="ai-workflow-index-")
+        env = dict(os.environ)
+        env["GIT_INDEX_FILE"] = os.path.join(tmpdir, "index")
+        if os.path.exists(index):
+            shutil.copyfile(index, env["GIT_INDEX_FILE"])
+
+    try:
+        paths = []
+        for args in (
+            ["diff", "--name-only", "-z", "--no-renames",
+             "%s..HEAD" % reviewed_commit],
+            ["diff", "--name-only", "-z", "--no-renames", "--cached"],
+            ["diff", "--name-only", "-z", "--no-renames"],
+            ["ls-files", "-z", "--others", "--exclude-standard"],
+        ):
+            for path in _names(root, args, env):
+                path = path.replace("\\", "/")
+                if path not in paths:
+                    paths.append(path)
+        return paths
+    finally:
+        if tmpdir is not None:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def code_drift(root, ticket_id, reviewed_commit, plan_path):
