@@ -9,6 +9,7 @@ violations at write time instead of relying on a later `validate` pass.
 
 import datetime
 import os
+import re
 
 import contracts
 import state
@@ -65,6 +66,37 @@ def _require_phase(phase):
     if phase not in validate.PHASES:
         raise MutateError("unknown phase %r (must be one of %s)"
                           % (phase, ", ".join(sorted(validate.PHASES))))
+
+
+def _escalation_required(data):
+    """True when a recorded escalation is still unresolved."""
+    return bool((data.get("escalation") or {}).get("required"))
+
+
+def _escalation_block(action):
+    """The MutateError message for a routine command blocked by escalation."""
+    return MutateError(
+        "cannot %s while an escalation is required: a senior must resolve the "
+        "underlying issue and record it with `escalate --clear --resolution ...` "
+        "first" % action)
+
+
+# A resolution must carry a supporting reference and may not be bare prose.
+_DOC_ID_RE = re.compile(r"\b(?:F|DQ)-[0-9]+\b")
+_REF_PATH_RE = re.compile(r"[A-Za-z0-9_./-]*\.[A-Za-z]{2,6}\b")
+_COMMIT_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
+_USER_RE = re.compile(r"\buser", re.IGNORECASE)
+
+
+def _resolution_has_reference(text):
+    """A minimal, documented rule: at least one supporting reference token.
+
+    Accepts a document id (`F-<n>`/`DQ-<n>`), a repository-relative path (a
+    dotted extension such as `decision.md` or `.ai/work/.../handoff.md`), or a
+    commit hash. This declares the resolution; it does not authenticate it.
+    """
+    return bool(_DOC_ID_RE.search(text) or _REF_PATH_RE.search(text)
+                or _COMMIT_RE.search(text))
 
 
 def _artifact_path(root, ticket_id, data, key, default):
@@ -166,6 +198,8 @@ def advance(root, ticket_id, to):
     """
     _require_phase(to)
     data = _load(root, ticket_id)
+    if workflow_v2.version(data) == 2 and _escalation_required(data):
+        raise _escalation_block("advance")
     current = data.get("phase")
     if current not in TRANSITIONS:
         raise MutateError("cannot advance from phase %r (terminal or unknown)" % current)
@@ -231,6 +265,9 @@ def complete_task(root, ticket_id, total=None):
     ver = workflow_v2.version(data)
     phase = data.get("phase")
     impl = data.get("implementation") or {}
+
+    if ver == 2 and _escalation_required(data):
+        raise _escalation_block("complete a task")
 
     if ver == 2:
         if phase != "implementation":
@@ -445,26 +482,121 @@ def set_gate(root, ticket_id, gate, round_no=None):
     return "%s: evidence.gate=%s round=%s" % (ticket_id, gate, evidence.get("round"))
 
 
-def escalate(root, ticket_id, scope=None, reason=None, clear=False):
-    """Set or clear the escalation block."""
+def escalate(root, ticket_id, scope=None, reason=None, clear=False,
+             resolution=None):
+    """Set or clear the escalation block.
+
+    On a v1 Ticket this is the original loose behavior (write the `escalation`
+    block only). On a v2 Ticket escalation is atomic: it records the interrupted
+    continuation, sets `status=escalation_required` and routes `next_action` to
+    the phase's senior resolver, while routine advances/completion and a raw
+    Status overwrite are rejected. Clearing requires a documented `--resolution`
+    (with supporting references, and the user's answer for a human scope) and
+    restores the previous Status and a recomputed phase-appropriate action.
+    Every rejection leaves State unchanged.
+    """
     data = _load(root, ticket_id)
-    if clear:
-        data["escalation"] = {"required": False, "scope": "machine", "reason": None}
+
+    if workflow_v2.version(data) != 2:
+        # v1 semantics are byte-compatible with the original implementation.
+        if clear:
+            data["escalation"] = {"required": False, "scope": "machine",
+                                  "reason": None}
+            _save(root, ticket_id, data)
+            return "%s: escalation cleared" % ticket_id
+        if scope not in validate.SCOPES:
+            raise MutateError("unknown escalation scope %r (machine|human)" % scope)
+        data["escalation"] = {"required": True, "scope": scope, "reason": reason}
         _save(root, ticket_id, data)
-        return "%s: escalation cleared" % ticket_id
+        return "%s: escalation required (scope=%s)" % (ticket_id, scope)
+
+    esc = data.get("escalation") or {}
+    if not isinstance(esc, dict):
+        esc = {}
+
+    if clear:
+        current_scope = scope if scope in validate.SCOPES else esc.get("scope")
+        text = resolution.strip() if isinstance(resolution, str) else ""
+        if not text:
+            raise MutateError(
+                "cannot clear a v2 escalation without --resolution: record the "
+                "senior resolution and the artifacts that support it")
+        if not _resolution_has_reference(text):
+            raise MutateError(
+                "the escalation --resolution must reference supporting evidence: "
+                "a document id (F-<n>/DQ-<n>), a repository-relative path with a "
+                "dotted extension, or a commit hash")
+        if current_scope == "human" and not _USER_RE.search(text):
+            raise MutateError(
+                "a human escalation must record the user's answer: mention the "
+                "user and the answer in --resolution")
+
+        previous = esc.get("previous_status")
+        if previous == "escalation_required":
+            raise MutateError(
+                "cannot restore escalation_required as the previous Status: the "
+                "recorded continuation is inconsistent")
+        if previous not in validate.STATUSES:
+            previous = "active"
+
+        esc["required"] = False
+        if current_scope in validate.SCOPES:
+            esc["scope"] = current_scope
+        esc["reason"] = None
+        esc["resolution"] = text
+        data["escalation"] = esc
+        data["status"] = previous
+        data["next_action"] = workflow_v2.next_action(data, data.get("phase"))
+        _save(root, ticket_id, data)
+        return "%s: escalation cleared (status=%s)" % (ticket_id, previous)
+
     if scope not in validate.SCOPES:
         raise MutateError("unknown escalation scope %r (machine|human)" % scope)
-    data["escalation"] = {"required": True, "scope": scope, "reason": reason}
+    if data.get("phase") == "done" or data.get("status") == "abandoned":
+        raise MutateError(
+            "cannot escalate a %s ticket: there is no routine work to interrupt"
+            % ("done" if data.get("phase") == "done" else "abandoned"))
+
+    if not esc.get("required"):
+        # First escalation: record the continuation this interrupts.
+        next_action = data.get("next_action") or {}
+        esc["previous_status"] = data.get("status")
+        esc["interrupted_action"] = {
+            "role": next_action.get("role"),
+            "action": next_action.get("action"),
+            "task": next_action.get("task"),
+        }
+        esc["interrupted_phase"] = data.get("phase")
+    # Repeated escalation keeps the stored continuation (store on the first only).
+    esc["required"] = True
+    esc["scope"] = scope
+    esc["reason"] = reason
+    if "resolution" not in esc:
+        esc["resolution"] = None
+    data["escalation"] = esc
+    data["status"] = "escalation_required"
+    data["next_action"] = workflow_v2.escalated_next_action(data.get("phase"))
     _save(root, ticket_id, data)
     return "%s: escalation required (scope=%s)" % (ticket_id, scope)
 
 
 def set_status(root, ticket_id, status):
-    """Set the lateral status (orthogonal to phase)."""
+    """Set the lateral status (orthogonal to phase).
+
+    On a v2 Ticket an unresolved escalation locks the Status to
+    `escalation_required`: any other target is rejected and State is unchanged,
+    so a bare `set-status active` cannot bypass escalation.
+    """
     if status not in validate.STATUSES:
         raise MutateError("unknown status %r (must be one of %s)"
                           % (status, ", ".join(sorted(validate.STATUSES))))
     data = _load(root, ticket_id)
+    if workflow_v2.version(data) == 2 and _escalation_required(data) \
+            and status != "escalation_required":
+        raise MutateError(
+            "cannot set status %r while an escalation is required: it stays "
+            "escalation_required until `escalate --clear --resolution ...` "
+            "resolves it" % status)
     data["status"] = status
     _save(root, ticket_id, data)
     return "%s: status=%s" % (ticket_id, status)

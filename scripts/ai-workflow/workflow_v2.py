@@ -13,8 +13,9 @@ import contracts
 
 __all__ = ["version", "problems", "check_transition", "next_action",
            "readiness_problems", "counter_problems", "executable_task",
-           "is_nonneg_int", "ADOPTION_CONFIRMATIONS", "TRANSITIONS",
-           "NEXT_ACTIONS", "SUPPORTED_VERSIONS"]
+           "is_nonneg_int", "escalated_next_action", "ADOPTION_CONFIRMATIONS",
+           "TRANSITIONS", "NEXT_ACTIONS", "ESCALATION_RESOLVERS",
+           "SUPPORTED_VERSIONS"]
 
 SUPPORTED_VERSIONS = (1, 2)
 
@@ -56,6 +57,26 @@ NEXT_ACTIONS = {
     "implementation": ("ticket-executor", "implement current task"),
     "review": ("checkpoint-handoff", "review and hand off"),
 }
+
+# Senior resolver for each escalated phase (spec decision 5). While a v2 ticket
+# is escalated, next_action locks to the phase's resolver; the requirement phase
+# (adoption/uncertainty) routes to workflow-bootstrap. Shared by `mutate` (to
+# write the route) and `validate` (to detect route corruption).
+ESCALATION_RESOLVERS = {
+    "requirement": "workflow-bootstrap",
+    "evidence_collection": "evidence-auditor",
+    "evidence_audit": "evidence-auditor",
+    "followup_evidence": "evidence-auditor",
+    "technical_decision": "technical-decision",
+    "planning": "technical-decision",
+    "implementation": "technical-decision",
+    "review": "technical-decision",
+}
+
+# The imperative written into next_action.action while a v2 ticket is escalated.
+# Kept free of the restricted-YAML-reserved characters so it round-trips plainly.
+ESCALATION_ACTION = ("resolve the escalation and clear it with "
+                     "escalate --clear --resolution")
 
 
 def version(data):
@@ -158,6 +179,18 @@ def next_action(data, phase):
     if phase == "implementation":
         task = executable_task((data or {}).get("implementation") or {})
     return {"role": role, "action": action, "task": task}
+
+
+def escalated_next_action(phase):
+    """The senior-resolver route written while a v2 ticket is escalated.
+
+    Keys are always exactly role/action/task. The resolver is the phase's entry
+    in `ESCALATION_RESOLVERS`; an unknown/terminal phase yields no role, which
+    `validate` reports as an unresolvable escalation.
+    """
+    return {"role": ESCALATION_RESOLVERS.get(phase),
+            "action": ESCALATION_ACTION if phase in ESCALATION_RESOLVERS else None,
+            "task": None}
 
 
 def is_nonneg_int(value):

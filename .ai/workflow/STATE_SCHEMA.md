@@ -61,7 +61,7 @@ No other phase transitions exist. At `done`, `next_action` is cleared.
 | artifacts | map {evidence, evidence_audit, decision, progress, handoff} | artifact filenames |
 | evidence | map {round, gate[, report_sha256, audit_sha256]} | gate: sufficient / insufficient; the two hashes bind a v2 verdict to the audited bytes |
 | implementation | map {current_task, total_tasks, completed_tasks: [], [, task_hashes: []]} | task progress; on v2 task_hashes is the ordered canonical hash of each registered task |
-| escalation | map {required, scope, reason} | scope: machine / human |
+| escalation | map {required, scope, reason[, previous_status, interrupted_action, interrupted_phase, resolution]} | scope: machine / human; the four bracketed fields are additive v2 escalation facts |
 | claim | map {harness, model, claimed_at} | soft claim, advisory |
 | next_action | map {role, action, task} | intended next step |
 | provenance | map {last_harness, last_model} | who wrote last |
@@ -149,6 +149,31 @@ Registration is allowed only in `planning`, a recorded senior reconstruction
 (`upgrade.requires_reconstruction`), or an appending `changes_requested` review.
 A v1 Ticket, or any other phase, is rejected. Every rejection leaves the State
 bytes unchanged with an actionable error.
+
+## v2 escalation fields
+
+On a `workflow_version: 2` Ticket, `escalate` writes four additive `escalation`
+fields and changes the Status/route atomically (spec decision 5; see
+`ESCALATION.md`). An unresolved escalation is a valid State condition, not a
+malformed State:
+
+- `escalation.previous_status` — the Status in effect when escalation began.
+- `escalation.interrupted_action` — a map `{role, action, task}` holding the
+  `next_action` that escalation interrupted.
+- `escalation.interrupted_phase` — the phase when escalation began.
+- `escalation.resolution` — the recorded senior resolution text; **kept** after
+  a clear.
+
+These are recorded on the first escalation only: repeating an escalation updates
+`scope`/`reason` and keeps the original `previous_status`/`interrupted_action`/
+`interrupted_phase`. While `escalation.required` is true the Status is locked to
+`escalation_required` and `next_action.role` is the phase's senior resolver;
+`advance`, `complete-task`, and a `set-status` away from `escalation_required`
+are rejected without changing State bytes. `escalate --clear` requires a
+documented `--resolution`, restores `previous_status`, and recomputes the
+phase-appropriate `next_action`. `validate` reports escalation/Status/route
+divergence (and malformed additive fields) as ERROR Findings. `required`, `scope`,
+and `reason` keep their v1 meanings; the four fields above are written only on v2.
 
 ## Migration blocks (adopted repos only)
 

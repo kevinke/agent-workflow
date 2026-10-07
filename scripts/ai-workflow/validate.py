@@ -137,6 +137,60 @@ class Finding(object):
         return "%s: %s" % (self.severity, self.message)
 
 
+def _validate_escalation(data, bad):
+    """v2 escalation/Status/route divergence (spec decision 5). Read-only.
+
+    An unresolved escalation must be internally consistent: Status locked to
+    `escalation_required`, the route pointing at the phase's senior resolver,
+    and the recorded continuation well-formed. Missing fields never crash; a
+    field is only checked when `required` is true or the field is present.
+    """
+    esc = data.get("escalation") or {}
+    if not isinstance(esc, dict):
+        bad("escalation must be a map")
+        return
+    required = esc.get("required") is True
+    status = data.get("status")
+    phase = data.get("phase")
+
+    if required and status != "escalation_required":
+        bad("escalation.required is true but status is %r (must be "
+            "escalation_required)" % status)
+    if status == "escalation_required" and not required:
+        bad("status is escalation_required but escalation.required is not true "
+            "(record the escalation or restore a valid status)")
+
+    if required:
+        expected = workflow_v2.ESCALATION_RESOLVERS.get(phase)
+        if expected is None:
+            bad("escalation.required is true in phase %r, which has no senior "
+                "resolver" % phase)
+        else:
+            role = (data.get("next_action") or {}).get("role")
+            if role != expected:
+                bad("escalation route corruption: escalation.required is true "
+                    "but next_action.role is %r (phase %r requires the %s "
+                    "resolver)" % (role, phase, expected))
+
+    if required or "previous_status" in esc:
+        previous = esc.get("previous_status")
+        if previous is not None and previous not in STATUSES:
+            bad("escalation.previous_status %r is not a valid status" % previous)
+    if required or "interrupted_phase" in esc:
+        interrupted = esc.get("interrupted_phase")
+        if interrupted is not None and interrupted not in PHASES:
+            bad("escalation.interrupted_phase %r is not a valid phase" % interrupted)
+    if required or "interrupted_action" in esc:
+        action = esc.get("interrupted_action")
+        if action is not None and (not isinstance(action, dict)
+                                   or set(action.keys()) != {"role", "action", "task"}):
+            bad("escalation.interrupted_action must be a map with role/action/task")
+    if required or "resolution" in esc:
+        resolution = esc.get("resolution")
+        if resolution is not None and not isinstance(resolution, str):
+            bad("escalation.resolution must be a string or null")
+
+
 def _git_dirty(root):
     try:
         out = subprocess.run(
@@ -209,6 +263,10 @@ def validate_ticket(root, ticket, findings):
         scope = esc.get("scope")
         if scope not in SCOPES:
             bad("illegal escalation.scope %r (machine|human)" % scope)
+
+    # --- v2 escalation/Status/route divergence -------------------------------
+    if ver == 2:
+        _validate_escalation(data, bad)
 
     next_action = data.get("next_action") or {}
     # `done` clears next_action; an emptied block must not trip the role enum

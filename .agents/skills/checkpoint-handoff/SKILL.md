@@ -29,8 +29,12 @@ Phase transitions and handoff (see `.ai/workflow/ROLES.md`). Any model tier.
    `done`. If it rejects the transition, the state is not ready — do not force
    it; fix the blocker or escalate.
 7. Clear `escalation.required` only if a senior resolved it per
-   `.ai/workflow/ESCALATION.md`:
-   `ai-workflow escalate <ticket-id> --clear`.
+   `.ai/workflow/ESCALATION.md`. On a `workflow_version: 2` ticket the clear
+   requires the senior resolution:
+   `ai-workflow escalate <ticket-id> --clear --resolution "<what was resolved and its supporting artifacts>"`.
+   A human-scope resolution must reference the user's answer; a missing or
+   unreferenced `--resolution` is rejected. (A v1 ticket keeps the bare
+   `ai-workflow escalate <ticket-id> --clear`.)
 8. Write `handoff.md` per the contract in `.ai/workflow/ARTIFACTS.md`: the
    fixed sections plus the Repository State block (branch, HEAD, uncommitted
    files, test status). No unverified claims.

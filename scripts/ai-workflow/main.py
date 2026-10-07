@@ -60,7 +60,7 @@ commands:
   complete-task <ticket-id> [--total N]  mark one implementation task done
   register-plan <ticket-id> --path P --total N  register a referenced Plan (v2)
   set-gate <ticket-id> --gate G [--round N]  record evidence verdict (G: sufficient|insufficient)
-  escalate <ticket-id> --scope S --reason "..." | --clear  set/clear escalation
+  escalate <ticket-id> --scope S --reason "..." | --clear [--resolution TEXT]  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
   install-skills [target]  install the seven role skills into the target repo (idempotent)
   upgrade             explicit protocol upgrade using workflow_version
@@ -360,19 +360,21 @@ def cmd_escalate(args, root):
     rest = args[1:]
     if not rest or rest[0].startswith("--"):
         sys.stderr.write("usage: ai-workflow escalate <ticket-id> "
-                         "--scope <machine|human> --reason \"...\" | --clear\n")
+                         "--scope <machine|human> --reason \"...\" | --clear "
+                         "[--resolution TEXT]\n")
         return 2
     ticket_id = rest[0]
     rest = rest[1:]
     clear = "--clear" in rest
     rest = [r for r in rest if r != "--clear"]
-    opts, err = _parse_options(rest, {"--scope", "--reason"})
+    opts, err = _parse_options(rest, {"--scope", "--reason", "--resolution"})
     if err:
         sys.stderr.write("escalate: %s\n" % err)
         return 2
     try:
         if clear:
-            print(mutate.escalate(root, ticket_id, clear=True))
+            print(mutate.escalate(root, ticket_id, clear=True,
+                                  resolution=opts.get("resolution")))
         else:
             scope = opts.get("scope")
             if not scope:
