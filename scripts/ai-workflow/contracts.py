@@ -16,6 +16,7 @@ Structural validation reports problems as a list of strings; it judges
 shapes (IDs, labels, anchors, placeholders), never claim truth or designs.
 """
 
+import datetime
 import hashlib
 import os
 import re
@@ -23,7 +24,8 @@ import re
 import parser
 
 __all__ = ["ContractError", "read_artifact", "read_plan", "sha256_file",
-           "validate_evidence", "validate_audit", "validate_review"]
+           "source_problems", "validate_evidence", "validate_audit",
+           "validate_review"]
 
 
 class ContractError(Exception):
@@ -54,9 +56,14 @@ DQ_ID_RE = re.compile(r"^DQ-\d{2,}$")
 F_ID_RE = re.compile(r"^F-\d{2,}$")
 F_REF_RE = re.compile(r"\bF-\d{2,}\b")
 DQ_REF_RE = re.compile(r"\bDQ-\d{2,}\b")
-_CODE_LINE_RE = re.compile(r":\d+(?:-\d+)?(?=\s|$)")
+# A `:12` line or `:12-18` line range in a source path (HARDEN-005 Task 1).
+_LINE_RANGE_RE = re.compile(r":(\d+)(?:-(\d+))?(?=\s|$)")
 _PLACEHOLDER_RE = re.compile(r"^<[^<>\n]*>$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+# observed_commit: a concrete Git object ID — a seven-hex-digit abbreviation
+# up to the full object ID (sha1 -> 40, sha256 -> 64 hex digits), like the
+# review's C1 rule. No Git lookup happens here; the shape must be concrete.
+_COMMIT_ID_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 
 FINDING_TAGS = {"FACT", "INFERENCE", "UNKNOWN"}
 METHODS = {"static", "execution", "test", "inference", "unknown"}
@@ -462,6 +469,250 @@ def _string_list(value):
     return isinstance(value, list) and all(isinstance(v, str) for v in value)
 
 
+def _concrete_text(value):
+    """A non-empty string that is not a bare `<placeholder>` stand-in."""
+    return isinstance(value, str) and not _is_placeholder(value)
+
+
+def _is_iso8601(value):
+    """True for a string the stdlib ISO-8601 parser accepts."""
+    if not isinstance(value, str):
+        return False
+    try:
+        datetime.datetime.fromisoformat(value.strip())
+    except ValueError:
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Source-family syntax (HARDEN-005 Task 1)
+# ---------------------------------------------------------------------------
+
+_SOURCE_FAMILIES = ("code", "config", "data", "runtime", "negative search",
+                    "inference basis", "unknown")
+_FILE_SCOPE_RE = re.compile(r"^file scope \(reason: .+\)$", re.IGNORECASE)
+_RUNTIME_INTEGER_RE = re.compile(r"-?[0-9]+")
+
+# Slash-field starters per family: (lowercase prefix, canonical field name).
+# A part begins a new field when it starts with a prefix followed by ':' or
+# whitespace; any other part continues the previous field, so values (paths,
+# cwd notes) may contain '/'. Longest prefixes first where they overlap.
+_RUNTIME_STARTERS = (
+    ("observed result", "result"),
+    ("exit status", "exit"),
+    ("result", "result"),
+    ("exit", "exit"),
+    ("input", "input"),
+    ("command", "command"),
+)
+_NEGATIVE_STARTERS = (
+    ("exclusions", "exclusions"),
+    ("result", "result"),
+    ("scope", "scope"),
+)
+_UNKNOWN_STARTERS = (
+    ("collection target", "target"),
+    ("collect at", "target"),
+)
+
+
+def _slash_fields(body, starters):
+    """Group a '/'-separated source body into (name, prefix, text) fields.
+
+    Parts before the first starter form the unnamed preamble field (name ''),
+    which carries e.g. the runtime command or is a stray for negative search.
+    """
+    fields = []
+    for part in body.split("/"):
+        part = part.strip()
+        if not part:
+            continue
+        lowered = part.lower()
+        for prefix, name in starters:
+            if lowered.startswith(prefix) and len(part) > len(prefix) \
+                    and part[len(prefix)] in (":", " ", "\t"):
+                fields.append([name, prefix, [part]])
+                break
+        else:
+            if fields:
+                fields[-1][2].append(part)
+            else:
+                fields.append(["", "", [part]])
+    return [(name, prefix, "/".join(parts))
+            for name, prefix, parts in fields]
+
+
+def _field_value(prefix, text):
+    return text[len(prefix):].lstrip(":").strip()
+
+
+def _anchored_source_problems(family, body):
+    """code:/config:/data: need path, line range, and a `::` anchor."""
+    problems = []
+    path_part, sep, anchor = body.partition("::")
+    path_part = path_part.strip()
+    anchor = anchor.strip()
+    if not sep or not anchor:
+        problems.append(
+            "%s source is missing a '::' anchor naming a symbol, key, or "
+            "record (a code file without one is ':: file scope (reason: ...)')"
+            % family)
+    elif family == "code" and anchor.lower().startswith("file scope") \
+            and not _FILE_SCOPE_RE.match(anchor):
+        problems.append(
+            "code source file-scope anchor must be justified as "
+            "':: file scope (reason: ...)'")
+    ranges = [(int(m.group(1)), int(m.group(2) or m.group(1)))
+              for m in _LINE_RANGE_RE.finditer(path_part)]
+    if not ranges:
+        problems.append("%s source is missing a line reference "
+                        "(':12' or ':12-18')" % family)
+    for start, end in ranges:
+        if start < 1 or end < 1:
+            problems.append("%s source line numbers start at 1" % family)
+            break
+    for start, end in ranges:
+        if end < start:
+            problems.append("%s source line range %d-%d is reversed"
+                            % (family, start, end))
+            break
+    if not _LINE_RANGE_RE.sub("", path_part).strip():
+        problems.append("%s source is missing the repository-relative path"
+                        % family)
+    return problems
+
+
+def _runtime_source_problems(body):
+    """runtime: needs a command plus input/result and an integer exit."""
+    problems = []
+    command = None
+    values = {}
+    for name, prefix, text in _slash_fields(body, _RUNTIME_STARTERS):
+        if name == "":
+            if command is None:
+                command = text
+        elif name == "command":
+            if command is None:
+                command = _field_value(prefix, text)
+        else:
+            value = _field_value(prefix, text)
+            if value and values.get(name) is None:
+                values[name] = value
+    if not command:
+        problems.append("runtime source is missing the observed command")
+    if not values.get("input"):
+        problems.append("runtime source is missing an 'input:' field")
+    if not values.get("result"):
+        problems.append("runtime source is missing a 'result:' (or "
+                        "'observed result:') field")
+    if not values.get("exit"):
+        problems.append("runtime source is missing an 'exit status:' (or "
+                        "'exit:') field")
+    elif not _RUNTIME_INTEGER_RE.fullmatch(values["exit"]):
+        problems.append("runtime source exit status %r is not an integer"
+                        % values["exit"])
+    return problems
+
+
+def _negative_search_problems(body):
+    """negative search: needs scope, exclusions, and result fields."""
+    problems = []
+    scope = None
+    exclusions = None
+    result = None
+    for name, prefix, text in _slash_fields(body, _NEGATIVE_STARTERS):
+        value = _field_value(prefix, text)
+        if name == "":
+            problems.append("negative search must start with 'scope'; got %r"
+                            % text)
+        elif name == "scope" and value and scope is None:
+            scope = value
+        elif name == "exclusions" and value and exclusions is None:
+            exclusions = value
+        elif name == "result" and value and result is None:
+            result = value
+    if not scope:
+        problems.append("negative search is missing its searched scope")
+    if not exclusions:
+        problems.append("negative search is missing an 'exclusions:' field")
+    if not result:
+        problems.append("negative search is missing a 'result:' field")
+    return problems
+
+
+def _inference_basis_problems(body):
+    if not F_REF_RE.findall(body):
+        return ["inference basis source cites no F-ID"]
+    return []
+
+
+def _unknown_source_problems(body):
+    """unknown: needs an unobserved item plus a collection target."""
+    problems = []
+    item = None
+    target = None
+    for name, prefix, text in _slash_fields(body, _UNKNOWN_STARTERS):
+        if name == "":
+            if item is None:
+                item = text
+        else:
+            value = _field_value(prefix, text)
+            if value and target is None:
+                target = value
+    if not item:
+        problems.append("unknown source is missing the unobserved item")
+    if not target:
+        problems.append("unknown source is missing a 'collect at:' "
+                        "collection target")
+    return problems
+
+
+def source_problems(source, finding_tag):
+    """Syntax problems of one `Sources:` entry for a finding tagged
+    `finding_tag` ("FACT" | "INFERENCE" | "UNKNOWN"); [] means well-formed.
+
+    Bounded structural checks only — supported family prefix, line ranges,
+    `::` anchors, and field labels. It never touches Git or the filesystem
+    and never judges whether the underlying claim is true. Families:
+
+    - `code:` / `config:` / `data:` — repository-relative path, a `:12` or
+      `:12-18` line reference, and a `::` anchor naming a symbol, key, or
+      record; a code file without a named symbol is justified as
+      `:: file scope (reason: ...)`.
+    - `runtime:` — an observed command plus `input:`, `result:` (alias
+      `observed result:`), and an integer `exit:` (alias `exit status:`).
+    - `negative search:` — `scope`, `exclusions:`, and `result:` fields.
+    - `inference basis:` — at least one cited F-ID.
+    - `unknown:` — an unobserved item plus a `collect at:` collection
+      target; allowed only on an [UNKNOWN] finding.
+    """
+    text = str(source or "").strip()
+    if text.startswith("- "):
+        text = text[2:].strip()
+    if not text:
+        return ["source entry is empty"]
+    family, sep, body = text.partition(":")
+    family = family.strip().lower()
+    body = body.strip()
+    if not sep or family not in _SOURCE_FAMILIES:
+        return ["source %r does not use a supported family prefix (%s)"
+                % (text, ", ".join(f + ":" for f in _SOURCE_FAMILIES))]
+    if not body:
+        return ["%s: source has an empty body" % family]
+    if family == "unknown" and finding_tag != "UNKNOWN":
+        return ["'unknown:' source is only allowed on an [UNKNOWN] finding"]
+    if family in ("code", "config", "data"):
+        return _anchored_source_problems(family, body)
+    if family == "runtime":
+        return _runtime_source_problems(body)
+    if family == "negative search":
+        return _negative_search_problems(body)
+    if family == "inference basis":
+        return _inference_basis_problems(body)
+    return _unknown_source_problems(body)
+
+
 _EVIDENCE_REQUIRED_METADATA = [
     "artifact_type", "format_version", "ticket_id", "round",
     "observed_commit", "dirty_changes", "created_at",
@@ -486,7 +737,12 @@ def validate_evidence(report, ticket_id):
         ("artifact_type", lambda v: v == "evidence"),
         ("format_version", lambda v: _is_int(v) and v == 1),
         ("round", lambda v: _is_int(v) and v > 0),
+        ("observed_commit", lambda v: isinstance(v, str)
+         and bool(_COMMIT_ID_RE.match(v))),
         ("dirty_changes", _string_list),
+        ("created_at", _is_iso8601),
+        ("scout_harness", _concrete_text),
+        ("scout_model", _concrete_text),
         ("task_type", lambda v: isinstance(v, str)),
         ("report_status", lambda v: isinstance(v, str)),
     ])
@@ -541,32 +797,53 @@ def validate_evidence(report, ticket_id):
             item = line.strip()
             if item.startswith("- "):
                 item = item[2:].strip()
-            if item.startswith("code:"):
-                body = item[len("code:"):].strip()
-                has_line = bool(_CODE_LINE_RE.search(body))
-                has_anchor = "::" in body and body.split("::")[-1].strip()
-                if not (has_line or has_anchor):
-                    problems.append(
-                        "%s: code source is missing a line reference and a "
-                        "named symbol or key: %r" % (rid, item))
+            if not item:
+                continue
+            for problem in source_problems(item, rec.get("tag")):
+                problems.append("%s: Sources: %s" % (rid, problem))
 
     for rec in questions:
         fields = rec.get("fields") or {}
-        facts = fields.get("Facts") or ""
-        for ref in F_REF_RE.findall(facts):
+        refs = F_REF_RE.findall(fields.get("Facts") or "")
+        if (fields.get("Answer") == "ANSWERED"
+                and not any(ref in f_ids for ref in refs)):
+            problems.append("%s: ANSWERED question cites no existing Fact ID "
+                            "in 'Facts'" % rec.get("id", "?"))
+        for ref in refs:
             if ref not in f_ids:
                 problems.append("%s: Facts references unknown finding %s"
                                 % (rec.get("id", "?"), ref))
     for rec in findings:
         fields = rec.get("fields") or {}
-        for ref in DQ_REF_RE.findall(fields.get("Questions") or ""):
+        rid = rec.get("id", "?")
+        q_refs = DQ_REF_RE.findall(fields.get("Questions") or "")
+        if not any(ref in q_ids for ref in q_refs):
+            problems.append("%s: finding cites no existing Decision Question "
+                            "ID in 'Questions'" % rid)
+        for ref in q_refs:
             if ref not in q_ids:
                 problems.append("%s: Questions references unknown question %s"
-                                % (rec.get("id", "?"), ref))
+                                % (rid, ref))
         for ref in F_REF_RE.findall(fields.get("Basis") or ""):
             if ref not in f_ids:
                 problems.append("%s: Basis references unknown finding %s"
-                                % (rec.get("id", "?"), ref))
+                                % (rid, ref))
+        if rec.get("tag") == "INFERENCE" \
+                and not _is_placeholder(fields.get("Basis")) \
+                and not any(ref in f_ids for ref in
+                            F_REF_RE.findall(fields.get("Basis") or "")):
+            problems.append("%s: INFERENCE Basis cites no existing Fact ID"
+                            % rid)
+        for line in (fields.get("Sources") or "").splitlines():
+            item = line.strip()
+            if item.startswith("- "):
+                item = item[2:].strip()
+            family, colon, rest = item.partition(":")
+            if colon and family.strip().lower() == "inference basis":
+                for ref in F_REF_RE.findall(rest):
+                    if ref not in f_ids:
+                        problems.append("%s: inference basis source references "
+                                        "unknown finding %s" % (rid, ref))
     return problems
 
 
@@ -593,6 +870,7 @@ def validate_audit(report, ticket_id, gate, round_no):
     _metadata_problems(flag, "evidence-audit", md, _AUDIT_REQUIRED_METADATA, [
         ("artifact_type", lambda v: v == "evidence-audit"),
         ("format_version", lambda v: _is_int(v) and v == 1),
+        ("round", lambda v: _is_int(v) and v > 0),
         ("gate", lambda v: v in ("sufficient", "insufficient")),
         ("evidence_sha256", lambda v: isinstance(v, str) and bool(_SHA256_RE.match(v))),
     ])

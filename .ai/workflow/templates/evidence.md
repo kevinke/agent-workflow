@@ -9,10 +9,10 @@ the full contract). Design proposals and the evidence verdict are forbidden.
 artifact_type: evidence
 format_version: 1
 ticket_id: <ticket-id>
-round: <positive current collection round; must match Audit/CLI round>
-observed_commit: <repository HEAD at collection time>
+round: <positive integer round; must match the Audit and CLI round>
+observed_commit: <HEAD at collection time: a literal 7-64 hex-digit object ID>
 dirty_changes: [<relevant working-tree paths, or []>]
-created_at: <collection time>
+created_at: <ISO-8601 collection time, e.g. 2026-10-07T12:00:00+00:00>
 scout_harness: <harness name>
 scout_model: <model name>
 # Optional descriptive fields, not State:
@@ -43,7 +43,7 @@ choice. Use H3 `DQ-01` (two or more digits) with named fields.
 Use H3 `F-01 [FACT | INFERENCE | UNKNOWN]` with named fields. FACT means an
 observed claim. Static reading, execution, and test verification are distinct —
 do not present static reading as runtime verification. INFERENCE cites its
-Basis (F-IDs); UNKNOWN states decision impact.
+Basis with at least one established F-ID; UNKNOWN states decision impact.
 
 ### F-01 [FACT]
 
@@ -52,9 +52,19 @@ Basis (F-IDs); UNKNOWN states decision impact.
 **Questions:** <associated DQ IDs>
 
 **Sources:**
-- code: <repo-relative path>:<line-range> :: <symbol when one exists>
-- runtime: <command> / <input or fixture> / <observed result> / <exit status>
-- negative search: <scope searched> / <exclusions> / <nothing found>
+- code: <repo-relative path>:<line-range> :: <symbol>
+- code: <repo-relative path>:<line-range> :: file scope (reason: <why no named symbol>)
+- config: <repo-relative path>:<line-range> :: <key>
+- data: <repo-relative path>:<line-range> :: <record>
+- runtime: <command> / input: <input or fixture> / result: <observed result> / exit: <integer exit status>
+- negative search: scope <where searched> / exclusions: <excluded areas or none> / result: <what was found>
+- inference basis: <cited F-IDs>
+- unknown: <unobserved item> / collect at: <collection target>
+
+Every entry uses one of these concrete families; a `runtime:` label accepts
+`observed result:` for `result:` and `exit status:` for `exit:`. A file without
+a named symbol is cited as `:: file scope (reason: ...)`, never a fabricated
+name. `set-gate` enforces these shapes; it never judges the claim itself.
 
 **Method:** static | execution | test | inference | unknown
 

@@ -115,7 +115,7 @@ against that exact state.
 **Questions:** DQ-01
 
 **Sources:**
-- UNKNOWN: depends on the intended contract (whole-config freshness vs single-key), which is an architectural decision
+- UNKNOWN: the intended `reload()` contract (whole-config freshness vs single-key re-read) / collect at: senior decision on the intended contract (see U-01)
 
 **Method:** unknown
 

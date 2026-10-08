@@ -33,11 +33,14 @@ Required Metadata fields:
 - `artifact_type: evidence`
 - `format_version: 1`
 - `ticket_id`
-- `round` — the positive current collection round; must match Audit/CLI round
-- `observed_commit` — repository HEAD at collection time
+- `round` — the positive current collection round (an integer; boolean,
+  string, zero, and negative values are rejected); must match Audit/CLI round
+- `observed_commit` — the repository HEAD at collection time as a literal
+  hexadecimal object ID: a seven-hex-digit abbreviation up to the full object
+  ID (never `HEAD`, a branch name, or a `<placeholder>`)
 - `dirty_changes` — string list of relevant working-tree paths, or `[]`
-- `created_at`
-- `scout_harness`, `scout_model` — Scout provenance
+- `created_at` — an ISO-8601 timestamp (a bare date or a full timestamp)
+- `scout_harness`, `scout_model` — concrete Scout provenance, not placeholders
 
 `task_type` and `report_status` are optional descriptive fields, not State
 enums. Capture `observed_commit` and `dirty_changes` at collection time and
@@ -69,11 +72,13 @@ answered. Each question uses H3 `DQ-01` (two or more digits) with named fields:
 Each finding uses H3 `F-01 [FACT | INFERENCE | UNKNOWN]` with named fields:
 
 - **Statement:** one precise claim
-- **Questions:** associated DQ IDs
+- **Questions:** associated DQ IDs — every finding cites at least one
+  established question
 - **Sources:** anchored source list (see below)
 - **Method:** `static` | `execution` | `test` | `inference` | `unknown`
 - **Scope:** limits of the claim
-- **Basis:** required for INFERENCE (cited F-IDs); optional otherwise
+- **Basis:** required for INFERENCE and must cite at least one established
+  F-ID; optional otherwise
 
 Named fields use `**Label:** value`; multiline lists continue below the label.
 Recognise fields outside code fences only. FACT means an observed claim, not a
@@ -81,13 +86,30 @@ confidence score; optional confidence grades cannot replace evidence. Static
 reading, execution, and test verification are distinct methods — do not present
 static reading as runtime verification.
 
-Sources accept:
+Sources use a supported family prefix — `code:`, `config:`, `data:`,
+`runtime:`, `negative search:`, `inference basis:`, `unknown:` — and any other
+entry is rejected as non-concrete:
 
-- code anchors: `code: src/example.py:10-14 :: Example.method` — repository-relative file, line or range, symbol when one exists
-- data/config anchors: file/line plus a named key or record
-- runtime anchors: command, relevant input/fixture, observed result, exit status
-- a file without a named symbol uses a justified `:: file scope (no named symbol)` anchor rather than a fabricated function name
-- negative searches additionally state search scope and exclusions
+- code/config/data anchors: `code: src/example.py:10-14 :: Example.method` — a
+  repository-relative path, a `:12` line or `:12-18` range (line numbers start
+  at 1; a range may not be zero or reversed), and a `::` anchor naming the
+  symbol, key, or record. A file without a named symbol uses a justified
+  `:: file scope (reason: ...)` anchor rather than a fabricated function name.
+- runtime anchors: `runtime: <command> / input: <input or fixture> /
+  result: <observed result> / exit: <integer exit status>` — command, input,
+  observed result, and integer exit status are required; the labels
+  `observed result:` and `exit status:` are accepted aliases of `result:` and
+  `exit:`.
+- negative searches: `negative search: scope <where searched> /
+  exclusions: <excluded areas or none> / result: <outcome>` — scope,
+  exclusions, and result are required; a search never needs a fabricated file.
+- inference basis: `inference basis: F-01, F-02` — at least one cited F-ID.
+- unknown: `unknown: <unobserved item> / collect at: <collection target>` —
+  the unobserved item and the collection target are required; allowed only on
+  an `F-NN [UNKNOWN]` finding.
+
+These source checks are shapes only: no file existence is verified and no
+claim is judged — sufficiency and truth remain the auditor's role.
 
 ### Unknowns
 
@@ -263,15 +285,26 @@ Reported structural problems include:
 - illegal IDs (DQ-NN / F-NN), missing or illegal finding tag, illegal
   `Method`/`Answer` values
 - empty values or bare `<placeholder>` stand-ins in required fields
+- a Metadata `round` that is not a positive integer (boolean, string, zero, and
+  negative rounds rejected; the Evidence, Audit, and CLI rounds must agree), an
+  `observed_commit` that is not a literal 7–64 hex-digit object ID, a
+  non-ISO-8601 `created_at`, a non-string-list `dirty_changes`, or placeholder
+  `scout_harness`/`scout_model`
 - dangling references: `Facts`/`Basis` naming an unknown F-ID, `Questions`
   naming an unknown DQ-ID (an explicit `UNKNOWN` fact-link stays valid)
-- an `INFERENCE` finding without a `Basis`
-- a `code:` source with neither a line reference nor a named symbol/key
+- an ANSWERED question citing no existing F-ID, a finding citing no existing
+  DQ-ID, or an INFERENCE whose `Basis` cites no existing F-ID
+- a Sources entry that is not a supported concrete family (a line-only or
+  symbol-only code anchor, an unlabeled `trust me` entry, a runtime source
+  without command/input/result/integer exit, a negative search without
+  scope/exclusions/result, an `inference basis` without F-IDs, or an
+  `unknown:` source off an [UNKNOWN] finding or without an unobserved item and
+  collection target)
 - a Metadata `ticket_id` that does not match the Ticket
 
 The Audit keeps exactly the four sufficiency-question H2s; its Metadata
-`round`/`gate` must match the State and CLI values, and `evidence_sha256` must
-be a SHA-256 digest.
+`round` (a positive integer) and `gate` must match the State and CLI values,
+and `evidence_sha256` must be a SHA-256 digest.
 
 The Plan (see above) is validated as ordered `Task N` sections with the nine
 required H3 fields; contiguous task numbers, no forward/self dependency, and a

@@ -11,7 +11,7 @@ contract).
 artifact_type: evidence-audit
 format_version: 1
 ticket_id: <ticket-id>
-round: <round audited; must match the Evidence report round>
+round: <positive integer round audited; must match the Evidence report round>
 gate: <sufficient | insufficient>
 evidence_sha256: <SHA-256 of the audited evidence.md, computed at set-gate>
 ```

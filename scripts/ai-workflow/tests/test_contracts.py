@@ -40,7 +40,8 @@ class ContractReadTest(unittest.TestCase):
         return contracts.read_artifact(self._path("artifact.md", text), kind)
 
     def _valid(self):
-        return valid_evidence("T1", 1, "c0ffee")
+        # 7+ hex: the minimum concrete observed_commit abbreviation (Task 1).
+        return valid_evidence("T1", 1, "c0ffee0")
 
     # -- reader basics ---------------------------------------------------------
 
@@ -138,6 +139,34 @@ class ContractReadTest(unittest.TestCase):
         problems = self._problems(text)
         self.assertTrue(any("DQ-99" in p for p in problems), problems)
 
+    def test_answered_question_requires_a_fact_id(self):
+        text = self._valid().replace("**Facts:** F-01", "**Facts:** trust me")
+        problems = self._problems(text)
+        self.assertTrue(any("ANSWERED" in p and "Facts" in p for p in problems),
+                        problems)
+
+    def test_finding_requires_a_question_reference(self):
+        text = self._valid().replace("**Questions:** DQ-01",
+                                     "**Questions:** the entry point question")
+        problems = self._problems(text)
+        self.assertTrue(any("Questions" in p for p in problems), problems)
+
+    def test_inference_basis_requires_a_fact_id(self):
+        text = self._valid().replace("### F-01 [FACT]", "### F-01 [INFERENCE]")
+        text = text.replace(
+            "**Scope:** the committed fixture only",
+            "**Basis:** trust me, the layout is obvious\n\n"
+            "**Scope:** the committed fixture only")
+        problems = self._problems(text)
+        self.assertTrue(any("Basis" in p for p in problems), problems)
+
+    def test_dangling_inference_basis_source_rejected(self):
+        text = self._valid().replace(
+            "- code: src/app.py:1-2 :: main",
+            "- inference basis: F-99")
+        problems = self._problems(text)
+        self.assertTrue(any("F-99" in p for p in problems), problems)
+
     def test_missing_code_line_or_symbol(self):
         text = self._valid().replace("- code: src/app.py:1-2 :: main",
                                      "- code: src/app.py")
@@ -147,7 +176,8 @@ class ContractReadTest(unittest.TestCase):
 
     def test_file_scope_anchor_is_allowed(self):
         text = self._valid().replace("- code: src/app.py:1-2 :: main",
-                                     "- code: src/app.py:1-2 :: file scope (no named symbol)")
+                                     "- code: src/app.py:1-2 :: file scope "
+                                     "(reason: no named symbol at module level)")
         self.assertEqual(self._problems(text), [])
 
     def test_bare_placeholder_rejected(self):
@@ -196,6 +226,63 @@ class ContractReadTest(unittest.TestCase):
         problems = self._problems(text)
         self.assertTrue(any("scout_model" in p for p in problems), problems)
 
+    # -- concrete metadata rules (HARDEN-005 Task 1) -----------------------------
+
+    def test_boolean_round_rejected(self):
+        text = self._valid().replace("round: 1", "round: true")
+        self.assertTrue(self._problems(text))
+
+    def test_string_round_rejected(self):
+        text = self._valid().replace("round: 1", 'round: "1"')
+        self.assertTrue(self._problems(text))
+
+    def test_zero_round_rejected(self):
+        text = self._valid().replace("round: 1", "round: 0")
+        self.assertTrue(self._problems(text))
+
+    def test_observed_commit_must_be_hex_7_to_64(self):
+        for bad in ("deadgbe", "c0ffee", "0" * 65):
+            with self.subTest(commit=bad):
+                text = self._valid().replace(
+                    "observed_commit: c0ffee0", "observed_commit: %s" % bad)
+                problems = self._problems(text)
+                self.assertTrue(any("observed_commit" in p for p in problems),
+                                problems)
+        for good in ("c0ffee0", "abcdef0", "b" * 40, "f" * 64):
+            with self.subTest(commit=good):
+                text = self._valid().replace(
+                    "observed_commit: c0ffee0", "observed_commit: %s" % good)
+                self.assertFalse(
+                    any("observed_commit" in p for p in self._problems(text)))
+
+    def test_placeholder_harness_or_model_rejected(self):
+        for key in ("scout_harness", "scout_model"):
+            with self.subTest(key=key):
+                text = self._valid().replace(
+                    "%s: v2-fixture" % key, "%s: <pending>" % key)
+                problems = self._problems(text)
+                self.assertTrue(any(key in p for p in problems), problems)
+
+    def test_created_at_must_be_iso8601(self):
+        for bad in ("banana", "2026-13-45", "07/10/2026", ""):
+            with self.subTest(created_at=bad):
+                text = self._valid().replace(
+                    "created_at: 2026-10-07T00:00:00+00:00",
+                    "created_at: %s" % bad)
+                problems = self._problems(text)
+                self.assertTrue(any("created_at" in p for p in problems),
+                                problems)
+
+    def test_created_at_timestamp_aliases_stay_valid(self):
+        for value in ("2026-10-07T00:00:00+00:00", "2026-10-07",
+                      "2026-10-07T12:30:00Z", "2026-10-07T12:30:00"):
+            with self.subTest(created_at=value):
+                text = self._valid().replace(
+                    "created_at: 2026-10-07T00:00:00+00:00",
+                    "created_at: %s" % value)
+                self.assertFalse(
+                    any("created_at" in p for p in self._problems(text)))
+
 
 class ContractAuditTest(unittest.TestCase):
     def setUp(self):
@@ -224,11 +311,145 @@ class ContractAuditTest(unittest.TestCase):
         problems = contracts.validate_audit(report, "T1", "sufficient", 2)
         self.assertTrue(any("round" in p for p in problems), problems)
 
+    def test_audit_round_must_be_positive_integer(self):
+        for bad in ("banana", "true", '"1"', "0", "-1"):
+            with self.subTest(round=bad):
+                text = valid_audit("T1", "sufficient", 1, "ab" * 32)
+                text = text.replace("round: 1", "round: %s" % bad, 1)
+                path = os.path.join(self.root, "audit.md")
+                with open(path, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(text)
+                report = contracts.read_artifact(path, "evidence-audit")
+                problems = contracts.validate_audit(report, "T1",
+                                                    "sufficient", 1)
+                self.assertTrue(any("round" in p for p in problems), problems)
+
     def test_empty_answer_rejected(self):
         report = self._report()
         report["sections"]["What is missing?"] = "\n"
         problems = contracts.validate_audit(report, "T1", "sufficient", 1)
         self.assertTrue(any("What is missing" in p for p in problems), problems)
+
+
+class SourceProblemsTest(unittest.TestCase):
+    """Pure syntax boundary of contracts.source_problems (HARDEN-005 Task 1).
+
+    No Git access, no file existence, no truth judgments: family prefix,
+    line ranges, anchors and labels only.
+    """
+
+    def test_code_source_boundary_assertions(self):
+        self.assertTrue(contracts.source_problems("code: src/app.py :: main", "FACT"))
+        self.assertTrue(contracts.source_problems("code: src/app.py:1-2", "FACT"))
+        self.assertEqual(contracts.source_problems("code: src/app.py:1-2 :: main", "FACT"), [])
+
+    def test_zero_and_reversed_line_ranges_rejected(self):
+        for bad in ("code: src/app.py:0 :: main",
+                    "code: src/app.py:0-0 :: main",
+                    "code: src/app.py:5-3 :: main",
+                    "code: src/app.py:12-0 :: main"):
+            with self.subTest(source=bad):
+                self.assertTrue(contracts.source_problems(bad, "FACT"), bad)
+
+    def test_paths_with_spaces_are_accepted(self):
+        self.assertEqual(
+            contracts.source_problems("code: my dir/app.py:1-2 :: main", "FACT"),
+            [])
+
+    def test_justified_file_scope_anchor_is_accepted(self):
+        self.assertEqual(
+            contracts.source_problems(
+                "code: src/app.py:1-2 :: file scope (reason: no named symbol)",
+                "FACT"),
+            [])
+
+    def test_unjustified_file_scope_anchor_rejected(self):
+        for anchor in ("file scope", "file scope (no named symbol)",
+                       "file scope (reason: )"):
+            with self.subTest(anchor=anchor):
+                source = "code: src/app.py:1-2 :: %s" % anchor
+                self.assertTrue(contracts.source_problems(source, "FACT"),
+                                source)
+
+    def test_config_and_data_follow_the_code_shape(self):
+        self.assertEqual(
+            contracts.source_problems("config: conf/app.ini:3-4 :: cache.ttl",
+                                      "FACT"), [])
+        self.assertEqual(
+            contracts.source_problems("data: data/roster.csv:8 :: row[42]",
+                                      "FACT"), [])
+        self.assertTrue(contracts.source_problems("config: conf/app.ini", "FACT"))
+        self.assertTrue(contracts.source_problems("data: data/roster.csv :: row", "FACT"))
+
+    def test_runtime_field_aliases_accepted(self):
+        self.assertEqual(
+            contracts.source_problems(
+                "runtime: python app.py / input: none / observed result: 42"
+                " / exit status: 0", "FACT"),
+            [])
+        self.assertEqual(
+            contracts.source_problems(
+                'runtime: python app.py / input: --json flag / result: {"v": 42}'
+                " / exit: 0", "FACT"),
+            [])
+
+    def test_runtime_missing_or_non_integer_fields_rejected(self):
+        for bad in ("runtime: python app.py / observed result: 42 / exit: 0",
+                    "runtime: python app.py / input: none / exit: 0",
+                    "runtime: python app.py / input: none / result: 42",
+                    "runtime: python app.py / input: none / result: 42 / exit: zero",
+                    "runtime: / input: none / result: 42 / exit: 0"):
+            with self.subTest(source=bad):
+                self.assertTrue(contracts.source_problems(bad, "FACT"), bad)
+
+    def test_negative_search_requires_scope_exclusions_result(self):
+        good = ("negative search: scope src/*.py for callers of main"
+                " / exclusions: none / result: no matches")
+        self.assertEqual(contracts.source_problems(good, "FACT"), [])
+        for bad in ("negative search: src/*.py for callers / exclusions: none"
+                    " / result: no matches",
+                    "negative search: scope src/*.py / result: no matches",
+                    "negative search: scope src/*.py / exclusions: none"):
+            with self.subTest(source=bad):
+                self.assertTrue(contracts.source_problems(bad, "FACT"), bad)
+
+    def test_inference_basis_requires_fact_ids(self):
+        self.assertEqual(
+            contracts.source_problems("inference basis: F-01, F-02",
+                                      "INFERENCE"), [])
+        self.assertTrue(
+            contracts.source_problems("inference basis: trust me", "INFERENCE"))
+        self.assertTrue(contracts.source_problems("inference basis:", "INFERENCE"))
+
+    def test_unknown_source_needs_unobserved_item_and_collection_target(self):
+        self.assertEqual(
+            contracts.source_problems(
+                "unknown: external callers of main()"
+                " / collect at: consuming repository search", "UNKNOWN"),
+            [])
+        self.assertEqual(
+            contracts.source_problems(
+                "unknown: external callers of main()"
+                " / collection target: consuming repository search", "UNKNOWN"),
+            [])
+        self.assertTrue(
+            contracts.source_problems(
+                "unknown: depends on the intended contract", "UNKNOWN"))
+
+    def test_unknown_source_only_on_unknown_findings(self):
+        self.assertTrue(
+            contracts.source_problems(
+                "unknown: external callers / collect at: repo search", "FACT"))
+        self.assertTrue(
+            contracts.source_problems(
+                "unknown: external callers / collect at: repo search",
+                "INFERENCE"))
+
+    def test_unrecognised_families_rejected(self):
+        for bad in ("trust me", "sources: somewhere", "code src/app.py:1-2 :: main",
+                    "code:", "", "code:  "):
+            with self.subTest(source=bad):
+                self.assertTrue(contracts.source_problems(bad, "FACT"), bad)
 
 
 class Sha256Test(unittest.TestCase):

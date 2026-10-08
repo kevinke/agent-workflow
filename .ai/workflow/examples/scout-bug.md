@@ -76,6 +76,7 @@ re-checked against that exact state.
 **Sources:**
 - code: .ai/workflow/examples/scout-fixture/service.py:2-3 :: CachedValue.__init__
 - code: .ai/workflow/examples/scout-fixture/service.py:5-6 :: CachedValue.read
+- code: .ai/workflow/examples/scout-fixture/service.py:1-9 :: file scope (reason: the claim covers every line of a nine-line module, not one symbol)
 
 **Method:** static
 
