@@ -1,6 +1,6 @@
 # Review disposition — 2026-10-08
 
-Status: integration evidence recorded 2026-10-09; HARDEN-009 open
+Status: all automated findings verified (green run of record 2026-10-09); HARDEN-009 open
 Source: [full review with reproductions](../decision-scout-port/post-implementation-review-2026-10-08.md)
 Baseline reviewed: `5ae8e27..00a3904`; the follow-up fixes have since landed on branch `decision-scout-hardening` (see Evidence status below).
 Spec: [supplemental contracts](spec.md)
@@ -65,8 +65,11 @@ four other times in that run, the deterministic detection regressions
 (`test_racy_equal_size_edit_is_detected_read_only`,
 `test_racy_drift_with_real_index_lock`) passed, and the installed-kit lifecycle
 (`InstalledLifecycleV2Test.test_installed_lifecycle_with_followup_and_rework`)
-and v1 compatibility cases passed. The racy done/resume assertions still need a
-rerun-of-record; the suite was not rerun to get green. The earlier baseline
+and v1 compatibility cases passed. A same-day run of record at 483a423 (racy
+fixture hardening in `test_review_v2.py` only; scoped re-review passed) finished
+`Ran 399 tests in 372.617s` — `OK (skipped=2)`, exit 0, including
+`test_racy_edit_blocks_done_and_resume`, so S-02's caveat is closed and every
+automated slice's named regression has passed in a full-suite run. The earlier baseline
 observations (one dirty-edit failure with a passing isolated rerun; seven of
 eight archive identities differing in committed text blobs) are resolved by
 8a0b92b and the verified fresh-clone export evidence in
@@ -78,3 +81,4 @@ authorized session budget.
 
 - 2026-10-08 — User requested spec supplementation, separate tickets and development plans; all are prepared as documentation, with runtime work pending.
 - 2026-10-09 — Evidence updated after integration: landed fixes are listed per finding in Evidence status with the slices' named-test evidence from the single full-suite run. S-02 keeps one open caveat (racy done/resume fixture awaiting a rerun-of-record). O1/HARDEN-009 stays pending — no live sessions were run and no budget was authorized; historical pilot results remain unchanged.
+- 2026-10-09 — Caveat closed by the green run of record at 483a423: after the racy fixture hardening (`test_review_v2.py` only, scoped re-review passed), the full suite finished `OK (skipped=2)` with exit 0 including the racy done/resume regression. All fix-bearing findings S-01..S-09, ST-01..ST-03 and O2/O3 now have landed fixes plus full-suite evidence; O1/HARDEN-009 remains open — still no live run and no authorized session budget.
