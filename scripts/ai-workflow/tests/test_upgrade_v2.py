@@ -244,6 +244,39 @@ class UpgradeTicketV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.state_bytes(), converted)
 
+    def test_upgrade_preserves_next_action_extensions(self):
+        self.seed_v1("implementation")
+        data = self.read_state()
+        data["next_action"] = {"role": "ticket-executor",
+                               "action": "implement current task",
+                               "task": 2,
+                               "note": {"hint": "resume here"}}
+        data["escalation"] = {"required": True, "scope": "human",
+                              "reason": "stale",
+                              "interrupted_action": {"halt_note": "earlier halt",
+                                                     "task": 1}}
+        self.write_state(data)
+
+        proc = self._upgrade_ticket()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+        after = self.read_state()
+        self.assertEqual(after["workflow_version"], 2)
+        # The interrupted snapshot is the full old action: its unknown child
+        # and all three owned keys are recorded.
+        interrupted = after["escalation"]["interrupted_action"]
+        self.assertEqual(interrupted["note"], {"hint": "resume here"})
+        self.assertEqual(interrupted["role"], "ticket-executor")
+        self.assertEqual(interrupted["action"], "implement current task")
+        self.assertEqual(interrupted["task"], 2)
+        # Unknown children of a pre-existing interrupted_action survive too.
+        self.assertEqual(interrupted["halt_note"], "earlier halt")
+        # The reconstruction route carries the old action's unknown child
+        # forward under the senior resolver's owned keys.
+        self.assertEqual(after["next_action"]["note"], {"hint": "resume here"})
+        self.assertEqual(after["next_action"]["role"], "workflow-bootstrap")
+        self.assertIsNone(after["next_action"]["task"])
+
     def test_malformed_owned_maps_rejected_unchanged(self):
         for key, value in (("evidence", 7), ("escalation", "oops"),
                            ("source_artifacts", []), ("upgrade", "oops")):

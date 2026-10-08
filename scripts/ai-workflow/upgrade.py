@@ -192,14 +192,18 @@ def _convert_v1_to_v2(data):
     reconstruction facts (`upgrade.from_version`/`previous_gate`/
     `requires_reconstruction`), resets the gate to insufficient and the
     review to pending without carrying over an old verdict, and creates an
-    unresolved machine escalation routed to `workflow-bootstrap`. No audit,
-    Plan or review pass is fabricated. Callers preflight the owned shapes
-    with `conversion_problems` first; this function never validates.
+    unresolved machine escalation routed to `workflow-bootstrap` whose
+    `interrupted_action` snapshots the whole old `next_action` — unknown
+    children survive in both the snapshot and the reconstruction route. No
+    audit, Plan or review pass is fabricated. Callers preflight the owned
+    shapes with `conversion_problems` first; this function never validates.
     """
     converted = copy.deepcopy(data)
 
     phase = converted.get("phase")
-    previous_action = converted.get("next_action") or {}
+    previous_action = converted.get("next_action")
+    if not isinstance(previous_action, dict):
+        previous_action = {}
     previous_gate = (converted.get("evidence") or {}).get("gate")
     previous_status = converted.get("status")
 
@@ -241,21 +245,29 @@ def _convert_v1_to_v2(data):
     escalation["scope"] = "machine"
     escalation["reason"] = _RECONSTRUCTION_REASON
     escalation["previous_status"] = previous_status
-    escalation["interrupted_action"] = {
-        "role": previous_action.get("role"),
-        "action": previous_action.get("action"),
-        "task": previous_action.get("task"),
-    }
+    # The interrupted action is snapshotted whole: unknown children of the old
+    # `next_action` and of any pre-existing `interrupted_action` survive next
+    # to the three owned keys, which always stay present.
+    previous_interrupted = escalation.get("interrupted_action")
+    interrupted = (copy.deepcopy(previous_interrupted)
+                   if isinstance(previous_interrupted, dict) else {})
+    interrupted.update(copy.deepcopy(previous_action))
+    interrupted["role"] = previous_action.get("role")
+    interrupted["action"] = previous_action.get("action")
+    interrupted["task"] = previous_action.get("task")
+    escalation["interrupted_action"] = interrupted
     escalation["interrupted_phase"] = phase
     escalation["resolution"] = None
     converted["escalation"] = escalation
 
     converted["status"] = "escalation_required"
-    converted["next_action"] = {
-        "role": workflow_v2.RECONSTRUCTION_ROLE,
-        "action": workflow_v2.RECONSTRUCTION_ACTION,
-        "task": None,
-    }
+    # The reconstruction route keeps the old action's unknown children and
+    # overwrites only the three owned keys.
+    next_action = copy.deepcopy(previous_action)
+    next_action["role"] = workflow_v2.RECONSTRUCTION_ROLE
+    next_action["action"] = workflow_v2.RECONSTRUCTION_ACTION
+    next_action["task"] = None
+    converted["next_action"] = next_action
     return converted
 
 
