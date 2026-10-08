@@ -10,6 +10,8 @@ State and source snapshot byte-identical.
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +23,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import artifact_archive  # noqa: E402
 
 from v2_support import V2CLITestCase  # noqa: E402
+
+# Plain-probe CRLF lines appended to artifact bodies: no headings or record
+# syntax, so parsers see them as inert trailing prose inside the last section.
+CRLF_PROBE = (b"Trailing CRLF probe line one.\r\n"
+              b"Trailing CRLF probe line two.\r\n")
 
 
 class ArtifactArchiveTest(V2CLITestCase):
@@ -140,6 +147,85 @@ class ArtifactArchiveTest(V2CLITestCase):
         review_entry = next(e for e in manifest["entries"]
                             if e["path"].endswith("/review.md"))
         self.assertEqual(review_entry["sha256"], review_entry["bound_sha256"])
+
+    def test_archive_fresh_clone_keeps_raw_bindings(self):
+        """Mixed CRLF/LF originals survive fresh clone/export unchanged.
+
+        Review Focus guard: work artifacts seeded with CRLF content folded
+        into the LF template bytes must export with their raw digests, and
+        the archive must still verify byte-exactly against its own manifest
+        after the disposable repo is cloned to a second location.
+        """
+        self.seed_v2("evidence_audit")
+        self.write_evidence(round_no=1)
+        with open(os.path.join(self.work, "evidence.md"), "ab") as fh:
+            fh.write(CRLF_PROBE)
+        self.write_audit(gate="sufficient", round_no=1)
+        proc = self.cli("set-gate", self.TICKET, "--gate", "sufficient",
+                        "--round", "1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        for target in ("technical_decision", "planning"):
+            proc = self.cli("advance", self.TICKET, "--to", target)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rel = self.write_plan(1)
+        proc = self.cli("register-plan", self.TICKET, "--path", rel,
+                        "--total", "1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_decision()
+        with open(os.path.join(self.work, "decision.md"), "ab") as fh:
+            fh.write(CRLF_PROBE)
+        self.commit_code("src/feature.py", "def feature():\n    return 1\n")
+        proc = self.cli("complete-task", self.TICKET, "--total", "1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_handoff()
+        proc = self.cli("advance", self.TICKET, "--to", "review")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        head = self.commit_all("fixture: mixed-eol review tree")
+        self.write_review("pass", reviewed_commit=head)
+        # The whole Review is CRLF; line bodies stay identical to the LF
+        # template, so `None` sections stay the explicit None text.
+        review_path = os.path.join(self.work, "review.md")
+        with open(review_path, "rb") as fh:
+            lf_bytes = fh.read()
+        with open(review_path, "wb") as fh:
+            fh.write(lf_bytes.replace(b"\n", b"\r\n"))
+        proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+        proc, out = self._export()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+        clone_dir = os.path.join(self.out_dir, "clone")
+        cloned = subprocess.run(
+            ["git", "clone", "-q", self.root, clone_dir],
+            capture_output=True, text=True, env=self._env())
+        self.assertEqual(cloned.returncode, 0, cloned.stdout + cloned.stderr)
+        clone_head = subprocess.run(
+            ["git", "-C", clone_dir, "rev-parse", "HEAD"],
+            capture_output=True, text=True, env=self._env()).stdout.strip()
+        self.assertEqual(head, clone_head)
+        # Verify the archive from within the clone: the ZIP is self-contained
+        # raw bytes and needs nothing from the originating worktree.
+        shipped = os.path.join(clone_dir, "artifacts.zip")
+        shutil.copyfile(out, shipped)
+        manifest, members = self._read_zip(shipped)
+        self.assertEqual(manifest["format_version"], 1)
+        self.assertEqual(manifest["snapshot_head"], clone_head)
+        for entry in manifest["entries"]:
+            member = members[entry["path"]]
+            digest = hashlib.sha256(member).hexdigest()
+            self.assertEqual(digest, entry["sha256"])
+            if entry["bound_sha256"] is not None:
+                self.assertEqual(entry["sha256"], entry["bound_sha256"])
+        # The mixed-CRLF/LF bytes survive byte-exactly in the members.
+        self.assertIn(CRLF_PROBE, members[".ai/work/T1/evidence.md"])
+        self.assertIn(CRLF_PROBE, members[".ai/work/T1/decision.md"])
+        review_bytes = members[".ai/work/T1/review.md"]
+        self.assertEqual(review_bytes.count(b"\n"),
+                         review_bytes.count(b"\r\n"))
+        self.assertIn(b"verdict: pass\r\n", review_bytes)
 
     # -- rejections (rc 1, no partial output) ----------------------------------
 

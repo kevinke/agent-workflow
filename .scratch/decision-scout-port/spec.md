@@ -334,7 +334,9 @@ CLI sessions are not proof of actual model performance.
 The user prioritised inexpensive scouting and traceable structured facts.
 The original eight-slice implementation and real cross-Harness pilot are delivered,
 as recorded in the appended history and pilot report. The 2026-10-08 hardening
-spec, tickets and plans are ready-for-agent; their implementation has not started.
+slices HARDEN-001..008 are implemented and reviewed on the `decision-scout-hardening`
+branch with a green run of record; HARDEN-009's live execution remains pending an
+explicit session budget.
 The original release stages are preserved as design history, not a pending
 frontier or evidence that all later review findings have been resolved.
 
