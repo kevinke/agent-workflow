@@ -53,7 +53,8 @@ class ReviewV2Test(V2CLITestCase):
         Returns the reviewed commit (the committed, tree-clean HEAD that the
         Review is written against). `decision.md` is written by the senior role
         and committed before that reviewed commit: implementation -> review now
-        requires it on a v2 Ticket.
+        requires it on a v2 Ticket, and the same boundary requires a concrete
+        handoff, so the fixture writes one through `write_handoff`.
         """
         self._seed_implementation(total)
         self.write_decision()
@@ -63,6 +64,7 @@ class ReviewV2Test(V2CLITestCase):
             proc = self.cli("complete-task", self.TICKET,
                             "--total", str(total))
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_handoff()
         proc = self.cli("advance", self.TICKET, "--to", "review")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 

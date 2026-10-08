@@ -25,7 +25,7 @@ import parser
 
 __all__ = ["ContractError", "read_artifact", "read_plan", "sha256_file",
            "source_problems", "validate_evidence", "validate_audit",
-           "validate_review"]
+           "validate_review", "validate_handoff"]
 
 
 class ContractError(Exception):
@@ -978,4 +978,214 @@ def validate_review(report, ticket_id, verdict):
         elif not _review_substantive(body):
             problems.append("review: section %r must be substantive for a "
                             "changes_requested verdict" % name)
+    return problems
+
+
+# ---------------------------------------------------------------------------
+# Handoff readiness syntax (HARDEN-007)
+# ---------------------------------------------------------------------------
+
+_HANDOFF_SECTIONS = [
+    "What was done",
+    "What remains",
+    "Important discoveries",
+    "Artifact identity",
+    "Verification limits",
+    "Known relevant drift",
+    "Current failure (if any)",
+    "Do not repeat",
+    "Next recommended action",
+    "Repository State",
+]
+_FAILURE_HEADING = "Current failure (if any)"
+_FAILURE_ALIASES = ("Current failure",)
+_HANDOFF_STRUCTURED_SECTIONS = ("Artifact identity", "Known relevant drift")
+_HANDOFF_STATE_FIELDS = ("Branch", "HEAD", "Uncommitted files", "Test status")
+# A whole-value template token: the entire body/value is one `<...>` group.
+# Multiline template blocks match too (DOTALL); `<>` pairs inside a larger
+# value — comparisons, generics, inline code — never do.
+_TEMPLATE_TOKEN_RE = re.compile(r"^<[^<>]+>$", re.DOTALL)
+# A standalone `<token>` word inside a structured bullet or field value.
+_TEMPLATE_WORD_RE = re.compile(r"^<[^<>\s]+>$")
+
+
+def _handoff_sections(text):
+    """Ordered {heading: body} of the H2 sections outside code fences.
+
+    Heading text outside a fence is a boundary; a fenced fake heading never
+    is. Repeated headings keep the first occurrence. Bodies keep their list
+    bullets and wrapped continuation lines.
+    """
+    sections = {}
+    current = None
+    body = []
+    fence = None
+    for line in text.splitlines():
+        m = _FENCE_RE.match(line)
+        if fence is not None:
+            if m and m.group(1).startswith(fence):
+                fence = None
+            elif current is not None:
+                body.append(line)
+            continue
+        if m:
+            fence = m.group(1)[0] * 3
+            continue
+        h2 = _H2_RE.match(line)
+        if h2:
+            if current is not None:
+                sections[current] = "\n".join(body).strip("\n")
+            current = h2.group(1).strip()
+            if current not in sections:
+                sections[current] = ""
+            body = []
+            continue
+        if current is not None:
+            body.append(line)
+    if current is not None:
+        sections[current] = "\n".join(body).strip("\n")
+    return sections
+
+
+def _token_problems(owner, value):
+    """Problems when the whole `value` is empty or one template token."""
+    text = (value or "").strip()
+    if not text:
+        return ["%s has no content" % owner]
+    if _TEMPLATE_TOKEN_RE.match(text):
+        return ["%s is still the template token %r" % (owner, text)]
+    return []
+
+
+def _bullet_owner(section, bullet_text):
+    """A readable owner label: the bullet's leading `Label:` when it has one."""
+    clean = bullet_text.replace("`", "").strip()
+    label = clean.partition(":")[0].strip() if ":" in clean else ""
+    return "%s bullet %r" % (section, label or clean[:32])
+
+
+def _structured_bullet_problems(section, bullet):
+    """Placeholder problems of one structured section bullet.
+
+    Inline code spans are literals, not slots, so their characters are
+    removed before the whole-value and standalone-word token checks;
+    comparisons like `a < b` never match either pattern.
+    """
+    text = bullet.strip()[1:].strip()  # drop the leading `-`/`*` marker
+    clean = text.replace("`", "")
+    owner = _bullet_owner(section, text)
+    if not clean.strip():
+        return ["%s has no content" % owner]
+    problems = _token_problems(owner, clean)
+    if problems:
+        return problems
+    _, sep, value = clean.partition(":")
+    if sep:
+        value_problems = _token_problems("%s value" % owner, value)
+        problems.extend(value_problems)
+        if value_problems:
+            return problems  # the whole value is one token; words add nothing
+    for word in clean.split():
+        if _TEMPLATE_WORD_RE.match(word):
+            problems.append("%s still carries the template token %r"
+                            % (owner, word))
+    return problems
+
+
+def _structured_bullets(body):
+    """Logical bullets of a structured section: `- `/`* ` lines plus their
+    wrapped continuations, so a template token split across a wrapped list
+    item is still one whole value."""
+    bullets = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped[:1] in ("-", "*"):
+            bullets.append(stripped)
+        elif bullets and stripped:
+            bullets[-1] += " " + stripped
+    return bullets
+
+
+def _state_field_value(body, label):
+    """The value after `Label:` in the Repository State block, or None."""
+    field_re = re.compile(
+        r"^\s*[-*]\s+(?:\*\*)?%s(?:\*\*)?:\s*(.*)$" % re.escape(label))
+    for line in body.splitlines():
+        m = field_re.match(line)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def validate_handoff(text):
+    """Readiness syntax problems of a Handoff artifact; [] means ready.
+
+    Syntax only, and stateless: it never touches Git or State and never
+    judges whether the narrative is true — a ready handoff is not proof of
+    acceptance; the phase-aware consumers decide where readiness gates.
+
+    - the ten required H2 sections are present (the existing `Current
+      failure` heading is accepted as the alias of `Current failure
+      (if any)`);
+    - prose sections carry substantive content — not empty, not one
+      whole-value template token (multiline template blocks included);
+    - the structured `Artifact identity` and `Known relevant drift`
+      sections keep bullets, and every bullet's label value is concrete
+      (no whole-value tokens, no standalone `<token>` words);
+    - `Repository State` carries Branch/HEAD/Uncommitted files/Test
+      status with concrete values.
+
+    Comparisons and code literals that merely contain angle brackets are
+    not placeholders. Explicit `None` and a justified `N/A — reason` are
+    legitimate where no item exists.
+    """
+    sections = _handoff_sections(text)
+    problems = []
+
+    resolved = {}
+    for name in _HANDOFF_SECTIONS:
+        if name in sections:
+            resolved[name] = sections[name]
+            continue
+        if name == _FAILURE_HEADING:
+            alias = next((a for a in _FAILURE_ALIASES if a in sections), None)
+            if alias is not None:
+                resolved[name] = sections[alias]
+                continue
+        problems.append("missing required H2 section %r" % name)
+    if len(resolved) != len(_HANDOFF_SECTIONS):
+        return problems
+
+    prose_sections = [name for name in _HANDOFF_SECTIONS
+                      if name not in _HANDOFF_STRUCTURED_SECTIONS
+                      and name != "Repository State"]
+    for name in prose_sections:
+        problems.extend(_token_problems("section %r" % name, resolved[name]))
+
+    for name in _HANDOFF_STRUCTURED_SECTIONS:
+        bullets = _structured_bullets(resolved[name])
+        if not bullets:
+            problems.append("section %r requires structured bullets" % name)
+            continue
+        for bullet in bullets:
+            problems.extend(_structured_bullet_problems(name, bullet))
+
+    state_body = resolved["Repository State"]
+    for label in _HANDOFF_STATE_FIELDS:
+        value = _state_field_value(state_body, label)
+        if value is None:
+            problems.append("Repository State is missing the %r field" % label)
+            continue
+        owner = "Repository State field %r" % label
+        clean = value.replace("`", "")
+        # Explicit `none` needs no allowance here: it is neither empty nor a
+        # token, so it passes the same concrete-value rule as real content.
+        field_problems = _token_problems(owner, clean)
+        problems.extend(field_problems)
+        if not field_problems:
+            for word in clean.split():
+                if _TEMPLATE_WORD_RE.match(word):
+                    problems.append("%s still carries the template token %r"
+                                    % (owner, word))
+                    break
     return problems

@@ -424,7 +424,8 @@ class UpgradeTicketV2Test(V2CLITestCase):
 
         # The senior resolver supplies the current contracts through the public
         # commands: a current sufficient gate and a two-task Plan whose completed
-        # prefix is the retained work.
+        # prefix is the retained work. The implementation recovery clear is a
+        # transfer boundary, so the concrete handoff is part of that set.
         self.write_evidence(round_no=1)
         self.write_audit(gate="sufficient", round_no=1)
         proc = self.cli("set-gate", self.TICKET, "--gate", "sufficient",
@@ -435,6 +436,7 @@ class UpgradeTicketV2Test(V2CLITestCase):
         proc = self.cli("register-plan", self.TICKET, "--path", rel,
                         "--total", "2")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_handoff()
 
         # Registering records the completed hashes without touching the numeric
         # history.
@@ -463,7 +465,8 @@ class UpgradeTicketV2Test(V2CLITestCase):
         self.write_state(data)
         self.assertEqual(self._upgrade_ticket().returncode, 0)
 
-        # A coherent completed Plan and current audit.
+        # A coherent completed Plan and current audit. The review recovery
+        # clear is a transfer boundary: the handoff must be concrete too.
         self.write_evidence(round_no=1)
         self.write_audit(gate="sufficient", round_no=1)
         self.assertEqual(self.cli("set-gate", self.TICKET, "--gate", "sufficient",
@@ -472,6 +475,7 @@ class UpgradeTicketV2Test(V2CLITestCase):
         rel = self.write_plan(2)
         self.assertEqual(self.cli("register-plan", self.TICKET, "--path", rel,
                                   "--total", "2").returncode, 0)
+        self.write_handoff()
 
         proc = self._clear()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -553,6 +557,7 @@ class UpgradeTicketV2Test(V2CLITestCase):
         rel = self.write_plan(2)
         self.assertEqual(self.cli("register-plan", self.TICKET, "--path", rel,
                                   "--total", "2").returncode, 0)
+        self.write_handoff()  # the clear boundary requires a concrete handoff
         self.assertEqual(self._clear().returncode, 0)
 
         # Unknown extension fields survive the atomic clear untouched.

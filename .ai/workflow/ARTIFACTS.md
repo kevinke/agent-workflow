@@ -262,7 +262,19 @@ Execution log at task granularity: completed task, files changed, tests run, dev
 
 ## handoff.md
 
-Fixed sections: What was done / What remains / Important discoveries / Current failure if any / Do not repeat / Next recommended action. Plus a Repository State block: branch, HEAD, uncommitted files, test status.
+Fixed sections, in order: What was done / What remains / Important discoveries / Artifact identity / Verification limits / Known relevant drift / Current failure (if any; the shorter heading `Current failure` is accepted as its alias) / Do not repeat / Next recommended action. Plus a Repository State block with the four fields Branch, HEAD, Uncommitted files, and Test status.
+
+### Handoff readiness (workflow_version 2)
+
+`contracts.validate_handoff` checks the readiness syntax of a handoff — shapes only, never narrative truth:
+
+- every required section present, and prose sections substantive (not empty, not one whole-value template token; multiline template blocks are detected too);
+- `Artifact identity` and `Known relevant drift` keep structured bullets, and every bullet's label value is concrete — the Evidence/Audit/Decision/Plan/Review identities and the drift bullets may not carry whole-value template tokens or standalone `<placeholder>` words;
+- `Repository State` carries concrete Branch/HEAD/Uncommitted files/Test status values.
+
+Comparisons and code literals that merely contain angle brackets (generics, inline code, `a < b`) are not placeholders. Explicit `None` and a justified `N/A — reason` are legitimate where no item exists.
+
+Readiness is a **transfer boundary, not proof of acceptance**. Early drafts stay permitted: outside the boundaries the same problems are WARN notices. The gates are entering `review` (implementation -> review), completing to `done`, continuing in `review`/`done` (validate and resume through the shared phase checks), and clearing an implementation/review recovery — a rejected gate leaves State unchanged. A ready handoff never verifies that the narrative is true and never implies the acceptance criteria passed.
 
 ## v2 structural validation (workflow_version 2)
 

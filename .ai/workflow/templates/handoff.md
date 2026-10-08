@@ -1,5 +1,13 @@
 # Handoff — <ticket-id>
 
+<!-- Readiness is a transfer boundary, not proof of acceptance. Early drafts
+     are permitted and surface as validate WARN notices, but entering review,
+     completing, review/done continuation and an implementation/review
+     recovery clear require concrete values in every section below: template
+     tokens, whole-field placeholders and placeholder bullets are rejected.
+     Explicit None and a justified `N/A — reason` are valid where no item
+     exists. See ARTIFACTS.md for the exact contract. -->
+
 ## What was done
 
 <summary>

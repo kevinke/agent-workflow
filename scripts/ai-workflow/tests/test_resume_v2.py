@@ -61,8 +61,8 @@ class ResumeV2Test(V2CLITestCase):
         """Reach `review` with a bound current `pass` verdict.
 
         Drives public commands so resume's read path includes the review probe
-        (`review.code_drift`). `handoff.md` already exists from `start`, so the
-        `implementation -> review` entry guard is satisfied.
+        (`review.code_drift`). The `implementation -> review` entry guard needs
+        a concrete handoff, so the fixture writes one via `write_handoff`.
         """
         self._seed_implementation(total)
         self.commit_code("src/feature.py", "def feature():\n    return 1\n")
@@ -70,6 +70,7 @@ class ResumeV2Test(V2CLITestCase):
             proc = self.cli("complete-task", self.TICKET,
                             "--total", str(total))
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_handoff()
         proc = self.cli("advance", self.TICKET, "--to", "review")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self._git("add", "-A").returncode, 0)
@@ -89,6 +90,7 @@ class ResumeV2Test(V2CLITestCase):
             proc = self.cli("complete-task", self.TICKET,
                             "--total", str(total))
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_handoff()
         proc = self.cli("advance", self.TICKET, "--to", "review")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self._git("add", "-A").returncode, 0)

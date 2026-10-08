@@ -71,6 +71,8 @@ def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
         bad(problem)
 
 
+# The frozen v1 substring warnings (v2 uses the shared HARDEN-007 syntax
+# check in `contracts.validate_handoff` below).
 _HANDOFF_SECTIONS = [
     "What was done",
     "What remains",
@@ -346,12 +348,25 @@ def validate_ticket(root, ticket, findings):
         for msg in workflow_v2.readiness_problems(root, ticket, data):
             bad(msg)
 
-    # --- handoff field completeness -----------------------------------------
+    # --- handoff readiness / early scaffold notices (HARDEN-007) -------------
+    # v2: the shared syntax check (contracts.validate_handoff) is an ERROR at
+    # the review/done transfer boundaries and a WARN notice everywhere else,
+    # so early drafts stay permitted while a receiver never inherits a
+    # template scaffold. resume reads these same findings — it duplicates no
+    # Handoff semantics of its own. v1 keeps its frozen substring warnings.
     handoff_path = os.path.join(work_dir, filenames["handoff"])
     if os.path.exists(handoff_path):
         handoff_text = _read_handoff(handoff_path)
         if handoff_text is None:
             warn("handoff.md exists but could not be read")
+        elif ver == 2:
+            boundary = phase in phase_checks.HANDOFF_BOUNDARY_PHASES
+            for problem in contracts.validate_handoff(handoff_text):
+                if boundary:
+                    bad("handoff.md is not ready for the transfer boundary: %s"
+                        % problem)
+                else:
+                    warn("handoff.md scaffold notice: %s" % problem)
         else:
             for section in _HANDOFF_SECTIONS:
                 if section not in handoff_text:

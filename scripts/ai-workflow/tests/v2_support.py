@@ -329,8 +329,8 @@ REVIEW_TEMPLATE = '''\
 artifact_type: review
 format_version: 1
 ticket_id: %(ticket)s
-reviewed_commit: %(commit)s
-plan_sha256: %(plan_sha)s
+reviewed_commit: "%(commit)s"
+plan_sha256: "%(plan_sha)s"
 verdict: %(verdict)s
 ```
 
@@ -356,7 +356,9 @@ def valid_review(ticket_id, verdict, reviewed_commit, plan_sha256):
     """A concrete, structurally valid Review bound to a commit and Plan hash.
 
     A `pass` uses the explicit `None` for Findings/Required rework; a
-    `changes_requested` records substantive findings and rework.
+    `changes_requested` records substantive findings and rework. The hex
+    identities are quoted so the restricted parser keeps them strings even
+    when a fixture commit's abbreviation happens to be all decimal digits.
     """
     passing = verdict == "pass"
     return REVIEW_TEMPLATE % {
@@ -370,6 +372,116 @@ def valid_review(ticket_id, verdict, reviewed_commit, plan_sha256):
         "rework": "None" if passing
                   else "Append a task that adds the boundary assertion.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Handoff fixtures (HARDEN-007): the untouched template scaffold and a
+# concrete, readiness-valid alternative.
+# ---------------------------------------------------------------------------
+
+_KIT_WORKFLOW_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(  # repo root: tests/ -> ... -> repo
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    ".ai", "workflow")
+
+HANDOFF_CONCRETE_TEMPLATE = '''\
+# Handoff - %(ticket)s
+
+## What was done
+
+Implemented the registered fixture change: src/feature.py defines
+`feature()` and every task of the %(total)d-task registered Plan is
+complete (main() still returns 42). Code literals like `Pair<T>` and
+comparisons like `a < b` are ordinary content, never placeholders.
+
+## What remains
+
+%(remains)s
+
+## Important discoveries
+
+- The fixture entry point is main() in src/app.py (F-01, evidence round %(round)d).
+
+## Artifact identity
+
+%(artifacts)s
+
+## Verification limits
+
+Verified by static reading of src/feature.py and by running
+`python -c "import app"` (observed exit status 0). Runtime behavior beyond
+the import was NOT verified; static reading is not runtime evidence.
+
+## Known relevant drift
+
+- Repository HEAD: %(head)s
+- Evidence observed commit: %(evidence_commit)s — assessed against HEAD
+- Review reviewed commit / verdict: %(review)s
+- Changed paths that matter: %(changed)s
+
+## Current failure (if any)
+
+%(failure)s
+
+## Do not repeat
+
+Do not hand-edit implementation counters; reconcile with register-plan.
+
+## Next recommended action
+
+%(next)s
+
+## Repository State
+
+- Branch: %(branch)s
+- HEAD: %(head)s
+- Uncommitted files: %(dirty)s
+- Test status: %(test_status)s
+'''
+
+
+def scaffold_handoff(ticket_id="T1"):
+    """The untouched Handoff template as `start` scaffolds it.
+
+    Reads the kit's authoritative template and applies the same single
+    `<ticket-id>` replacement `start._scaffold_template` performs, so the
+    baseline is exactly what an early draft looks like on disk.
+    """
+    path = os.path.join(_KIT_WORKFLOW_DIR, "templates", "handoff.md")
+    with open(path, encoding="utf-8") as fh:
+        return fh.read().replace("<ticket-id>", ticket_id)
+
+
+def valid_handoff(ticket_id, branch, head, **overrides):
+    """A concrete, readiness-valid Handoff for the fixture repository.
+
+    Every field is concrete fixture data; keyword overrides replace
+    individual fields (e.g. `failure="None"`,
+    `changed="N/A - no relevant paths changed"`), so the legitimate
+    explicit-None / justified-N-A / code-literal cases stay expressible
+    without weakening the defaults.
+    """
+    fields = {
+        "ticket": ticket_id, "branch": branch, "head": head,
+        "total": 1, "round": 1,
+        "remains": "Record the review verdict with set-review, then "
+                   "advance --to done.",
+        "artifacts": "- Evidence: evidence.md (round 1)\n"
+                     "- Evidence audit: evidence-audit.md (gate sufficient)\n"
+                     "- Decision: decision.md\n"
+                     "- Plan: plan.md (registered)\n"
+                     "- Review: none (no verdict recorded yet)",
+        "evidence_commit": head,
+        "review": "none / none (no verdict recorded yet)",
+        "changed": "none",
+        "failure": "none",
+        "test_status": "passing",
+        "dirty": "none",
+        "next": "Reviewer: record the verdict with set-review, then advance "
+                "--to done; blockers to resolve first: none.",
+    }
+    fields.update(overrides)
+    return HANDOFF_CONCRETE_TEMPLATE % fields
 
 
 class V2CLITestCase(unittest.TestCase):
@@ -486,6 +598,7 @@ class V2CLITestCase(unittest.TestCase):
         for _ in range(total):
             proc = self.cli("complete-task", self.TICKET, "--total", str(total))
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.write_handoff()
         proc = self.cli("advance", self.TICKET, "--to", "review")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.commit_all("fixture: prepare review tree")
@@ -541,6 +654,66 @@ class V2CLITestCase(unittest.TestCase):
         text = valid_review(self.TICKET, verdict, reviewed_commit,
                             plan_ref.get("sha256"))
         return self._write_artifact(name, text)
+
+    def write_handoff(self, ticket_id=None, **overrides):
+        """Write a concrete handoff.md into the ticket work dir; return its text.
+
+        Branch, HEAD and uncommitted files are read from the real fixture
+        repository, and the Artifact identity bullets cite the actual recorded
+        bindings (each computed from the artifact's real bytes; an item that
+        does not exist is the explicit `none`, never a fake gate hash). Field
+        overrides pass through to `valid_handoff`.
+        """
+        tid = ticket_id or self.TICKET
+        work = os.path.join(self.root, ".ai", "work", tid)
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        branch = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        status = self._git("status", "--porcelain")
+        dirty = [line[3:].strip().replace("\\", "/")
+                 for line in status.stdout.splitlines() if line.strip()]
+        data = state.load_file(os.path.join(work, "state.yaml"))
+
+        def digest(name):
+            with open(os.path.join(work, name), "rb") as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+
+        bullets = []
+        for label, name in (("Evidence", "evidence.md"),
+                            ("Evidence audit", "evidence-audit.md"),
+                            ("Decision", "decision.md"),
+                            ("Review", "review.md")):
+            if os.path.exists(os.path.join(work, name)):
+                bullets.append("- %s: %s sha256 %s" % (label, name, digest(name)))
+            else:
+                bullets.append("- %s: none (not recorded yet)" % label)
+        plan_ref = (data.get("source_artifacts") or {}).get("plan") or {}
+        plan_path = plan_ref.get("path")
+        if plan_path and os.path.exists(os.path.join(self.root, plan_path)):
+            with open(os.path.join(self.root, plan_path), "rb") as fh:
+                plan_sha = hashlib.sha256(fh.read()).hexdigest()
+            bullets.append("- Plan: %s sha256 %s (registered)"
+                           % (plan_path, plan_sha))
+        elif plan_path:
+            bullets.append("- Plan: %s (registered; missing on disk)" % plan_path)
+        else:
+            bullets.append("- Plan: none (not registered yet)")
+
+        evidence = data.get("evidence") or {}
+        text = valid_handoff(
+            tid, branch, head,
+            total=(data.get("implementation") or {}).get("total_tasks") or 1,
+            round=evidence.get("round") or 1,
+            artifacts="\n".join(bullets),
+            dirty=", ".join(dirty) if dirty else "none",
+            **overrides)
+        self._write_artifact_into(work, "handoff.md", text)
+        return text
+
+    def _write_artifact_into(self, work_dir, name, text):
+        path = os.path.join(work_dir, name)
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        return path
 
     # -- repository ------------------------------------------------------------------
 

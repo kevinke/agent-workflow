@@ -20,9 +20,10 @@ import workflow_v2
 
 __all__ = ["PHASES", "DECISIONWARD_PHASES", "EXECUTION_PHASES", "PENDING_PHASES",
            "EVIDENCE_STRUCTURAL_PHASES", "AUDIT_STRUCTURAL_PHASES",
+           "HANDOFF_BOUNDARY_PHASES",
            "DEFAULT_ARTIFACT_NAMES", "artifact_names", "required_artifacts",
-           "artifact_contract_problems", "recorded_review_problems",
-           "continuation_problems"]
+           "artifact_contract_problems", "handoff_readiness_problems",
+           "recorded_review_problems", "continuation_problems"]
 
 PHASES = {
     "requirement", "evidence_collection", "evidence_audit", "followup_evidence",
@@ -53,6 +54,11 @@ AUDIT_STRUCTURAL_PHASES = {
 # Phases where the v2 execution-readiness gate (registered Plan, coherent
 # counters, active Status, adoption checkpoint) applies.
 EXECUTION_PHASES = {"implementation", "review", "done"}
+
+# Phases whose retained Handoff must be concrete (HARDEN-007): the transfer
+# boundaries `review` and `done`. An implementation retained phase gates only
+# on the recovery-clear boundary, where the caller passes `require_handoff`.
+HANDOFF_BOUNDARY_PHASES = {"review", "done"}
 
 # The default artifact filenames; an `artifacts.<key>` entry in the State
 # overrides the default.
@@ -171,6 +177,27 @@ def artifact_contract_problems(work_dir, ticket_id, data, names, phase):
     return problems, notices
 
 
+def handoff_readiness_problems(root, ticket_id, data):
+    """Readiness syntax problems of the Ticket's current handoff; [] = ready.
+
+    The shared HARDEN-007 gate body: a read-only `contracts.validate_handoff`
+    pass over the configured handoff artifact. A missing file is NOT reported
+    here — the per-phase required-artifact checks already own that problem,
+    so this check never masks (or duplicates) it.
+    """
+    names = artifact_names(data)
+    path = os.path.join(root, ".ai", "work", ticket_id,
+                        names.get("handoff", "handoff.md"))
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return ["handoff.md exists but could not be read"]
+    return contracts.validate_handoff(text)
+
+
 def recorded_review_problems(root, ticket_id, data):
     """Binding problems of a recorded verdict; [] for pending or absent.
 
@@ -216,7 +243,8 @@ def _review_completion_problems(root, ticket_id, data):
             % (impl.get("current_task"), impl.get("total_tasks"))]
 
 
-def continuation_problems(root, ticket_id, data, *, require_active=True):
+def continuation_problems(root, ticket_id, data, *, require_active=True,
+                          require_handoff=False):
     """Problems blocking a continuation of the retained phase; [] means none.
 
     Read-only. `data` is the State to judge — for a recovery clear the
@@ -234,6 +262,11 @@ def continuation_problems(root, ticket_id, data, *, require_active=True):
       active-Status execution gate; a paused/blocked recovery clear turns it
       off so the restored Ticket stays reconstructed, not silently
       executable);
+    - the retained Handoff is concrete at the transfer boundaries: always in
+      `review`/`done`, and in an implementation recovery clear via
+      `require_handoff` (ordinary implementation drafting never gates —
+      `contracts.validate_handoff` stays syntax-only and the early drafts
+      keep their WARN notices elsewhere);
     - a recorded verdict still agrees with its immutable bindings; and
     - `review` continues only with every registered task complete — except
       the valid recorded rework intermediate state.
@@ -259,6 +292,16 @@ def continuation_problems(root, ticket_id, data, *, require_active=True):
     structural, _notices = artifact_contract_problems(
         work_dir, ticket_id, data, names, phase)
     problems.extend(structural)
+
+    # The transfer-boundary handoff gate: always at `review`/`done`, and for
+    # an implementation retained phase only where the caller marks the
+    # boundary (the recovery clear) — an ordinary implementation continuation
+    # keeps its draft-with-notices behavior.
+    if phase in HANDOFF_BOUNDARY_PHASES or (require_handoff
+                                            and phase == "implementation"):
+        for problem in handoff_readiness_problems(root, ticket_id, data):
+            problems.append("handoff.md is not ready for the transfer "
+                            "boundary: %s" % problem)
 
     # The registered-Plan / counter / adoption contracts apply only to the
     # execution phases (as in `validate_ticket`); an earlier retained phase

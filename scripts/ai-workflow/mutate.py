@@ -207,13 +207,29 @@ _REVIEW_ENTRY_ARTIFACTS = (
 )
 
 
+def _require_transfer_handoff(root, ticket_id, data, action):
+    """v2: a transfer boundary needs a concrete Handoff (HARDEN-007).
+
+    The shared syntax check over the current handoff artifact; a missing file
+    stays the required-artifact check's problem, so the messages never blur.
+    """
+    problems = phase_checks.handoff_readiness_problems(root, ticket_id, data)
+    if problems:
+        raise MutateError(
+            "cannot %s: the handoff is not ready for the transfer boundary: %s"
+            % (action, "; ".join(problems)))
+
+
 def _require_review_entry(root, ticket_id, data):
     """v2: entering `review` needs a ready, finished implementation.
 
     Requires the execution-readiness conditions (a current registered Plan,
-    coherent counters, an active Status), every registered task complete, and
-    the required artifacts present (evidence, evidence-audit, decision,
-    handoff). Every failure is actionable and leaves State unchanged.
+    coherent counters, an active Status), every registered task complete, the
+    required artifacts present (evidence, evidence-audit, decision,
+    handoff), and a concrete handoff: the implementation -> review transfer
+    hands the ticket to the reviewer, so an untouched template scaffold or a
+    placeholder bullet is rejected. Every failure is actionable and leaves
+    State unchanged.
     """
     problems = workflow_v2.readiness_problems(root, ticket_id, data)
     if problems:
@@ -231,6 +247,7 @@ def _require_review_entry(root, ticket_id, data):
         raise MutateError(
             "cannot enter review: missing required artifact(s) %s"
             % ", ".join(missing))
+    _require_transfer_handoff(root, ticket_id, data, "enter review")
 
 
 def _require_current_pass(root, ticket_id, data):
@@ -355,11 +372,12 @@ def advance(root, ticket_id, to):
             data["review"] = review_block
 
     # v2 completion guards: a finished implementation to review, a current pass
-    # to done.
+    # to done — and at both transfer boundaries a concrete handoff.
     if ver == 2 and to == "review":
         _require_review_entry(root, ticket_id, data)
     if ver == 2 and to == "done":
         _require_current_pass(root, ticket_id, data)
+        _require_transfer_handoff(root, ticket_id, data, "complete")
 
     data["phase"] = to
     data["next_action"] = workflow_v2.next_action(data, to)
@@ -829,10 +847,13 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False,
 
         # Active-status enforcement is excluded only for paused/blocked
         # recovery: a restored paused/blocked Ticket stays reconstructed, not
-        # silently executable.
+        # silently executable. The clear is a transfer boundary too, so the
+        # retained implementation/review phase needs a concrete handoff
+        # (HARDEN-007); `continuation_problems` judges the proposed State.
         require_active = previous not in ("paused", "blocked")
         problems = phase_checks.continuation_problems(
-            root, ticket_id, proposed, require_active=require_active)
+            root, ticket_id, proposed, require_active=require_active,
+            require_handoff=True)
         if problems:
             raise MutateError(
                 "cannot clear the escalation: the retained phase's current "

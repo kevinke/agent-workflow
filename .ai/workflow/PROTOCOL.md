@@ -119,6 +119,10 @@ Before stopping work on a ticket:
 3. Run `ai-workflow validate`; no ERROR findings may remain. Any WARN findings are recorded in handoff.md.
 4. Leave the working tree interpretable: the next agent must be able to continue from `state.yaml` + `handoff.md` alone.
 
+### Handoff readiness at transfer boundaries (workflow_version 2)
+
+A draft handoff is permitted earlier in the lifecycle; the same readiness problems are surfaced as validate WARN notices there. At the transfer boundaries the handoff must be concrete (`ARTIFACTS.md` defines the syntax): entering `review`, completing to `done`, continuing in `review`/`done` (validate and `resume` report it through the shared phase checks), and clearing an implementation/review recovery. Template tokens, whole-field placeholders and placeholder bullets in the structured sections are rejected at those boundaries; explicit `None` and a justified `N/A — reason` are legitimate where no item exists. Readiness is syntactic: it is not proof that the handoff's narrative is true or that acceptance passed — human review still establishes acceptance.
+
 ### Portable continuation
 
 A receiver resumes from persisted state and artifacts, never from chat history:

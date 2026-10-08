@@ -51,7 +51,9 @@ class EscalationV2Test(V2CLITestCase):
 
         The phase's decision.md is part of the ready state: a recovery clear
         requires every retained-phase artifact before the continuation is
-        restored, so the fixture records it here.
+        restored, so the fixture records it here. The clear is also a
+        transfer boundary (HARDEN-007), so the fixture hands over a concrete
+        handoff rather than the `start` scaffold.
         """
         self._seed_planning()
         rel = self.write_plan(total)
@@ -61,6 +63,7 @@ class EscalationV2Test(V2CLITestCase):
         proc = self.cli("advance", self.TICKET, "--to", "implementation")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.write_decision()
+        self.write_handoff()
 
     def _escalated_implementation(self, total=1):
         """A clean ready implementation, escalated into ordinary recovery.

@@ -33,7 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import state           # noqa: E402
 import workflow_v2     # noqa: E402
 from v2_support import (V2CLITestCase, install_v1_templates,  # noqa: E402
-                        valid_audit, valid_evidence, valid_plan)
+                        valid_audit, valid_evidence, valid_handoff,
+                        valid_plan)
 
 ADOPTION_CONFIRMATIONS = workflow_v2.ADOPTION_CONFIRMATIONS
 
@@ -322,6 +323,9 @@ class InstalledLifecycleV2Test(V2CLITestCase):
         self._assert_validate_ok("implementation")
 
         # -- changes_requested + appended repair -----------------------------
+        # The review entry boundary needs a concrete handoff (HARDEN-007); the
+        # file persists, so the later re-entry and done stay satisfied too.
+        self.write_handoff()
         self.assertEqual(self.cli("advance", self.TICKET, "--to",
                                   "review").returncode, 0)
         reviewed = self.commit_all("fixture: reviewed tree")
@@ -582,6 +586,19 @@ class LateBootstrapRecoveryTest(V2CLITestCase):
             data["implementation"]["completed_tasks"] = [1]
             state.save_file(
                 os.path.join(self._work(ticket), "state.yaml"), data)
+
+        # The clear is a transfer boundary (HARDEN-007): the retained
+        # implementation/review phase needs a concrete handoff before it.
+        data = self._state_of(ticket)
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        self._write_for(ticket, "handoff.md", valid_handoff(
+            ticket, "main", head,
+            artifacts="- Evidence: evidence.md (round 1)\n"
+                      "- Evidence audit: evidence-audit.md (gate sufficient)\n"
+                      "- Decision: decision.md\n"
+                      "- Plan: %s (registered)\n"
+                      "- Review: none (no verdict recorded yet)"
+                      % data["source_artifacts"]["plan"]["path"]))
 
         # -- the referenced clear restores the retained phase -----------------
         clear = self.cli("escalate", ticket, "--clear", "--resolution",
