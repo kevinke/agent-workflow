@@ -90,5 +90,51 @@ c7cf4388…`) — independent recordings made during the pilot run itself.
 
 ## Fresh-clone verification
 
-(pending — appended after verifying the committed packages in a fresh
-disposable kit clone)
+The committed packages were re-verified in a fresh disposable kit clone of
+commit `301442358cb7ec9f572d5781d4fd4d49c94da8db`
+(`feat(ai-workflow): export verified raw artifacts and preserve pilot
+archives`), committed as HEAD of a new clone:
+
+```
+git clone <repo> /tmp/harden06-fresh && cd /tmp/harden06-fresh && git rev-parse HEAD
+# -> 301442358cb7ec9f572d5781d4fd4d49c94da8db
+```
+
+Extraction and binding match ran inside the clone with the stdlib `zipfile`
+and the clone's own kit parser (restricted YAML) over the ARCHIVED
+`state.yaml` carried inside each ZIP — SHA-256 over the extracted raw member
+bytes, compared with both the manifest entry and the State-recorded hash:
+
+```python
+# per ticket: manifest integrity (every member sha256) + the four recorded
+# bindings (evidence / audit / plan / review)
+for e in manifest["entries"]:
+    assert hashlib.sha256(members[e["path"]]).hexdigest() == e["sha256"]
+for path, expected in recorded_from_state.items():
+    assert by_path[path]["bound_sha256"] == expected
+    assert hashlib.sha256(members[path]).hexdigest() == expected
+```
+
+Result (verbatim):
+
+```
+OK PILOT-BUG-01: 8 manifest integrity checks + 4 recorded bindings matched; zip sha256 0fe190b976f073df74faa56ebd8b7dcea187ef9b5e5d9adb2031f2d2065f49fb
+OK PILOT-FEAT-01: 8 manifest integrity checks + 4 recorded bindings matched; zip sha256 aad5afa4b22d9379de09c05e5a34d763e4df36e867ad7f2b6cdc2db9884158be
+
+MATCH PILOT-BUG-01 .ai/work/PILOT-BUG-01/evidence-audit.md
+MATCH PILOT-BUG-01 .ai/work/PILOT-BUG-01/evidence.md
+MATCH PILOT-BUG-01 .ai/work/PILOT-BUG-01/review.md
+MATCH PILOT-BUG-01 .scratch/PILOT-BUG-01/plan.md
+MATCH PILOT-FEAT-01 .ai/work/PILOT-FEAT-01/evidence-audit.md
+MATCH PILOT-FEAT-01 .ai/work/PILOT-FEAT-01/evidence.md
+MATCH PILOT-FEAT-01 .ai/work/PILOT-FEAT-01/review.md
+MATCH PILOT-FEAT-01 .scratch/PILOT-FEAT-01/plan.md
+
+ALL_EIGHT_BINDINGS_VERIFIED
+```
+
+The fresh clone's checkout preserved the package bytes exactly (the ZIP
+digests above equal the packaging-time values in "Packages"), so historical
+acceptance is VERIFIED, not pending: all eight bindings survive transport
+into a fresh clone. Supporting files still carry null `bound_sha256` (asserted
+in the same run).
