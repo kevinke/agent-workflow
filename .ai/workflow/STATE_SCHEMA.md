@@ -92,7 +92,7 @@ Rejected (validate must error): YAML anchors and aliases (`&`, `*`), tags (`!`),
 
 ## Unknown fields
 
-Unknown fields are silently ignored — never an error, never deleted. A harness editing `state.yaml` must preserve unknown fields it does not understand.
+Unknown fields are silently ignored — never an error, never deleted. A harness editing `state.yaml` must preserve unknown fields it does not understand. This guarantee includes the explicit v1→v2 conversion: `upgrade-ticket` merges its owned keys into the existing nested maps, so unknown fields (including unknown children of owned maps) survive conversion, and a State with malformed owned shapes is rejected with the bytes unchanged.
 
 ## Updating
 
@@ -271,15 +271,30 @@ A Ticket is never upgraded in place. `ai-workflow upgrade` upgrades only the
 installed protocol (`.ai/workflow/`); it never rewrites a Ticket's `state.yaml`.
 Converting one Ticket is the explicit `upgrade-ticket <ticket-id>` command.
 
-`upgrade-ticket` converts one interpretable *active* v1 Ticket to v2 once. It
-keeps the phase, source references, counters, ordered completed history and
-unknown maps, records the additive `upgrade` block, resets `evidence.gate` to
-`insufficient` and `review.verdict` to `pending`, and creates an unresolved
-`machine` escalation whose resolver is `workflow-bootstrap` (preserving
-`escalation.interrupted_action`). It fabricates no audit, registered Plan or
-review pass. A historical `done` Ticket, an uninterpretable `workflow_version`
-(boolean, zero, or future), or a state too malformed to reconstruct is rejected
-with the State bytes unchanged; an already-v2 Ticket is a byte-preserving no-op.
+`upgrade-ticket` converts one interpretable *active* v1 Ticket to v2 once.
+Before it writes anything, it preflights the owned shapes
+(`upgrade.conversion_problems`): every owned optional map (`evidence`, `review`,
+`artifacts`, `escalation`, `implementation`, `next_action`, `source_artifacts`,
+`upgrade`) and the nested source references (`source_artifacts.spec` / `.ticket`
+/ `.plan`) must be a map or absent, the phase and Status must be convertible,
+and the implementation counters must be non-negative integers (never booleans)
+with an ordered completed history. Malformed input is reported distinctly from
+an unsupported conversion, and every rejection names the offending field.
+
+The conversion deep-copies the parsed State and merges only its owned keys into
+the existing nested maps. Unknown fields everywhere — including unknown children
+of the owned maps and nested custom maps — survive conversion exactly: they are
+never required to satisfy owned-field rules, and never coerced or dropped. It
+keeps the phase, source references, counters and ordered completed history,
+records the additive `upgrade` block, resets `evidence.gate` to `insufficient`
+and `review.verdict` to `pending` (a recorded verdict or gate is never carried
+over as old success), and creates an unresolved `machine` escalation whose
+resolver is `workflow-bootstrap` (preserving `escalation.interrupted_action`).
+It fabricates no audit, registered Plan or review pass. A historical `done`
+Ticket, an uninterpretable `workflow_version` (boolean, zero, or future), a
+Status that is not active/paused/blocked, or any malformed owned shape is
+rejected with an actionable error and the State bytes unchanged; an already-v2
+Ticket is a byte-preserving no-op.
 
 The conversion records:
 

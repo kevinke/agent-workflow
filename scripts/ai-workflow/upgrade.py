@@ -13,13 +13,17 @@ versions are handled only by the explicit `upgrade-ticket` command.
 to insufficient and the review to pending, and creating an unresolved machine
 escalation whose resolver is `workflow-bootstrap` (preserving the interrupted
 action). It fabricates no past audit, Plan, or review pass; a `done` v1 Ticket
-stays v1. See MIGRATION.md and STATE_SCHEMA.md for the reconstruction rules.
+stays v1. The owned shapes are preflighted (`conversion_problems`) before any
+write, and the owned keys are merged into the existing nested maps, so unknown
+extension fields survive conversion untouched. See MIGRATION.md and
+STATE_SCHEMA.md for the reconstruction rules.
 
 `upgrade` is idempotent: when the installed protocol is already current it is a
 no-op. Returns `(updated_files, [])` — the pair shape is retained for
 compatibility, and the second element is always empty.
 """
 
+import copy
 import os
 import shutil
 
@@ -28,7 +32,7 @@ import state
 import validate
 import workflow_v2
 
-__all__ = ["upgrade", "upgrade_ticket", "UpgradeError",
+__all__ = ["upgrade", "upgrade_ticket", "conversion_problems", "UpgradeError",
            "kit_workflow_version", "installed_workflow_version"]
 
 _WORK_DIR_REL = os.path.join(".ai", "work")
@@ -43,6 +47,15 @@ _CONVERTIBLE_STATUSES = frozenset({"active", "paused", "blocked"})
 # Kept free of the restricted-YAML-reserved characters so it round-trips plainly.
 _RECONSTRUCTION_REASON = ("workflow reconstruction required for this converted "
                           "v1 Ticket")
+
+# The nested maps the explicit conversion reads or writes. Each is optional:
+# when present it must be a map (a null counts as absent), or the State is
+# malformed input rather than convertible work.
+_OWNED_MAPS = ("artifacts", "evidence", "escalation", "implementation",
+               "next_action", "review", "source_artifacts", "upgrade")
+
+# The known source-reference children of `source_artifacts` (STATE_SCHEMA.md).
+_SOURCE_REFERENCES = ("spec", "ticket", "plan")
 
 
 class UpgradeError(Exception):
@@ -102,44 +115,128 @@ def _overwrite_tree(src, dst, updated):
             updated.append(dest_path)
 
 
-def _convert_v1_to_v2(data):
-    """The one explicit v1 -> v2 conversion (mutates and returns `data`).
+def conversion_problems(data):
+    """Preflight one candidate State for the explicit v1 -> v2 conversion.
 
-    Preserves the phase, source references, counters, ordered completed history,
-    unknown maps, and the interrupted `next_action`. Records the reconstruction
-    facts (`upgrade.from_version`/`previous_gate`/`requires_reconstruction`),
-    resets the gate to insufficient and the review to pending, and creates an
-    unresolved machine escalation routed to `workflow-bootstrap`. No audit, Plan
-    or review pass is fabricated.
+    Returns every owned-shape problem as an actionable string; [] means the
+    State may be converted. Read-only, and it must run before any nested
+    `.get`/dict conversion touches the State. Malformed input (a scalar or
+    list where an owned map belongs, a malformed nested source reference,
+    boolean or negative counters, a non-ordered completed history) is
+    reported as `malformed input`; an ineligible Ticket (uninterpretable
+    version, historical done phase, an already-escalated or abandoned
+    Status) as `unsupported conversion`. Unknown fields — including unknown
+    children of the owned maps — are never checked and never reported, so
+    validation never coerces or rejects extension data.
     """
+    problems = []
+    try:
+        ver = workflow_v2.version(data)
+    except contracts.ContractError as exc:
+        problems.append("unsupported conversion: %s" % exc)
+    else:
+        if ver == 2:
+            problems.append("unsupported conversion: the Ticket is already "
+                            "workflow_version 2")
+
     phase = data.get("phase")
-    previous_action = data.get("next_action") or {}
-    previous_gate = (data.get("evidence") or {}).get("gate")
-    previous_status = data.get("status")
+    if phase == "done":
+        problems.append("unsupported conversion: a historical done Ticket "
+                        "stays workflow_version 1")
+    elif not isinstance(phase, str) or phase not in validate.PHASES:
+        problems.append("malformed input: phase %r is not a workflow phase; "
+                        "fix the State before converting" % (phase,))
 
-    data["workflow_version"] = 2
-    data["upgrade"] = {
-        "from_version": 1,
-        "requires_reconstruction": True,
-        "previous_gate": previous_gate,
-    }
+    status = data.get("status")
+    if not isinstance(status, str) or status not in _CONVERTIBLE_STATUSES:
+        problems.append(
+            "unsupported conversion: only an active, paused, or blocked v1 "
+            "Ticket may be converted (status=%r); resolve an existing "
+            "escalation with `escalate --clear --resolution` first, or leave "
+            "an abandoned Ticket as workflow_version 1" % (status,))
 
-    evidence = dict(data.get("evidence") or {})
+    for key in _OWNED_MAPS:
+        value = data.get(key)
+        if value is not None and not isinstance(value, dict):
+            problems.append("malformed input: %s must be a map (got %s); fix "
+                            "the State before converting"
+                            % (key, type(value).__name__))
+
+    sources = data.get("source_artifacts")
+    if isinstance(sources, dict):
+        for ref in _SOURCE_REFERENCES:
+            value = sources.get(ref)
+            if value is not None and not isinstance(value, dict):
+                problems.append(
+                    "malformed input: source_artifacts.%s must be a map (got "
+                    "%s); fix the State before converting"
+                    % (ref, type(value).__name__))
+
+    implementation = data.get("implementation")
+    if isinstance(implementation, dict):
+        problems.extend("malformed input: %s" % problem for problem
+                        in workflow_v2.counter_problems(implementation))
+
+    return problems
+
+
+def _convert_v1_to_v2(data):
+    """The one explicit v1 -> v2 conversion (returns a converted deep copy).
+
+    Works on a deep copy of the parsed State and merges the owned keys into
+    the existing nested maps, so every unknown child — including unknown
+    children of `upgrade`, `evidence`, `review`, `escalation`,
+    `source_artifacts.plan`, `implementation` and nested custom maps — is
+    preserved rather than dropped or coerced. Preserves the phase, source
+    references, counters and ordered completed history, records the
+    reconstruction facts (`upgrade.from_version`/`previous_gate`/
+    `requires_reconstruction`), resets the gate to insufficient and the
+    review to pending without carrying over an old verdict, and creates an
+    unresolved machine escalation routed to `workflow-bootstrap`. No audit,
+    Plan or review pass is fabricated. Callers preflight the owned shapes
+    with `conversion_problems` first; this function never validates.
+    """
+    converted = copy.deepcopy(data)
+
+    phase = converted.get("phase")
+    previous_action = converted.get("next_action") or {}
+    previous_gate = (converted.get("evidence") or {}).get("gate")
+    previous_status = converted.get("status")
+
+    converted["workflow_version"] = 2
+
+    upgrade_block = converted.get("upgrade")
+    if not isinstance(upgrade_block, dict):
+        upgrade_block = {}
+    upgrade_block["from_version"] = 1
+    upgrade_block["requires_reconstruction"] = True
+    upgrade_block["previous_gate"] = previous_gate
+    converted["upgrade"] = upgrade_block
+
+    evidence = converted.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
     evidence["gate"] = "insufficient"
-    data["evidence"] = evidence
+    converted["evidence"] = evidence
 
     # A scaffold default only: never a past passing verdict.
-    review = dict(data.get("review") or {})
+    review = converted.get("review")
+    if not isinstance(review, dict):
+        review = {}
     review["verdict"] = "pending"
-    data["review"] = review
+    converted["review"] = review
 
     # The v2 Review filename default; no Review artifact is written here.
-    artifacts = dict(data.get("artifacts") or {})
+    artifacts = converted.get("artifacts")
+    if not isinstance(artifacts, dict):
+        artifacts = {}
     if "review" not in artifacts:
         artifacts["review"] = "review.md"
-    data["artifacts"] = artifacts
+    converted["artifacts"] = artifacts
 
-    escalation = dict(data.get("escalation") or {})
+    escalation = converted.get("escalation")
+    if not isinstance(escalation, dict):
+        escalation = {}
     escalation["required"] = True
     escalation["scope"] = "machine"
     escalation["reason"] = _RECONSTRUCTION_REASON
@@ -151,25 +248,29 @@ def _convert_v1_to_v2(data):
     }
     escalation["interrupted_phase"] = phase
     escalation["resolution"] = None
-    data["escalation"] = escalation
+    converted["escalation"] = escalation
 
-    data["status"] = "escalation_required"
-    data["next_action"] = {
+    converted["status"] = "escalation_required"
+    converted["next_action"] = {
         "role": workflow_v2.RECONSTRUCTION_ROLE,
         "action": workflow_v2.RECONSTRUCTION_ACTION,
         "task": None,
     }
-    return data
+    return converted
 
 
 def upgrade_ticket(root, ticket_id):
     """Explicitly convert one interpretable active v1 Ticket to workflow_version 2.
 
     Returns a confirmation line. An already-v2 Ticket is a byte-preserving
-    no-op. A historical `done` v1 Ticket, an uninterpretable version
-    (bool/zero/future), a Status that is not active/paused/blocked (an already
-    escalated or abandoned Ticket), a state too malformed to reconstruct, or a
-    missing ticket is rejected unchanged (raising UpgradeError).
+    no-op. The owned shapes are preflighted with `conversion_problems` before
+    anything is written, so a historical `done` v1 Ticket, an uninterpretable
+    version (bool/zero/future), a Status that is not active/paused/blocked (an
+    already escalated or abandoned Ticket), a malformed owned map or counter,
+    a state too malformed to reconstruct, or a missing ticket is rejected
+    with an actionable UpgradeError and unchanged State bytes. The conversion
+    itself merges its owned keys into the existing nested maps, so unknown
+    extension fields survive.
     """
     path = _ticket_state_path(root, ticket_id)
     if not os.path.isfile(path):
@@ -186,26 +287,12 @@ def upgrade_ticket(root, ticket_id):
     if ver == 2:
         return "%s: already workflow_version 2 (no change)" % ticket_id
 
-    phase = data.get("phase")
-    if phase == "done":
-        raise UpgradeError(
-            "cannot upgrade %s: a historical done Ticket stays workflow_version 1"
-            % ticket_id)
-    if phase not in validate.PHASES:
-        raise UpgradeError(
-            "cannot upgrade %s: state is too malformed to reconstruct (phase=%r)"
-            % (ticket_id, phase))
+    problems = conversion_problems(data)
+    if problems:
+        raise UpgradeError("cannot upgrade %s: %s"
+                           % (ticket_id, "; ".join(problems)))
 
-    status = data.get("status")
-    if status not in _CONVERTIBLE_STATUSES:
-        raise UpgradeError(
-            "cannot upgrade %s: only an active, paused, or blocked v1 Ticket may "
-            "be converted (status=%r); resolve an existing escalation with "
-            "`escalate --clear --resolution` first, or leave an abandoned Ticket "
-            "as workflow_version 1" % (ticket_id, status))
-
-    _convert_v1_to_v2(data)
-    state.save_file(path, data)
+    state.save_file(path, _convert_v1_to_v2(data))
     return ("%s: converted to workflow_version 2 "
             "(senior reconstruction required)" % ticket_id)
 

@@ -9,6 +9,9 @@ state is rejected unchanged, and an already-v2 Ticket is a byte-preserving
 no-op. The reconstruction is then cleared only once the retained phase's current
 contracts are supplied through the public commands; conversion itself fabricates
 no audit, Plan, or review pass. Every rejection asserts State bytes unchanged.
+The conversion preflights the owned shapes (`conversion_problems`) and merges
+its owned keys into the existing nested maps, so unknown extension fields
+survive conversion untouched.
 """
 
 import os
@@ -155,6 +158,147 @@ class UpgradeTicketV2Test(V2CLITestCase):
         proc = self._upgrade_ticket()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.state_bytes(), after)
+
+    def _nested_extensions(self):
+        """v1 ticket carrying unknown fields under every owned map.
+
+        `upgrade`, `evidence`, `review`, `escalation`, `source_artifacts.plan`
+        and `implementation` all hold extension children, plus a nested custom
+        extension map at the top level. The seeded gate/verdict claim old
+        success, so the conversion must reset them without dropping anything.
+        """
+        self.seed_v1("implementation")
+        data = self.read_state()
+        data["implementation"] = {
+            "current_task": 1, "total_tasks": 2, "completed_tasks": [1],
+            "custom_extension": {"board": {"column": "in-progress"}},
+        }
+        data["evidence"] = {"round": 1, "gate": "sufficient",
+                            "custom_extension": {"tracker": "EXT-1",
+                                                 "rounds": [1]}}
+        data["review"] = {"verdict": "pass",
+                          "custom_extension": {"signed_off_by": "someone"}}
+        data["escalation"] = {"required": False, "scope": "machine",
+                              "reason": None,
+                              "custom_extension": {"escalated_to": "human"}}
+        data["source_artifacts"] = {
+            "spec": {"path": None},
+            "ticket": {"path": None},
+            "plan": {"path": None, "custom_extension": {"tool": "tracker"}},
+        }
+        data["upgrade"] = {"custom_extension": {"synced_tasks": -5}}
+        data["custom_map"] = {"nested": {"deeper": {"leaf": "keep me"}}}
+        self.write_state(data)
+        return data
+
+    def test_conversion_problems_empty_for_convertible_state(self):
+        self._half_completed("implementation")
+        self.assertEqual(upgrade.conversion_problems(self.read_state()), [])
+
+    def test_upgrade_preserves_nested_extensions(self):
+        before = self._nested_extensions()
+        before_bytes = self.state_bytes()
+
+        proc = self._upgrade_ticket()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotEqual(self.state_bytes(), before_bytes)  # converted
+
+        after = self.read_state()
+        self.assertEqual(after["workflow_version"], 2)
+        # Valid conversion preserves extension data:
+        self.assertEqual(after["upgrade"]["custom_extension"], before["upgrade"]["custom_extension"])
+        self.assertEqual(after["implementation"]["completed_tasks"], before["implementation"]["completed_tasks"])
+        self.assertEqual(after["implementation"]["custom_extension"],
+                         before["implementation"]["custom_extension"])
+        self.assertEqual(after["evidence"]["custom_extension"],
+                         before["evidence"]["custom_extension"])
+        self.assertEqual(after["review"]["custom_extension"],
+                         before["review"]["custom_extension"])
+        self.assertEqual(after["escalation"]["custom_extension"],
+                         before["escalation"]["custom_extension"])
+        self.assertEqual(after["source_artifacts"]["plan"]["path"],
+                         before["source_artifacts"]["plan"]["path"])
+        self.assertEqual(after["source_artifacts"]["plan"]["custom_extension"],
+                         before["source_artifacts"]["plan"]["custom_extension"])
+        self.assertEqual(after["custom_map"], before["custom_map"])
+        # Unknown fields are never coerced to satisfy owned-field rules.
+        self.assertEqual(after["upgrade"]["custom_extension"],
+                         {"synced_tasks": -5})
+
+        # The owned initialization still applies: reconstruction facts are
+        # recorded and no old success is claimed.
+        self.assertEqual(after["upgrade"]["from_version"], 1)
+        self.assertTrue(after["upgrade"]["requires_reconstruction"])
+        self.assertEqual(after["upgrade"]["previous_gate"], "sufficient")
+        self.assertEqual(after["evidence"]["gate"], "insufficient")
+        self.assertEqual(after["review"]["verdict"], "pending")
+        self.assertNotIn("report_sha256", after["evidence"])
+        self.assertNotIn("audit_sha256", after["evidence"])
+        self.assertTrue(after["escalation"]["required"])
+        self.assertEqual(after["escalation"]["previous_status"], "active")
+        self.assertEqual(after["status"], "escalation_required")
+
+        # Repeated conversion is a byte-preserving no-op.
+        converted = self.state_bytes()
+        proc = self._upgrade_ticket()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), converted)
+
+    def test_malformed_owned_maps_rejected_unchanged(self):
+        for key, value in (("evidence", 7), ("escalation", "oops"),
+                           ("source_artifacts", []), ("upgrade", "oops")):
+            with self.subTest(key=key, value=value):
+                self.seed_v1("implementation")
+                data = self.read_state()
+                # A clean baseline for every key this matrix mutates, so each
+                # subtest fails for its own value alone.
+                data["escalation"] = {"required": False, "scope": "machine",
+                                      "reason": None}
+                data["source_artifacts"] = {"spec": {"path": None},
+                                            "ticket": {"path": None},
+                                            "plan": {"path": None}}
+                data["upgrade"] = None
+                data[key] = value
+                self.write_state(data)
+                before_bytes = self.state_bytes()
+                proc = self._upgrade_ticket()
+                self.assertEqual(proc.returncode, 1)
+                self.assertNotIn("Traceback", proc.stdout + proc.stderr)
+                self.assertIn(key, proc.stderr)   # actionable: names the field
+                self.assertEqual(self.state_bytes(), before_bytes)
+
+    def test_malformed_counters_rejected_unchanged(self):
+        for key, value in (("current_task", True), ("total_tasks", -1),
+                           ("completed_tasks", "oops")):
+            with self.subTest(key=key, value=value):
+                self.seed_v1("implementation")
+                data = self.read_state()
+                data["implementation"] = {"current_task": 0, "total_tasks": 0,
+                                          "completed_tasks": []}
+                data["implementation"][key] = value
+                self.write_state(data)
+                before_bytes = self.state_bytes()
+                proc = self._upgrade_ticket()
+                self.assertEqual(proc.returncode, 1)
+                self.assertNotIn("Traceback", proc.stdout + proc.stderr)
+                self.assertIn(key, proc.stderr)   # actionable: names the field
+                self.assertEqual(self.state_bytes(), before_bytes)
+
+    def test_malformed_nested_source_references_rejected_unchanged(self):
+        for plan_ref in ("oops", [], 7):
+            with self.subTest(plan_ref=plan_ref):
+                self.seed_v1("planning")
+                data = self.read_state()
+                data["source_artifacts"] = {"spec": {"path": None},
+                                            "ticket": {"path": None},
+                                            "plan": plan_ref}
+                self.write_state(data)
+                before_bytes = self.state_bytes()
+                proc = self._upgrade_ticket()
+                self.assertEqual(proc.returncode, 1)
+                self.assertNotIn("Traceback", proc.stdout + proc.stderr)
+                self.assertIn("plan", proc.stderr)
+                self.assertEqual(self.state_bytes(), before_bytes)
 
     def test_already_v2_conversion_is_a_byte_preserving_noop(self):
         self.seed_v2("planning")

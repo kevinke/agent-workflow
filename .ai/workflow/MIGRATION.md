@@ -148,15 +148,27 @@ Ticket's `state.yaml` and never promotes a Ticket's `workflow_version` in place.
 Converting a Ticket is a separate, explicit act: `upgrade-ticket <ticket-id>`
 converts one interpretable **active** v1 Ticket to `workflow_version: 2` once.
 
-The conversion keeps the phase, source references, counters, ordered completed
-history and unknown maps, and records the additive `upgrade` block
-(`from_version`, `previous_gate`, `requires_reconstruction`). It resets the gate
-to `insufficient` and the review to `pending`, and creates an unresolved `machine`
+The conversion preflights the State (`upgrade.conversion_problems`) before it
+writes anything. Malformed input — a scalar or list where an owned map belongs,
+a malformed nested source reference, or boolean/negative implementation counters
+without an ordered completed history — is reported distinctly from an
+unsupported conversion (a version that cannot be interpreted (boolean, zero, or
+future), a historical `done` Ticket, or a Status that is not
+active/paused/blocked); both are rejected with an actionable error and the State
+bytes unchanged, and an already-v2 Ticket is a byte-preserving no-op.
+
+The conversion then deep-copies the parsed State and merges only its owned keys
+into the existing nested maps. Unknown fields everywhere — including unknown
+children of the owned maps (`upgrade`, `evidence`, `review`, `escalation`,
+`source_artifacts.plan`, `implementation`) and nested custom maps — survive
+conversion exactly: they are never checked against owned-field rules, and never
+coerced or dropped. The conversion keeps the phase, source references, counters
+and ordered completed history, records the additive `upgrade` block
+(`from_version`, `previous_gate`, `requires_reconstruction`), resets the gate
+to `insufficient` and the review to `pending` (a recorded verdict or gate is
+never carried over as old success), and creates an unresolved `machine`
 escalation whose resolver is `workflow-bootstrap`, preserving the interrupted
-`next_action`. It fabricates no past audit, registered Plan or review pass, and a
-historical `done` Ticket stays v1. A version that cannot be interpreted (boolean,
-zero, or future) or a state too malformed to reconstruct is rejected with the
-State bytes unchanged; an already-v2 Ticket is a byte-preserving no-op.
+`next_action`. It fabricates no past audit, registered Plan or review pass.
 
 A converted Ticket is `escalation_required` and not yet valid: the retained
 phase's current contracts must be reconstructed before it can continue. The senior
