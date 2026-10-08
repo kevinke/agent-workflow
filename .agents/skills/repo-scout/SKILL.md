@@ -14,42 +14,32 @@ A thin operational procedure. All business rules live in the protocol under
 
 ## Procedure
 
-1. Read `.ai/work/<ticket-id>/state.yaml` first — it is authoritative.
+1. Read `.ai/work/<ticket-id>/state.yaml` first — it is authoritative. When
+   entering without chat history, `ai-workflow resume <ticket-id>` prints the
+   read-only continuation brief (PROTOCOL.md §"Portable continuation").
 2. Confirm `next_action.role` is `scout`. If it is not, do not act; hand back.
-3. Read the protocol files listed in PROTOCOL.md §"Entering a ticket" that apply
-   (at minimum `.ai/workflow/PROTOCOL.md`, `.ai/workflow/ARTIFACTS.md`).
+3. Read the protocol files listed in PROTOCOL.md §"Entering a ticket" that
+   apply — at minimum `.ai/workflow/PROTOCOL.md` (especially §"Scouting and
+   auditing"), `.ai/workflow/ROLES.md`, and `.ai/workflow/ARTIFACTS.md`.
 4. Read the source artifacts referenced by `source_artifacts` in state.yaml
    (spec, ticket, plan). Reference them by path; never copy their content.
 5. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
-6. Collect repository facts only into `evidence.md` per the Scout Report
-   contract in `.ai/workflow/ARTIFACTS.md` (full worked examples:
-   `.ai/workflow/examples/scout-bug.md`, `.ai/workflow/examples/scout-feature.md`):
-   - Capture the snapshot first: current HEAD as `observed_commit`, relevant
-     dirty paths as `dirty_changes`.
-   - Draft Decision Questions from the request when the ticket supplies none;
-     tie each to the decision it affects. Three to eight is guidance.
-   - Record findings as FACT / INFERENCE / UNKNOWN with stable F-IDs, precise
-     anchors, the verification method (static / execution / test), and scope.
-     Negative searches state scope and exclusions.
-   - If the request's ambiguity requires an architectural choice, escalate it;
-     do not silently pick an architecture.
-   - Temporary diagnostics (throwaway runs, probes) are permitted; record
-     their outcome and any residual changes.
-   - Stop when questions are answered or the remaining gaps and stopping
-     reason are explicit. An exhausted budget yields a partial report with
-     precise unknowns, not a verdict.
-   Design proposals and your own sufficiency verdict are forbidden in
-   evidence.md — a critical UNKNOWN can still leave the report ready for
-   audit; only the auditor opens the Gate.
-7. Do not touch `evidence.round` / `evidence.gate` / `phase` / `next_action`:
-   the auditor records the round and verdict via `ai-workflow set-gate`, and
-   the checkpoint-handoff advances the phase via `ai-workflow advance`. Leave
-   those to them.
-8. Write `handoff.md` per the contract before stopping (fixed sections +
-   Repository State block).
-9. Commit per the protocol's commit discipline, or report readiness for the
+6. Collect repository facts into `evidence.md` per the Scout Report contract in
+   `.ai/workflow/ARTIFACTS.md` (worked examples:
+   `.ai/workflow/examples/scout-bug.md`, `.ai/workflow/examples/scout-feature.md`).
+   That contract owns the collection doctrine — sections, Decision Questions,
+   the FACT / INFERENCE / UNKNOWN finding syntax, the stopping reason, and what
+   is forbidden in evidence.md. Follow it exactly; this skill does not restate it.
+7. The scout writes evidence and handoff only (PROTOCOL.md §"Scouting and
+   auditing"): the evidence verdict is the auditor's (`ai-workflow set-gate`)
+   and phase transitions belong to the checkpoint-handoff (`ai-workflow
+   advance`). Leave both to them.
+8. Write `handoff.md` per the contract in `.ai/workflow/ARTIFACTS.md` before
+   stopping.
+9. Commit per PROTOCOL.md §"Commits and rollback", or report readiness for the
    next phase transition.
 
 Do not record the evidence verdict; do not write `decision.md`; do not advance
-the phase (`ai-workflow advance`). Those belong to other roles.
+the phase (`ai-workflow advance`). Those belong to other roles (see
+`.ai/workflow/ROLES.md`).

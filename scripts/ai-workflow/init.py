@@ -22,7 +22,8 @@ END_MARKER = "<!-- END AI-WORKFLOW -->"
 # Managed adapter block for Codex/ZCode (spec §12, TICKET-004). Final wording:
 # a thin pointer only — read state.yaml, follow phase/role in the protocol,
 # read only what you need, never redo completed phases, update state + handoff
-# before stopping. Adapters never copy the protocol body (ADR-0001).
+# before stopping; role/model routing lives in ROLES.md, never here. Adapters
+# never copy the protocol body (ADR-0001).
 MANAGED_BLOCK = BEGIN_MARKER + """
 
 On entering this repo, read `.ai/work/<ticket>/state.yaml` first: it is the
@@ -33,10 +34,8 @@ stopping.
 
 To continue without chat history, run `ai-workflow resume <ticket-id>`: it prints
 a read-only brief (next role / action / task, artifact identity, continuation
-checks). Model tiers are Harness-local defaults (Scout/executor cheap;
-auditor/decision/planner/Reviewer senior); a senior may also do hard scouting or
-implementation, decision phases may share a session, and review stays
-independent. Missing tools, environment, or task clarity are escalated.
+checks). Model tiers, session sharing, and escalation are Harness-local defaults
+defined in `.ai/workflow/ROLES.md`; it owns that routing, not this block.
 
 """ + END_MARKER
 

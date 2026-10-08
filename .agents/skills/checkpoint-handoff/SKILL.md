@@ -17,44 +17,39 @@ Phase transitions and handoff (see `.ai/workflow/ROLES.md`). Any model tier.
 1. Read `.ai/work/<ticket-id>/state.yaml` first — it is authoritative.
 2. Confirm `next_action.role` is `checkpoint-handoff`. If not, hand back.
 3. Read `.ai/workflow/PROTOCOL.md` (state machine, handoff discipline) and
-   `.ai/workflow/STATE_SCHEMA.md` (allowed transitions).
+   `.ai/workflow/STATE_SCHEMA.md` (phases and statuses).
 4. Run `ai-workflow validate <ticket-id>` first — it must report no ERROR
    findings. Record any WARN findings in handoff.md.
 5. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
 6. Perform the transition:
    `ai-workflow advance <ticket-id> --to <destination>`.
-   The command enforces the allowed transition and the evidence gate, points
-   `next_action` at the destination phase's role, and clears `next_action` at
-   `done`. If it rejects the transition, the state is not ready — do not force
-   it; fix the blocker or escalate.
-7. Clear `escalation.required` only if a senior resolved it per
-   `.ai/workflow/ESCALATION.md`. On a `workflow_version: 2` ticket the clear
-   requires the senior resolution:
-   `ai-workflow escalate <ticket-id> --clear --resolution "<what was resolved and its supporting artifacts>"`.
-   A human-scope resolution must reference the user's answer; a missing or
-   unreferenced `--resolution` is rejected. (A v1 ticket keeps the bare
-   `ai-workflow escalate <ticket-id> --clear`.)
-8. Write `handoff.md` per the contract in `.ai/workflow/ARTIFACTS.md`: the
-   fixed sections plus the Repository State block (branch, HEAD, uncommitted
-   files, test status). No unverified claims.
-9. Commit per the protocol's commit discipline (phase-boundary commit).
+   The command enforces the allowed transition and its gates (PROTOCOL.md
+   §"Phases and statuses", §"Review and completion"). If it rejects the
+   transition, the state is not ready — do not force it; fix the blocker or
+   escalate.
+7. Clear `escalation.required` only when a senior resolved it per
+   `.ai/workflow/ESCALATION.md`:
+   `ai-workflow escalate <ticket-id> --clear --resolution "<what was resolved
+   and its supporting references>"`.
+   (A v1 ticket keeps the bare `ai-workflow escalate <ticket-id> --clear`.)
+8. Write `handoff.md` per the contract in `.ai/workflow/ARTIFACTS.md` — the
+   fixed sections plus the Repository State block, as that contract defines
+   them. No unverified claims.
+9. Commit per PROTOCOL.md §"Commits and rollback" (phase-boundary commit).
 
 ## Continuing across sessions
 
 When the previous session's chat is gone, run `ai-workflow resume <ticket-id>`:
-it prints a read-only continuation brief (next role / action / task, artifact
-identity and digests, repository state, continuation checks). Read it before
-acting; it never writes state. Model tiers are Harness-local defaults
-(`.ai/workflow/ROLES.md`); if the tools or environment the brief assumes are
-missing, escalate rather than guess.
+it prints a read-only continuation brief (PROTOCOL.md §"Portable continuation").
+Read it before acting; it never writes state. Model tiers are Harness-local
+defaults (`.ai/workflow/ROLES.md`); if the tools or environment the brief
+assumes are missing, escalate per `.ai/workflow/ESCALATION.md` rather than guess.
 
 ## Role boundary
 
 This is a mechanical role: it performs the transition mechanics and supplies no
-technical verdict. On a `workflow_version: 2` ticket, `review` routes to the
-independent `reviewer`, not here — the Reviewer records `pass` /
-`changes_requested` with `set-review` first. `advance --to done` then requires a
-current `pass`, and `advance --to implementation` from `review` is the
-append-only repair the senior performs after registering an appending rework
-Plan. Do not write `review.md` or judge the change.
+technical verdict (`.ai/workflow/ROLES.md`). In `review` the route is the
+independent `reviewer`, not here — the review, repair, and completion gates
+live in PROTOCOL.md §"Review and completion". Do not write `review.md` or judge
+the change.

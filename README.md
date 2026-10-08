@@ -131,6 +131,7 @@ ai-workflow escalate TICKET-001 --clear --resolution "当前阶段契约已重�
 
 - **本套件是什么 / 怎么设计**：[docs/specs/agent-workflow-protocol.md](docs/specs/agent-workflow-protocol.md)
 - **安装到目标仓库的协议正文**：`.ai/workflow/`（PROTOCOL / STATE_SCHEMA / ARTIFACTS / ROLES / ESCALATION / MIGRATION）
+- **Windows 上的 Codex 启动诊断**：[adapters/codex/windows.md](adapters/codex/windows.md)（策略拒绝 ≠ 模型结论；只读诊断与停止条件）
 - **决策记录**：[docs/adr/](docs/adr/)（仓库原生协议、受限 YAML、纯 stdlib CLI）
 - **领域术语**：[CONTEXT.md](CONTEXT.md)
 - **开发约定**：[docs/agents/](docs/agents/)（domain / issue-tracker）
