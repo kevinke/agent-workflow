@@ -12,7 +12,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -207,6 +209,211 @@ class ReviewV2Test(V2CLITestCase):
                                   ".ai/work/T1/plan.md")
         self.assertTrue(any("Plan" in problem for problem in drift))
         self._assert_rejected()
+
+    # -- racy-stat detection through the copied index (HARDEN-002) -----------
+
+    def _cached_mtime_ns(self, rel):
+        """The index's cached mtime (ns) for `rel` from `git ls-files --debug`."""
+        proc = self._git("ls-files", "--debug", "--", rel)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for line in proc.stdout.splitlines():
+            text = line.strip()
+            if text.startswith("mtime:"):
+                seconds, nanos = text[len("mtime:"):].strip().split(":")
+                return int(seconds) * 10 ** 9 + int(nanos)
+        self.fail("no cached index mtime for %s" % rel)
+
+    def _racy_edit(self, rel="src/feature.py"):
+        """Plant an equal-length dirty edit under a cached-stat collision.
+
+        The disposable repo's local config narrows stat comparison to mtime and
+        size (`core.trustctime=false`, `core.checkstat=minimal`). The file's
+        mtime is backdated by two whole seconds and re-recorded into the cached
+        stat with a content-identical `git add`; that captured cached value
+        (`git ls-files --debug`) is then forced onto both the file and the real
+        index with `os.utime(ns=...)` — never sleeps. The collision is already
+        seconds old when any probe runs, so a freshness-losing index copy
+        (fresh mtime) misses the edit independently of elapsed time, and only a
+        stat-preserving copy keeps git's racy-stat re-check engaged. The only
+        changed configuration is the temporary repo's local config (restored on
+        cleanup); fixture setup may alter index timestamps, production checks
+        may not.
+        """
+        self.assertEqual(
+            self._git("config", "core.trustctime", "false").returncode, 0)
+        self.assertEqual(
+            self._git("config", "core.checkstat", "minimal").returncode, 0)
+        self.addCleanup(self._git, "config", "core.trustctime", "true")
+        self.addCleanup(self._git, "config", "core.checkstat", "default")
+        full = os.path.join(self.root, rel)
+        backdated = ((time.time_ns() - 2_000_000_000)
+                     // 1_000_000_000 * 1_000_000_000)
+        os.utime(full, ns=(backdated, backdated))
+        # Content-identical re-add: only the cached stat is re-recorded (at the
+        # backdated mtime), so the blob and the index tree stay unchanged.
+        self.assertEqual(self._git("add", rel).returncode, 0)
+        cached_ns = self._cached_mtime_ns(rel)
+        self.assertEqual(cached_ns, backdated)  # deterministic collision base
+        with open(full, "r", encoding="utf-8", newline="") as fh:
+            original = fh.read()
+        self.assertIn("return 1", original)
+        dirty = original.replace("return 1", "return 3")
+        self.assertEqual(len(dirty), len(original))  # byte-length unchanged
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(dirty)
+        os.utime(full, ns=(cached_ns, cached_ns))
+        os.utime(os.path.join(self.root, ".git", "index"),
+                 ns=(cached_ns, cached_ns))
+
+    def test_racy_equal_size_edit_is_detected_read_only(self):
+        """An equal-size edit colliding with the cached stat is still drift.
+
+        git re-checks by content every entry whose cached mtime is not older
+        than the index file's own (racy-stat), so the throwaway index copy used
+        for the drift probes must preserve the real index's mtime: the
+        collision is then re-compared and the dirty edit reported. A copy that
+        gets a fresh mtime instead trusts the matching cached stat and misses
+        it. The assessment stays read-only: real index bytes and mtime, State
+        and the verdict recording are all unchanged.
+        """
+        reviewed = self._seed_review()
+        index_path = Path(self.root, ".git", "index")
+        self._racy_edit()
+        before_state = self.state_bytes()
+        before_index = index_path.read_bytes()
+        before_mtime = index_path.stat().st_mtime_ns
+
+        drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                  ".ai/work/T1/plan.md")
+        self.assertTrue(any("src/feature.py" in item for item in drift))
+        review_proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+        self.assertEqual(review_proc.returncode, 1)
+        self.assertEqual(self.state_bytes(), before_state)
+        self.assertEqual(index_path.read_bytes(), before_index)
+        self.assertEqual(index_path.stat().st_mtime_ns, before_mtime)
+
+    def test_drift_path_classes_stay_relevant(self):
+        """Every relevant path class stays reported through the copied index.
+
+        The stat-preserving copy must not narrow the drift rules: staged,
+        unstaged (the controlled racy edit), untracked and deleted relevant
+        code stay reported, and the workflow-only exemption keeps its existing
+        scope (a committed progress.md change is not drift).
+        """
+        reviewed = self._seed_review()
+
+        def staged():
+            self._racy_edit()
+            self.assertEqual(self._git("add", "src/feature.py").returncode, 0)
+
+        def unstaged():
+            self._racy_edit()
+
+        def untracked():
+            self._drift_untracked_test()
+
+        def deleted():
+            os.remove(os.path.join(self.root, "src", "feature.py"))
+
+        def workflow_only():
+            self._append_file(os.path.join(self.work, "progress.md"),
+                              "\n- task 1 complete\n")
+            self._commit_all("fixture: progress only")
+
+        variants = {
+            "staged": (staged, "src/feature.py"),
+            "unstaged": (unstaged, "src/feature.py"),
+            "untracked": (untracked, "tests/test_untracked.py"),
+            "deleted": (deleted, "src/feature.py"),
+            "workflow-only": (workflow_only, None),
+        }
+        for name, (variant, expected) in variants.items():
+            with self.subTest(variant=name):
+                self._restore(reviewed)
+                variant()
+                drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                          ".ai/work/T1/plan.md")
+                if expected is None:
+                    self.assertEqual(drift, [])
+                else:
+                    self.assertTrue(
+                        any(expected in item for item in drift), drift)
+
+    def test_racy_edit_blocks_done_and_resume(self):
+        """The controlled racy edit blocks done and resume (exit 1), read-only.
+
+        Both public consumers assess the same dirty snapshot:
+        `advance --to done` rejects the stale pass without writing, and
+        `resume` reports the drift as an ERROR blocker. Neither touches the
+        State, the Review artifact, or the real Git index (bytes and mtimes
+        unchanged) and neither prints a traceback.
+        """
+        self._seed_review()
+        self._bind("pass")
+        self._racy_edit()
+        index_path = Path(self.root, ".git", "index")
+        review_path = os.path.join(self.work, "review.md")
+        before_state = self.state_bytes()
+        before_index = index_path.read_bytes()
+        before_index_mtime = index_path.stat().st_mtime_ns
+        with open(review_path, "rb") as fh:
+            before_review = fh.read()
+        before_review_mtime = os.stat(review_path).st_mtime_ns
+
+        done_proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(done_proc.returncode, 1,
+                         done_proc.stdout + done_proc.stderr)
+        self.assertNotIn("Traceback", done_proc.stderr)
+        self.assertIn("src/feature.py", done_proc.stderr)
+
+        resume_proc = self.cli("resume", self.TICKET)
+        self.assertEqual(resume_proc.returncode, 1,
+                         resume_proc.stdout + resume_proc.stderr)
+        self.assertNotIn("Traceback", resume_proc.stderr)
+        self.assertIn("src/feature.py", resume_proc.stdout)
+
+        self.assertEqual(self.state_bytes(), before_state)
+        with open(review_path, "rb") as fh:
+            self.assertEqual(fh.read(), before_review)
+        self.assertEqual(os.stat(review_path).st_mtime_ns, before_review_mtime)
+        self.assertEqual(index_path.read_bytes(), before_index)
+        self.assertEqual(index_path.stat().st_mtime_ns, before_index_mtime)
+
+    def test_racy_drift_with_real_index_lock(self):
+        """An existing real index.lock is neither used nor mutated by the probe.
+
+        The drift probes redirect Git to a disposable index copy, so a stale
+        `.git/index.lock` (as a crashed Git leaves behind) must not block the
+        racy assessment, mask the dirty edit, or be mutated: the public
+        `set-review` still rejects the stale review (exit 1, no traceback) and
+        both the lock and the real index keep their bytes and mtimes.
+        """
+        reviewed = self._seed_review()
+        self._racy_edit()
+        index_path = Path(self.root, ".git", "index")
+        lock_path = Path(self.root, ".git", "index.lock")
+        with open(lock_path, "wb") as fh:
+            fh.write(b"stale lock from a crashed git\n")
+
+        before_state = self.state_bytes()
+        before_index = index_path.read_bytes()
+        before_index_mtime = index_path.stat().st_mtime_ns
+        before_lock = lock_path.read_bytes()
+        before_lock_mtime = lock_path.stat().st_mtime_ns
+
+        drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                  ".ai/work/T1/plan.md")
+        self.assertTrue(any("src/feature.py" in item for item in drift), drift)
+        review_proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+        self.assertEqual(review_proc.returncode, 1,
+                         review_proc.stdout + review_proc.stderr)
+        self.assertNotIn("Traceback", review_proc.stderr)
+
+        self.assertEqual(self.state_bytes(), before_state)
+        self.assertEqual(index_path.read_bytes(), before_index)
+        self.assertEqual(index_path.stat().st_mtime_ns, before_index_mtime)
+        self.assertEqual(lock_path.read_bytes(), before_lock)
+        self.assertEqual(lock_path.stat().st_mtime_ns, before_lock_mtime)
 
     # -- artifact / verdict rejections --------------------------------------
 

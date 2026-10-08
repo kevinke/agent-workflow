@@ -309,9 +309,14 @@ def _changed_paths(root, reviewed_commit):
     """Union of committed, staged, unstaged, and untracked paths (forward /).
 
     A worktree `git diff` rewrites `.git/index` even under `--no-optional-locks`
-    (git 2.45), so the diff/ls-files probes run against a byte-identical copy of
-    the index via `GIT_INDEX_FILE`; any refresh lands in the copy, never the real
-    index. The copy has the same tree, so the reported paths are unchanged.
+    (git 2.45), so the diff/ls-files probes run against a copy of the index via
+    `GIT_INDEX_FILE`; any refresh lands in the copy, never the real index. The
+    copy is stat-preserving (`shutil.copy2`): git re-checks by content every
+    entry whose cached mtime is not older than the index file's own (racy-stat),
+    so preserving the original mtime keeps that re-check engaged on the copy and
+    an equal-size dirty edit whose file mtime collides with the cached stat is
+    re-compared instead of being trusted clean. The copy has the same tree, so
+    the reported paths are unchanged.
     """
     env = None
     tmpdir = None
@@ -323,7 +328,7 @@ def _changed_paths(root, reviewed_commit):
             env["GIT_INDEX_FILE"] = os.path.join(tmpdir, "index")
             if os.path.exists(index):
                 try:
-                    shutil.copyfile(index, env["GIT_INDEX_FILE"])
+                    shutil.copy2(index, env["GIT_INDEX_FILE"])
                 except OSError as exc:
                     raise contracts.ContractError(
                         "cannot read the Git index for a read-only drift "
