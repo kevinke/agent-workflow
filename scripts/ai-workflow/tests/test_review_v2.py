@@ -676,6 +676,31 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(data["implementation"]["current_task"], completed)
         self.assertEqual(data["review"]["verdict"], "pending")
 
+    def test_deleted_binding_field_blocks_done(self):
+        """A recorded pass with a deleted binding field cannot complete.
+
+        The mutation guards must stay at least as strict as the pre-refactor
+        unconditional comparisons: `advance` does not run validate, so a
+        hand-corrupted State (verdict `pass`, `artifact_sha256` or
+        `plan_sha256` removed) has to be rejected by the guard itself, with
+        State bytes unchanged.
+        """
+        self._seed_review()
+        self._bind("pass")
+        for field in ("artifact_sha256", "plan_sha256"):
+            with self.subTest(field=field):
+                data = self.read_state()
+                del data["review"][field]
+                self.write_state(data)
+                before = self.state_bytes()
+                proc = self.cli("advance", self.TICKET, "--to", "done")
+                self.assertEqual(proc.returncode, 1,
+                                 proc.stdout + proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+                self.assertIn("is missing but a verdict is recorded",
+                              proc.stderr)
+                self.assertEqual(self.state_bytes(), before)
+
     def test_symbolic_stored_binding_is_stale(self):
         """A legacy symbolic State binding is stale, never re-authenticated.
 

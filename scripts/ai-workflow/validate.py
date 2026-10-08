@@ -124,7 +124,8 @@ def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
     Read-only and crash-safe: it never calls Git in a way that could raise, and
     missing/malformed fields are reported as ERRORs rather than tracebacks.
     - phase `done` with a verdict other than `pass` is an ERROR;
-    - a recorded verdict in `review`/`done` must carry its binding fields;
+    - a recorded verdict in `review`/`done` must carry its binding fields
+      (reported by the shared check like every other binding disagreement);
     - a recorded `pass` OR `changes_requested` whose Review artifact, registered
       Plan, literal immutable reviewed commit, or reviewed code no longer
       matches is an ERROR (the same blocker `advance` reports, via the shared
@@ -146,9 +147,6 @@ def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
             "to complete)" % (verdict,))
     if verdict in ("pass", "changes_requested") \
             and phase in ("review", "done"):
-        for key in ("artifact_sha256", "reviewed_commit", "plan_sha256"):
-            if not isinstance(block.get(key), str):
-                bad("review.%s is missing but a verdict is recorded" % key)
         for problem in review.binding_problems(
                 root, ticket, data,
                 allow_rework=(verdict == "changes_requested")):

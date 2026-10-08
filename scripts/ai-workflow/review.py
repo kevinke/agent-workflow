@@ -195,6 +195,10 @@ def binding_problems(root, ticket_id, data, *, allow_rework=False):
     same stale bindings. Both recorded verdicts (`pass` and
     `changes_requested`) must still agree with what they were bound to:
 
+    - a recorded verdict carries all three binding fields — a missing
+      `artifact_sha256` or `plan_sha256` (hand-corrupted State) is a problem
+      in itself, exactly as the pre-refactor unconditional comparisons
+      rejected it;
     - the Review artifact's raw bytes (`review.artifact_sha256`);
     - the registered Plan's raw bytes (`review.plan_sha256`);
     - the reviewed commit (`review.reviewed_commit`): a literal hexadecimal
@@ -225,28 +229,34 @@ def binding_problems(root, ticket_id, data, *, allow_rework=False):
     name = ((data.get("artifacts") or {}).get("review") or "review.md")
     review_path = os.path.join(root, ".ai", "work", ticket_id, name)
     expected_artifact = block.get("artifact_sha256")
-    if isinstance(expected_artifact, str):
-        if not os.path.exists(review_path):
-            problems.append("Review artifact %s is missing (stale binding: "
-                            "re-review and set-review again)" % name)
-        else:
-            try:
-                current_sha = contracts.sha256_file(review_path)
-            except OSError as exc:
-                problems.append("the Review artifact is unreadable: %s" % exc)
-            else:
-                if current_sha != expected_artifact:
-                    problems.append(
-                        "Review artifact changed since the verdict was "
+    if not isinstance(expected_artifact, str):
+        problems.append("review.artifact_sha256 is missing but a verdict is "
                         "recorded (stale binding: re-review and set-review "
                         "again)")
+    elif not os.path.exists(review_path):
+        problems.append("Review artifact %s is missing (stale binding: "
+                        "re-review and set-review again)" % name)
+    else:
+        try:
+            current_sha = contracts.sha256_file(review_path)
+        except OSError as exc:
+            problems.append("the Review artifact is unreadable: %s" % exc)
+        else:
+            if current_sha != expected_artifact:
+                problems.append(
+                    "Review artifact changed since the verdict was "
+                    "recorded (stale binding: re-review and set-review "
+                    "again)")
 
     sources = data.get("source_artifacts") or {}
     plan_ref = sources.get("plan") or {}
     plan_path = plan_ref.get("path")
     recorded_plan = block.get("plan_sha256")
-    if isinstance(recorded_plan, str) \
-            and recorded_plan != plan_ref.get("sha256") and not rework:
+    if not isinstance(recorded_plan, str):
+        problems.append("review.plan_sha256 is missing but a verdict is "
+                        "recorded (stale binding: re-review against the "
+                        "current Plan)")
+    elif recorded_plan != plan_ref.get("sha256") and not rework:
         problems.append(
             "review.plan_sha256 no longer matches the registered Plan "
             "(stale binding: re-review against the current Plan)")
