@@ -215,7 +215,11 @@ class ReviewV2Test(V2CLITestCase):
     # -- racy-stat detection through the copied index (HARDEN-002) -----------
 
     def _cached_mtime_ns(self, rel):
-        """The index's cached mtime (ns) for `rel` from `git ls-files --debug`."""
+        """The index's cached mtime (ns) for `rel` from `git ls-files --debug`.
+
+        Only called after any index-writing child has fully exited
+        (`subprocess.run` waits), so the child's index write is visible here.
+        """
         proc = self._git("ls-files", "--debug", "--", rel)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         for line in proc.stdout.splitlines():
@@ -231,13 +235,28 @@ class ReviewV2Test(V2CLITestCase):
         The disposable repo's local config narrows stat comparison to mtime and
         size (`core.trustctime=false`, `core.checkstat=minimal`). The file's
         mtime is backdated by two whole seconds and re-recorded into the cached
-        stat with a content-identical `git add`; that captured cached value
-        (`git ls-files --debug`) is then forced onto both the file and the real
-        index with `os.utime(ns=...)` — never sleeps. The collision is already
-        seconds old when any probe runs, so a freshness-losing index copy
-        (fresh mtime) misses the edit independently of elapsed time, and only a
-        stat-preserving copy keeps git's racy-stat re-check engaged. The only
-        changed configuration is the temporary repo's local config (restored on
+        stat with a content-identical `git add`; the value the add child
+        actually recorded is then captured from `git ls-files --debug` (the
+        child has fully exited, so its index write is visible) and is the
+        single source of truth: both the file and the real index are forced
+        onto that captured value with `os.utime(ns=...)` — never sleeps.
+
+        Windows can serve a just-backdated mtime to a later child process
+        (cross-process metadata visibility), so the add child may record the
+        pre-backdate value instead. The capture is therefore never compared to
+        the requested backdate; whatever the child recorded becomes the
+        collision base. Only if the captured value is less than a whole second
+        old — too fresh for the deterministic freshness margin below — does one
+        bounded re-backdate round run, and its capture is accepted
+        unconditionally, so setup can never fail on an mtime value. The
+        collision is thus at least a second old when any probe runs: a
+        freshness-losing index copy (fresh mtime) misses the edit
+        independently of elapsed time, and only a stat-preserving copy keeps
+        git's racy-stat re-check engaged. No git child runs between the final
+        `os.utime` pair and the command under test (the staged path-class
+        variant's re-add is itself the scenario), so no later process can
+        observe a stale worktree mtime inside that window. The only changed
+        configuration is the temporary repo's local config (restored on
         cleanup); fixture setup may alter index timestamps, production checks
         may not.
         """
@@ -248,14 +267,19 @@ class ReviewV2Test(V2CLITestCase):
         self.addCleanup(self._git, "config", "core.trustctime", "true")
         self.addCleanup(self._git, "config", "core.checkstat", "default")
         full = os.path.join(self.root, rel)
-        backdated = ((time.time_ns() - 2_000_000_000)
-                     // 1_000_000_000 * 1_000_000_000)
-        os.utime(full, ns=(backdated, backdated))
-        # Content-identical re-add: only the cached stat is re-recorded (at the
-        # backdated mtime), so the blob and the index tree stay unchanged.
-        self.assertEqual(self._git("add", rel).returncode, 0)
-        cached_ns = self._cached_mtime_ns(rel)
-        self.assertEqual(cached_ns, backdated)  # deterministic collision base
+        # Content-identical re-add: only the cached stat is re-recorded, so the
+        # blob and the index tree stay unchanged. Cross-process mtime
+        # visibility is not assumed: whichever mtime this child records
+        # (the requested backdate or a stale pre-backdate value) is what the
+        # capture below turns into the collision base.
+        for _ in range(2):
+            backdated = ((time.time_ns() - 2_000_000_000)
+                         // 1_000_000_000 * 1_000_000_000)
+            os.utime(full, ns=(backdated, backdated))
+            self.assertEqual(self._git("add", rel).returncode, 0)
+            cached_ns = self._cached_mtime_ns(rel)
+            if cached_ns <= time.time_ns() - 1_000_000_000:
+                break  # collision base is already a whole second in the past
         with open(full, "r", encoding="utf-8", newline="") as fh:
             original = fh.read()
         self.assertIn("return 1", original)
@@ -263,6 +287,9 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(len(dirty), len(original))  # byte-length unchanged
         with open(full, "w", encoding="utf-8", newline="") as fh:
             fh.write(dirty)
+        # The captured value — not the requested backdate — is forced onto both
+        # the file and the real index, so the entry's cached mtime equals the
+        # index file's own mtime (git's racy-stat trigger) in every run.
         os.utime(full, ns=(cached_ns, cached_ns))
         os.utime(os.path.join(self.root, ".git", "index"),
                  ns=(cached_ns, cached_ns))
