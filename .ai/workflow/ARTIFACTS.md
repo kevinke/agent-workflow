@@ -188,6 +188,13 @@ heading, with required fields: `artifact_type: review`, `format_version: 1`,
 `ticket_id`, `reviewed_commit`, `plan_sha256`, and `verdict`
 (`pass` | `changes_requested`).
 
+`reviewed_commit` must be a literal hexadecimal Git object ID: the
+repository's full object ID, or an unambiguous abbreviation of at least seven
+hex digits, resolving to a commit that is an ancestor of the current HEAD.
+HEAD, branch and tag names are rejected even when they resolve — a recorded
+review must never follow a moving ref — and a ref named like a hexadecimal
+prefix never takes precedence over the object carrying it.
+
 ### Required sections
 
 Required H2 sections, in order, after Metadata: `Acceptance results`,
@@ -198,22 +205,34 @@ substantive for a `changes_requested`. Extra nonreserved prose sections are
 allowed.
 
 Recording the verdict with `set-review <ticket-id> --verdict pass|changes_requested`
-binds it to the Review artifact's raw-byte SHA-256, the reviewed commit, and the
-registered Plan SHA-256 (see `STATE_SCHEMA.md`). A missing or placeholder
-artifact, a Metadata `verdict` that disagrees with the CLI, a `plan_sha256` that
-disagrees with the registered Plan, or any change to the reviewed code, tests,
-fixtures, or Plan since the reviewed commit rejects the command and leaves State
-unchanged. Only this Ticket's own `state.yaml`, `progress.md`, `handoff.md`, and
-`review.md` are exempt from the code-drift check. Structural validity is not
-proof that acceptance criteria passed.
+binds it to the Review artifact's raw-byte SHA-256, the full resolved commit ID
+(stored once in State, for both verdicts), and the registered Plan SHA-256 (see
+`STATE_SCHEMA.md`). A missing or placeholder artifact, a Metadata `verdict` that
+disagrees with the CLI, a `plan_sha256` that disagrees with the registered Plan,
+a `reviewed_commit` that is symbolic, ambiguous, a non-commit, or an unrelated
+history, or any change to the reviewed code, tests, fixtures, or Plan since the
+reviewed commit rejects the command and leaves State unchanged. Only this
+Ticket's own `state.yaml`, `progress.md`, `handoff.md`, and `review.md` are
+exempt from the code-drift check. Structural validity is not proof that
+acceptance criteria passed.
 
-A `pass` completes the ticket only while it is current: `review -> done` is
-rejected once the Review artifact, the registered Plan, or the reviewed code
-changes. A `changes_requested` is repaired append-only — the senior registers an
-appending rework Plan (`register-plan`) and `review -> implementation` clears the
-failed verdict to `pending`, preserving the completed prefix and routing to the
-first appended task. The recorded Review must be unchanged for that repair; a
-stale failed Review is re-recorded, not reused.
+Both recorded verdicts are re-assessed against their immutable bindings by
+`validate`, `resume`, and the mutation guards: a `pass` and a
+`changes_requested` each keep matching Review bytes, the same literal commit,
+the registered Plan, and unchanged reviewed code. A previously stored symbolic
+binding (for example `reviewed_commit: HEAD` or a branch name from an older
+State) is stale: it is reported and requires a new independent review — today's
+HEAD is never resolved as the old approval. A `pass` completes the ticket only
+while it is current: `review -> done` is rejected once the Review artifact, the
+registered Plan, or the reviewed code changes. A `changes_requested` is repaired
+append-only — the senior registers an appending rework Plan (`register-plan`)
+and `review -> implementation` clears the failed verdict to `pending`,
+preserving the completed prefix and routing to the first appended task. The
+recorded Review must be unchanged for that repair; a stale failed Review is
+re-recorded, not reused. The re-registration itself may replace the failed
+Review's Plan identity, and only that Plan drift is excused — never source-code
+drift or changed Review bytes — and only while the completed task contracts are
+unchanged. A recorded `pass` never inherits that exception.
 
 ## progress.md
 

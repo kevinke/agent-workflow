@@ -383,18 +383,25 @@ def _render_evidence_freshness(lines, root, work_dir, evidence_name):
 
 
 def _render_review_freshness(lines, root, ticket_id, data):
+    """Freshness of a recorded verdict, for `pass` and `changes_requested`.
+
+    The same shared binding check the validators and mutation guards run
+    (`review.binding_problems`): a `pass` must stay current to complete, and a
+    recorded `changes_requested` must keep its Review bytes, immutable commit,
+    registered Plan and code identity (a coherent appended-rework Plan is the
+    one permitted Plan drift). `pending` has no recorded binding to report.
+    """
     block = data.get("review")
-    if not isinstance(block, dict) or block.get("verdict") != "pass":
+    if not isinstance(block, dict):
         return
-    plan_ref = (data.get("source_artifacts") or {}).get("plan") or {}
-    try:
-        drift = review.code_drift(root, ticket_id, block.get("reviewed_commit"),
-                                  plan_ref.get("path"))
-    except contracts.ContractError as exc:
-        lines.append("  review             cannot assess freshness: %s" % exc)
+    verdict = block.get("verdict")
+    if verdict not in ("pass", "changes_requested"):
         return
-    for problem in drift:
-        lines.append("  review             stale: %s" % problem)
+    problems = review.binding_problems(
+        root, ticket_id, data,
+        allow_rework=(verdict == "changes_requested"))
+    for problem in problems:
+        lines.append("  review             %s" % problem)
 
 
 def _render_checks(lines, findings, blockers):

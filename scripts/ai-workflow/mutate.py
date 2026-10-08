@@ -228,12 +228,13 @@ def _require_review_entry(root, ticket_id, data):
 def _require_current_pass(root, ticket_id, data):
     """v2: `review -> done` needs a CURRENT passing review.
 
-    Requires `review.verdict == "pass"`, the bound Review-artifact hash still
-    matching `review.md`, the bound `plan_sha256` still matching the registered
-    Plan, and empty code drift since the reviewed commit. A missing verdict,
-    `changes_requested`, a stale binding, or a moved reviewed commit rejects the
-    transition and leaves State unchanged. Missing Git or a non-ancestor commit
-    is reported as a MutateError, not a traceback.
+    Requires `review.verdict == "pass"` and the recorded binding to still
+    agree with what it was bound to (the shared `review.binding_problems`
+    check): the Review artifact's raw bytes, the registered Plan, the literal
+    immutable reviewed commit, and clean code drift since it. A missing
+    verdict, `changes_requested`, a stale binding, or a moved reviewed commit
+    rejects the transition and leaves State unchanged; every failure is
+    reported as a MutateError, not a traceback.
     """
     block = data.get("review")
     if not isinstance(block, dict):
@@ -244,44 +245,24 @@ def _require_current_pass(root, ticket_id, data):
             "cannot complete: phase=done requires a current `pass` review "
             "(review.verdict=%r)" % (verdict,))
 
-    review_path = _artifact_path(root, ticket_id, data, "review", "review.md")
-    try:
-        current_sha = contracts.sha256_file(review_path)
-    except OSError as exc:
+    problems = review.binding_problems(root, ticket_id, data)
+    if problems:
         raise MutateError(
-            "cannot complete: the Review artifact is unreadable: %s" % exc)
-    if current_sha != block.get("artifact_sha256"):
-        raise MutateError(
-            "cannot complete: the Review artifact changed since the verdict was "
-            "recorded (stale binding: re-review and `set-review` again)")
-
-    sources = data.get("source_artifacts") or {}
-    plan_ref = sources.get("plan") or {}
-    if block.get("plan_sha256") != plan_ref.get("sha256"):
-        raise MutateError(
-            "cannot complete: the Review binds a different Plan than the "
-            "registered one (stale binding: re-review against the current Plan)")
-    try:
-        drift = review.code_drift(root, ticket_id, block.get("reviewed_commit"),
-                                  plan_ref.get("path"))
-    except contracts.ContractError as exc:
-        raise MutateError("cannot complete: %s" % exc)
-    if drift:
-        raise MutateError(
-            "cannot complete: the reviewed code changed since %s: %s"
-            % (block.get("reviewed_commit"), "; ".join(drift)))
+            "cannot complete: %s" % "; ".join(problems))
 
 
 def _require_repair(root, ticket_id, data):
     """v2: the append-only `review -> implementation` repair precondition.
 
-    Requires a recorded `changes_requested` verdict whose Review artifact is
-    unchanged (a stale failed Review is rejected), code identity unchanged since
-    the reviewed commit, and a registered Plan with tasks appended beyond the
-    completed prefix whose completed prefix is unchanged. The appended Plan is
-    the rework itself, so a plan-only change is expected and is not drift; only
-    the append/prefix consistency is checked. An unresolved escalation is
-    blocked earlier in `advance`.
+    Requires a recorded `changes_requested` verdict, a registered appending
+    rework Plan (tasks beyond the completed prefix), and the recorded binding
+    to still agree with what it was bound to (the shared
+    `review.binding_problems` check with the rework exception): the Review
+    artifact unchanged, the reviewed commit unchanged, and no source-code
+    drift since it. Only the rework Plan's own re-registration may differ from
+    the failed Review's Plan binding, and only while the completed task
+    contracts are unchanged. An unresolved escalation is blocked earlier in
+    `advance`.
     """
     block = data.get("review")
     verdict = block.get("verdict") if isinstance(block, dict) else None
@@ -289,33 +270,6 @@ def _require_repair(root, ticket_id, data):
         raise MutateError(
             "cannot repair: review -> implementation requires a recorded "
             "changes_requested verdict (review.verdict=%r)" % (verdict,))
-
-    review_path = _artifact_path(root, ticket_id, data, "review", "review.md")
-    try:
-        current_sha = contracts.sha256_file(review_path)
-    except OSError as exc:
-        raise MutateError(
-            "cannot repair: the Review artifact is unreadable: %s" % exc)
-    if current_sha != block.get("artifact_sha256"):
-        raise MutateError(
-            "cannot repair: the recorded Review artifact changed since the "
-            "verdict was recorded (stale failed Review: re-record it)")
-
-    sources = data.get("source_artifacts") or {}
-    plan_ref = sources.get("plan") or {}
-    plan_path = plan_ref.get("path")
-    try:
-        drift = review.code_drift(root, ticket_id, block.get("reviewed_commit"),
-                                  plan_path)
-    except contracts.ContractError as exc:
-        raise MutateError("cannot repair: %s" % exc)
-    plan_note = ("the registered Plan changed since the reviewed commit: %s"
-                 % (plan_path or "").replace("\\", "/"))
-    drift = [problem for problem in drift if problem != plan_note]
-    if drift:
-        raise MutateError(
-            "cannot repair: the reviewed code changed since %s: %s"
-            % (block.get("reviewed_commit"), "; ".join(drift)))
 
     impl = data.get("implementation") or {}
     current = impl.get("current_task", 0)
@@ -330,22 +284,9 @@ def _require_repair(root, ticket_id, data):
             "appending rework Plan first"
             % (impl.get("current_task"), impl.get("total_tasks")))
 
-    if current:
-        if not plan_path:
-            raise MutateError(
-                "cannot repair: no registered Plan to check the completed "
-                "prefix against")
-        try:
-            tasks = contracts.read_plan(os.path.join(root, plan_path), ticket_id)
-        except contracts.ContractError as exc:
-            raise MutateError(
-                "cannot repair: the registered Plan is invalid: %s" % exc)
-        recorded = [str(h) for h in (impl.get("task_hashes") or [])]
-        expected = [t["sha256"] for t in tasks[:current]]
-        if recorded[:current] != expected:
-            raise MutateError(
-                "cannot repair: the completed prefix task contracts changed; "
-                "completed tasks must stay unchanged")
+    problems = review.binding_problems(root, ticket_id, data, allow_rework=True)
+    if problems:
+        raise MutateError("cannot repair: %s" % "; ".join(problems))
 
 
 def advance(root, ticket_id, to):
@@ -635,9 +576,12 @@ def set_review(root, ticket_id, verdict):
     (current registered Plan, coherent counters, active Status), every registered
     task complete, a structurally valid Review artifact whose Metadata `verdict`
     equals the CLI value and whose `plan_sha256` equals the registered Plan hash,
-    and clean reviewed code (no drift since the reviewed commit). On success it
-    binds the verdict to the Review artifact's raw-byte hash, the reviewed commit
-    and the Plan hash in a single save. Every rejection leaves State unchanged.
+    and clean reviewed code (no drift since the reviewed commit). The Metadata
+    `reviewed_commit` must be a literal hexadecimal object ID (full or
+    unambiguous abbreviation) resolving to an ancestor of HEAD; HEAD, branch and
+    tag names are rejected. On success it binds the verdict to the Review
+    artifact's raw-byte hash, the full resolved commit ID and the Plan hash in a
+    single save. Every rejection leaves State unchanged.
     """
     data = _load(root, ticket_id)
     if workflow_v2.version(data) != 2:
@@ -693,14 +637,17 @@ def set_review(root, ticket_id, verdict):
 
     reviewed_commit = md.get("reviewed_commit")
     try:
-        drift = review.code_drift(root, ticket_id, reviewed_commit,
+        # The immutable commit the artifact actually reviewed: resolved once,
+        # stored in full, and the drift check runs against that same snapshot.
+        full_oid = review.resolve_commit(root, reviewed_commit)
+        drift = review.code_drift(root, ticket_id, full_oid,
                                   plan_ref.get("path"))
     except contracts.ContractError as exc:
         raise MutateError("cannot record a review: %s" % exc)
     if drift:
         raise MutateError(
             "cannot record a review: the reviewed code changed since %s: %s"
-            % (reviewed_commit, "; ".join(drift)))
+            % (full_oid, "; ".join(drift)))
 
     try:
         artifact_sha = contracts.sha256_file(artifact_path)
@@ -710,7 +657,7 @@ def set_review(root, ticket_id, verdict):
     data["review"] = {
         "verdict": verdict,
         "artifact_sha256": artifact_sha,
-        "reviewed_commit": reviewed_commit,
+        "reviewed_commit": full_oid,
         "plan_sha256": md.get("plan_sha256"),
     }
     artifacts = dict(data.get("artifacts") or {})
@@ -720,7 +667,7 @@ def set_review(root, ticket_id, verdict):
 
     _save(root, ticket_id, data)
     return "%s: review verdict=%s (commit %s)" % (
-        ticket_id, verdict, reviewed_commit)
+        ticket_id, verdict, full_oid)
 
 
 def set_gate(root, ticket_id, gate, round_no=None):

@@ -9,9 +9,11 @@ every rejection asserts the State bytes are unchanged.
 
 import hashlib
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -572,6 +574,181 @@ class ReviewV2Test(V2CLITestCase):
 
         proc = self.cli("validate", self.TICKET)
         self.assertNotIn("is missing but a verdict is recorded", proc.stdout)
+
+    # -- immutable commit identity and both-verdict binding (HARDEN-001) -----
+
+    def test_review_rejects_symbolic_refs(self):
+        """HEAD, branch and tag names are rejected even though they resolve.
+
+        A recorded review must never follow a moving ref: the verdict binds to
+        the immutable commit that was actually reviewed.
+        """
+        self._seed_review()
+        branch = "wip-fix"
+        self.assertEqual(self._git("branch", branch).returncode, 0)
+        self.assertEqual(self._git("tag", "rel-1").returncode, 0)
+        for ref in ("HEAD", branch, "rel-1"):
+            with self.subTest(ref=ref):
+                self.write_review("pass", reviewed_commit=ref)
+                before = self.state_bytes()
+                proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+                self.assertEqual(self.state_bytes(), before)
+
+    def test_review_short_oid_is_canonicalized(self):
+        """An abbreviated hex prefix binds as the full object ID, both verdicts."""
+        for verdict in ("pass", "changes_requested"):
+            # Zero the counters so the next full lifecycle re-drive starts
+            # fresh (register-plan preserves completed counts otherwise).
+            data = self.read_state()
+            data["implementation"] = {"current_task": 0, "total_tasks": 0,
+                                      "completed_tasks": [], "task_hashes": []}
+            self.write_state(data)
+            reviewed = self._seed_review(verdict=verdict)
+            self.write_review(verdict, reviewed_commit=reviewed[:7])
+            proc = self.cli("set-review", self.TICKET, "--verdict", verdict)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(self.read_state()["review"]["reviewed_commit"],
+                             reviewed)
+
+    def test_changed_failed_review_blocks_validate_resume_repair(self):
+        """Changed Review bytes block validate, resume AND the repair edge.
+
+        The Review bytes are part of a `changes_requested` binding too: the
+        appended-rework Plan stays registered, so the Review edit is the only
+        defect, and every consumer must reject it without writing State.
+        """
+        self._seed_review(verdict="changes_requested")
+        self._bind("changes_requested")
+        plan = self.write_plan(2)
+        proc = self.cli("register-plan", self.TICKET, "--path", plan,
+                        "--total", "2")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self._append_file(os.path.join(self.work, "review.md"),
+                          "\n<!-- edited after verdict -->\n")
+        before_repair = self.state_bytes()
+
+        validate_proc = self.cli("validate", self.TICKET)
+        resume_proc = self.cli("resume", self.TICKET)
+        repair_proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(validate_proc.returncode, 1,
+                         validate_proc.stdout + validate_proc.stderr)
+        self.assertEqual(resume_proc.returncode, 1,
+                         resume_proc.stdout + resume_proc.stderr)
+        self.assertEqual(repair_proc.returncode, 1,
+                         repair_proc.stdout + repair_proc.stderr)
+        self.assertEqual(self.state_bytes(), before_repair)
+
+    def test_validate_and_resume_accept_failed_review_with_append(self):
+        """A coherent failed-review append stays a valid intermediate state."""
+        self._seed_review(verdict="changes_requested")
+        self._bind("changes_requested")
+        plan = self.write_plan(2)
+        proc = self.cli("register-plan", self.TICKET, "--path", plan,
+                        "--total", "2")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("validate: OK", proc.stdout)
+        brief = self.cli("resume", self.TICKET)
+        self.assertEqual(brief.returncode, 0, brief.stdout + brief.stderr)
+
+    def test_failed_review_append_keeps_prefix(self):
+        """The append-only repair preserves the completed task contracts."""
+        self._seed_review(total=1, verdict="changes_requested")
+        self._bind("changes_requested")
+        completed = 1
+        prefix = self.read_state()["implementation"]["task_hashes"][:completed]
+
+        plan = self.write_plan(2)
+        proc = self.cli("register-plan", self.TICKET, "--path", plan,
+                        "--total", "2")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        repair_proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(repair_proc.returncode, 0,
+                         repair_proc.stdout + repair_proc.stderr)
+
+        data = self.read_state()
+        self.assertEqual(data["implementation"]["task_hashes"][:completed],
+                         prefix)
+        self.assertEqual(data["implementation"]["current_task"], completed)
+        self.assertEqual(data["review"]["verdict"], "pending")
+
+    def test_symbolic_stored_binding_is_stale(self):
+        """A legacy symbolic State binding is stale, never re-authenticated.
+
+        Seeded directly (the only fixture doing so): a historical State that
+        recorded `HEAD` must be reported by validate and resume without
+        normalizing the value or resolving today's HEAD as the old approval.
+        """
+        self._seed_review()
+        self._bind("pass")
+        data = self.read_state()
+        block = dict(data["review"])
+        block["reviewed_commit"] = "HEAD"
+        data["review"] = block
+        self.write_state(data)
+        before = self.state_bytes()
+
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("review.reviewed_commit", proc.stdout)
+        self.assertIn("stale", proc.stdout)
+        self.assertEqual(self.state_bytes(), before)  # reported, not rewritten
+
+        result = self.cli("resume", self.TICKET)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("review.reviewed_commit", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_hex_named_ref_does_not_override_object_identity(self):
+        """A branch named like a real object prefix never shadows the object.
+
+        `resolve_commit` consults the object database, so a ref whose name
+        happens to be the seven-character prefix of the reviewed commit
+        cannot redirect the resolution to its own (different) target.
+        """
+        self._seed_review()
+        original = self._git("rev-parse", "HEAD~1").stdout.strip()
+        prefix = original[:7]
+        self.assertEqual(self._git("branch", prefix, "HEAD").returncode, 0)
+        self.assertEqual(review.resolve_commit(self.root, prefix), original)
+
+    def test_resolve_commit_rejects_noncommit_and_unknown_hex(self):
+        """Blob/tree objects and unknown hex prefixes raise ContractError."""
+        self._seed_review()
+        blob = self._git("rev-parse", "HEAD:src/feature.py").stdout.strip()
+        tree = self._git("rev-parse", "HEAD^{tree}").stdout.strip()
+        for revision in (blob, tree, "0000000"):
+            with self.subTest(revision=revision):
+                with self.assertRaises(contracts.ContractError):
+                    review.resolve_commit(self.root, revision)
+
+    def test_resolve_commit_rejects_ambiguous_prefix(self):
+        """A prefix matching several objects is rejected, never guessed."""
+        prefix = "abc1234"
+        replies = {
+            ("--is-inside-work-tree",): (0, b"true\n"),
+            ("--show-object-format",): (0, b"sha1\n"),
+            ("--disambiguate=%s" % prefix,): (
+                0, ("abc1234" + "0" * 33 + "\n" + "abc1234" + "f" * 33 + "\n"
+                    ).encode("ascii")),
+        }
+
+        def fake_run_git(root, args, env=None):
+            rc, out = replies[tuple(args[1:])]
+            proc = subprocess.CompletedProcess(args, rc)
+            proc.stdout = out
+            proc.stderr = b""
+            return proc
+
+        with mock.patch.object(review, "_run_git", fake_run_git):
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review.resolve_commit("ignored", prefix)
+        self.assertIn("ambiguous", str(ctx.exception))
 
 
 if __name__ == "__main__":

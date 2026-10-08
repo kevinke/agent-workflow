@@ -81,6 +81,26 @@ class ResumeV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return head
 
+    def _seed_failed_review(self, total=1):
+        """Reach `review` with a bound `changes_requested` verdict."""
+        self._seed_implementation(total)
+        self.commit_code("src/feature.py", "def feature():\n    return 1\n")
+        for _ in range(total):
+            proc = self.cli("complete-task", self.TICKET,
+                            "--total", str(total))
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "review")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self._git("add", "-A").returncode, 0)
+        commit = self._git("commit", "-q", "-m", "fixture: reviewed tree")
+        self.assertEqual(commit.returncode, 0, commit.stderr)
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        self.write_review("changes_requested", reviewed_commit=head)
+        proc = self.cli("set-review", self.TICKET, "--verdict",
+                        "changes_requested")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return head
+
     def _write_file(self, rel, text):
         full = os.path.join(self.root, rel)
         os.makedirs(os.path.dirname(full), exist_ok=True)
@@ -342,6 +362,25 @@ class ResumeV2Test(V2CLITestCase):
         self.assertIn("Checks", result.stdout)
         self.assertIn("ERROR", result.stdout)
         self.assertIn("stale", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
+    # -- review freshness covers both verdicts (HARDEN-001) ------------------
+
+    def test_resume_reports_changed_failed_review(self):
+        """A changed failed Review blocks continuation like a stale pass.
+
+        `changes_requested` is a recorded binding too: editing `review.md`
+        after the verdict must surface for the receiving agent (exit 1), not
+        only a stale `pass`.
+        """
+        self._seed_failed_review()
+        with open(os.path.join(self.work, "review.md"), "a",
+                  encoding="utf-8", newline="") as fh:
+            fh.write("\n<!-- edited after verdict -->\n")
+
+        result = self.cli("resume", "T1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Review artifact changed", result.stdout)
         self.assertNotIn("Traceback", result.stderr)
 
 

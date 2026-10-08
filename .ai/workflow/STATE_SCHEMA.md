@@ -193,13 +193,19 @@ verdict on a `workflow_version: 2` Ticket. It is allowed only in `review`, with
 no unresolved escalation, a current registered Plan and coherent counters, every
 registered task complete, a structurally valid `review.md` whose Metadata
 `verdict` matches the CLI and whose `plan_sha256` matches the registered Plan,
-and no review-blocking code drift since the reviewed commit. On success it writes
-(additive, v2-only):
+and no review-blocking code drift since the reviewed commit. The Metadata
+`reviewed_commit` must be a literal hexadecimal Git object ID — the
+repository's full object ID, or an unambiguous abbreviation of at least seven
+hex digits — resolving to a commit that is an ancestor of HEAD. HEAD, branch
+and tag names are rejected even when they resolve, and a ref named like a
+hexadecimal prefix never takes precedence over the object with that prefix. On
+success it writes (additive, v2-only):
 
 - `review.verdict` — `pass` or `changes_requested` (`pending` is the scaffold
   default before a verdict is recorded).
 - `review.artifact_sha256` — SHA-256 of the Review artifact's raw bytes.
-- `review.reviewed_commit` — the reviewed commit named by the Review Metadata.
+- `review.reviewed_commit` — the full resolved literal commit ID, canonicalized
+  once at `set-review` time for both verdicts.
 - `review.plan_sha256` — the registered Plan's raw-byte SHA-256.
 - `artifacts.review` — the Review filename (default `review.md`).
 
@@ -207,19 +213,35 @@ Code drift is the union of committed, staged, unstaged, and untracked paths
 since the reviewed commit, read with Git subprocess argument lists and
 NUL-delimited output. Changing any path other than this Ticket's exact
 `state.yaml`, `progress.md`, `handoff.md`, and `review.md` (including the
-registered Plan) rejects the command. Missing Git, a Reviewed commit that does not resolve, or an unrelated history (not an ancestor of HEAD) also reject it.
+registered Plan) rejects the command. Missing Git, a Reviewed commit that does
+not resolve as a literal hexadecimal object ID, a non-commit or ambiguous
+match, or an unrelated history (not an ancestor of HEAD) also reject it.
 Every rejection leaves the State bytes unchanged; Version 1 Tickets keep their
 existing semantics.
+
+Both recorded verdicts stay under the same immutability contract after
+recording: `validate`, `resume`, and the mutation guards re-check a recorded
+`pass` and a recorded `changes_requested` against their Review artifact bytes,
+their literal immutable commit, the registered Plan, and the reviewed code. A
+previously stored symbolic `reviewed_commit` (for example `HEAD` or a branch
+name from an older State) is stale: it is reported as an ERROR and requires a
+new independent review — today's HEAD is never resolved as the old approval,
+and the State is never normalized in place.
 
 `review.verdict` is `pending` in the intermediate repair state: after a
 `changes_requested` and an appending `register-plan`, the `review -> implementation`
 advance clears the failed verdict to `pending` in one save while preserving
 `current_task`, `completed_tasks`, and the completed task-hash prefix, and routes
 `next_action` to the first appended task. That intermediate state is valid.
+A coherent `changes_requested` with its appending rework Plan already
+registered is also valid while still in `review`: only that Plan re-registration
+may differ from the failed Review's `plan_sha256` binding, and only while the
+completed task contracts are unchanged — never source-code drift or changed
+Review bytes. A recorded `pass` never inherits that exception.
 `review -> done` requires a current `pass` (verdict `pass`, the Review artifact
-hash and `plan_sha256` still matching, and no code drift since `reviewed_commit`);
-`validate` reports the same mismatch as an ERROR and a `done` phase without a
-`pass` is an ERROR. In `review` the v2 route is `reviewer`, not
+hash and `plan_sha256` still matching, and no code drift since the recorded
+commit); `validate` reports the same mismatch as an ERROR and a `done` phase
+without a `pass` is an ERROR. In `review` the v2 route is `reviewer`, not
 `checkpoint-handoff`.
 
 ## v2 upgrade and reconstruction
