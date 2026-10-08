@@ -348,6 +348,32 @@ class ResumeV2Test(V2CLITestCase):
         self.assertEqual(self.capture_files(), before)
         self.assertEqual(self._mtimes(), before_mtimes)
 
+    # -- late-phase bootstrap recovery names its senior resolver -------------
+
+    def test_late_bootstrap_resume_names_senior_resolver(self):
+        """A late-phase v2 start is an unresolved bootstrap recovery brief.
+
+        `start --phase implementation` enters `recovery.kind: bootstrap` with
+        the workflow-bootstrap senior route; resume prints the brief with the
+        unresolved-escalation blocker, names the resolver, and stays strictly
+        read-only (HARDEN-003 Task 2).
+        """
+        proc = self.cli("start", "T2", "--phase", "implementation")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        t2_state = os.path.join(self.root, ".ai", "work", "T2", "state.yaml")
+        with open(t2_state, "rb") as fh:
+            persisted = fh.read()
+
+        result = self.cli("resume", "T2")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Ticket", result.stdout)  # the brief is still printed
+        self.assertIn("workflow-bootstrap", result.stdout)
+        self.assertIn("unresolved escalation", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        # Still read-only.
+        with open(t2_state, "rb") as fh:
+            self.assertEqual(fh.read(), persisted)
+
     # -- stale audit binding (validate surfaces it, resume reports it) -------
 
     def test_stale_audit_binding_is_surfaced(self):

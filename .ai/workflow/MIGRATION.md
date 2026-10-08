@@ -18,7 +18,9 @@ phases that were never executed; never require re-walking full history.
 On a current (v2) install, `adopt` scaffolds the Ticket with
 `workflow_version: 2` and all six checkpoint booleans `false`; on an unupgraded
 v1 install it stays v1. Adoption itself never fabricates contracts for phases
-that were never executed.
+that were never executed. An adoption (or `start`) directly at
+`implementation`/`review` additionally enters explicit bootstrap recovery — see
+"Late-phase start/adopt (bootstrap recovery)" below.
 
 ## Procedure
 
@@ -88,6 +90,56 @@ are true. Only when `continuation_safe: true` may the ticket proceed to a cheap
 executor (`ticket-executor`). If any item is not confirmed, a senior resolves the
 uncertainty first; escalate via `state.yaml.escalation` if the gap cannot be
 closed in-repo.
+
+## Late-phase start/adopt (bootstrap recovery)
+
+On a current (v2) install, starting or adopting a Ticket **directly at**
+`implementation` or `review` — `start <id> --phase <phase>` /
+`adopt <id> --phase <phase>` — creates explicit bootstrap recovery instead of a
+half-ready active State. The scaffold:
+
+- keeps the requested phase (`phase` is never silently changed) and preserves
+  the `source_artifacts` references;
+- records `recovery.kind: bootstrap` (an additive marker; unknown keys are
+  never removed);
+- records an unresolved `machine` escalation with the previous Status
+  (`active`) and the interrupted ordinary continuation
+  (`escalation.previous_status` / `interrupted_action` / `interrupted_phase`);
+- locks the Status to `escalation_required` and routes `next_action` to the
+  `workflow-bootstrap` senior resolver.
+
+It fabricates no `upgrade` conversion facts: a freshly created v2 State never
+carries an `upgrade.from_version` key — only a real v1 conversion
+(`upgrade-ticket`) does.
+
+**Initialized files are not ready contracts.** The scaffolded `evidence.md` /
+`handoff.md` / `progress.md` are placeholders; there is no audit, registered
+Plan or `decision.md`. The Ticket is `escalation_required`: routine advance,
+task completion and a raw status overwrite are rejected, and `resume` names the
+`workflow-bootstrap` resolver with the unresolved escalation.
+
+The senior resolves it through the public commands, in any order that produces
+the retained phase's current contracts, then clears:
+
+1. Audit the Evidence and bind it (`set-gate` — permitted outside
+   `evidence_audit` while the recovery is active).
+2. Register the Plan (`register-plan` — permitted outside `planning` while the
+   recovery is active). For a `review`-phase bootstrap the reconstructed
+   completion history must be recorded before the clear; a pending Review is
+   clearable only with every registered task complete.
+3. Reconstruct `decision.md` for the retained phase.
+4. For an adopted repo, confirm all six `adoption_checkpoint` items
+   (`continuation_safe` last).
+5. Clear with a referenced resolution: `escalate --clear --resolution ...`.
+   The clear is atomic: it checks the proposed restored State against the
+   retained phase's contracts and saves once; a rejected clear changes no
+   State bytes. On success the Ticket resumes its retained phase — ordinary
+   execution at `implementation`, the pending review at `review` — and the
+   cleared recovery grants no further out-of-phase permission.
+
+Existing half-ready v2 Tickets (created before this contract, without the
+`recovery` marker) are not retro-fitted: they enter the same checked recovery
+through the ordinary `escalate` command.
 
 ## Explicit Ticket reconstruction (`ai-workflow upgrade-ticket`)
 

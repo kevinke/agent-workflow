@@ -369,5 +369,229 @@ class InstalledLifecycleV2Test(V2CLITestCase):
         self._assert_validate_ok("done")
 
 
+class RecoveryKindBootstrapTest(unittest.TestCase):
+    """Direct dict-level coverage of `recovery_kind`'s bootstrap branch.
+
+    `recovery.kind: bootstrap` alone grants nothing: the kind is recognized
+    only on a *coherent* unresolved v2 recovery (the escalation recorded and
+    the Status locked to `escalation_required`), and a foreign kind falls
+    through to the ordinary escalation reading (HARDEN-003 Task 1 predicate).
+    """
+
+    @staticmethod
+    def _bootstrap_state():
+        return {
+            "workflow_version": 2,
+            "status": "escalation_required",
+            "escalation": {"required": True, "scope": "machine",
+                           "reason": "late-phase bootstrap"},
+            "recovery": {"kind": "bootstrap"},
+        }
+
+    def test_bootstrap_marker_with_coherent_escalation_is_bootstrap(self):
+        self.assertEqual(workflow_v2.recovery_kind(self._bootstrap_state()),
+                         "bootstrap")
+
+    def test_divergent_facts_grant_no_bootstrap_recovery(self):
+        diverged = self._bootstrap_state()
+        diverged["status"] = "active"
+        self.assertIsNone(workflow_v2.recovery_kind(diverged))
+
+        unresolved = self._bootstrap_state()
+        unresolved["escalation"]["required"] = False
+        self.assertIsNone(workflow_v2.recovery_kind(unresolved))
+
+        v1 = self._bootstrap_state()
+        v1["workflow_version"] = 1
+        self.assertIsNone(workflow_v2.recovery_kind(v1))
+
+        # A foreign recovery kind is not a bootstrap: with the escalation
+        # coherent it reads as the ordinary escalation recovery instead.
+        foreign = self._bootstrap_state()
+        foreign["recovery"] = {"kind": "other"}
+        self.assertEqual(workflow_v2.recovery_kind(foreign), "escalation")
+
+
+class LateBootstrapRecoveryTest(V2CLITestCase):
+    """A v2 start/adopt directly at implementation/review is recoverable.
+
+    The scaffold enters an explicit bootstrap recovery (`recovery.kind:
+    bootstrap` + an unresolved machine escalation routed to the
+    workflow-bootstrap senior resolver): resume names the resolver, completion
+    is rejected, a premature clear is rejected, and only the public recovery
+    sequence (audit -> register-plan -> Decision -> adoption checkpoint -> a
+    referenced `escalate --clear`) reaches ordinary execution or pending
+    review. The requested phase is retained and no `upgrade` conversion facts
+    are invented for the freshly created v2 State (HARDEN-003 Task 2).
+    """
+
+    RESOLUTION = "reconstructed per evidence.md, decision.md and plan.md"
+
+    # -- per-ticket helpers (the fixture's own helpers are T1-bound) ----------
+
+    def _work(self, ticket):
+        return os.path.join(self.root, ".ai", "work", ticket)
+
+    def _state_of(self, ticket):
+        return state.load_file(
+            os.path.join(self._work(ticket), "state.yaml"))
+
+    def _bytes_of(self, ticket):
+        with open(os.path.join(self._work(ticket), "state.yaml"), "rb") as fh:
+            return fh.read()
+
+    def _write_for(self, ticket, name, text):
+        full = os.path.join(self._work(ticket), name)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        return full
+
+    def _late_ticket(self, command, phase):
+        ticket = "%s-%s" % (command, phase)
+        proc = self.cli(command, ticket, "--phase", phase,
+                        "--spec", "docs/spec.md",
+                        "--ticket", ".scratch/f/01.md",
+                        "--plan", "docs/plan.md")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return ticket
+
+    def test_late_bootstrap_recovers_via_public_commands(self):
+        for command in ("start", "adopt"):
+            for phase in ("implementation", "review"):
+                with self.subTest(command=command, phase=phase):
+                    self._bootstrap_recovery_case(command, phase)
+
+    def _bootstrap_recovery_case(self, command, phase):
+        ticket = self._late_ticket(command, phase)
+
+        # -- the scaffold is an explicit, unresolved bootstrap recovery ------
+        data = self._state_of(ticket)
+        self.assertEqual(data["workflow_version"], 2)
+        self.assertEqual(data["phase"], phase)  # requested phase unchanged
+        self.assertNotIn("upgrade", data)  # no invented conversion facts
+        self.assertNotIn("from_version", data.get("upgrade") or {})
+        self.assertEqual(data["recovery"], {"kind": "bootstrap"})
+        self.assertTrue(data["escalation"]["required"])
+        self.assertEqual(data["escalation"]["scope"], "machine")
+        self.assertEqual(data["escalation"]["previous_status"], "active")
+        self.assertEqual(data["escalation"]["interrupted_phase"], phase)
+        interrupted = data["escalation"]["interrupted_action"]
+        self.assertEqual(set(interrupted), {"role", "action", "task"})
+        self.assertEqual(interrupted["role"],
+                         "reviewer" if phase == "review" else "ticket-executor")
+        self.assertIsNone(interrupted["task"])
+        self.assertEqual(data["status"], "escalation_required")
+        self.assertEqual(data["next_action"]["role"], "workflow-bootstrap")
+        # Source references are preserved, never copied or dropped.
+        self.assertEqual(data["source_artifacts"]["spec"]["path"],
+                         "docs/spec.md")
+        self.assertEqual(data["source_artifacts"]["ticket"]["path"],
+                         ".scratch/f/01.md")
+        self.assertEqual(data["source_artifacts"]["plan"]["path"],
+                         "docs/plan.md")
+        # Task 1's predicate reads this exact shape as a bootstrap recovery.
+        self.assertEqual(workflow_v2.recovery_kind(data), "bootstrap")
+
+        # -- unresolved: resume names the resolver; completion rejects --------
+        before = self._bytes_of(ticket)
+        brief = self.cli("resume", ticket)
+        self.assertEqual(brief.returncode, 1, brief.stdout + brief.stderr)
+        self.assertIn("workflow-bootstrap", brief.stdout)
+        self.assertIn("unresolved escalation", brief.stdout)
+
+        done = self.cli("complete-task", ticket)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("escalation", done.stderr.lower())
+        self.assertEqual(self._bytes_of(ticket), before)
+
+        # -- the recovery cannot be cleared before the contracts exist --------
+        blocked = self.cli("escalate", ticket, "--clear", "--resolution",
+                           self.RESOLUTION)
+        self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
+        self.assertEqual(self._bytes_of(ticket), before)
+
+        # -- the public recovery sequence (senior, via public commands) -------
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        self._write_for(ticket, "evidence.md",
+                        valid_evidence(ticket, 1, head))
+        with open(os.path.join(self._work(ticket), "evidence.md"), "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+        self._write_for(ticket, "evidence-audit.md",
+                        valid_audit(ticket, "sufficient", 1, digest))
+        gate = self.cli("set-gate", ticket, "--gate", "sufficient",
+                        "--round", "1")
+        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
+
+        plan_name = "plan-%s.md" % ticket
+        with open(os.path.join(self.root, plan_name), "w", encoding="utf-8",
+                  newline="") as fh:
+            fh.write(valid_plan(ticket, 1))
+        register = self.cli("register-plan", ticket, "--path", plan_name,
+                            "--total", "1")
+        self.assertEqual(register.returncode, 0,
+                         register.stdout + register.stderr)
+
+        self._write_for(ticket, "decision.md", "# Decision - %s\n" % ticket)
+
+        if command == "adopt":
+            # The adoption checkpoint gates the clear: until a senior actually
+            # confirms all six items, the retained phase is not restored.
+            unconfirmed = self.cli("escalate", ticket, "--clear",
+                                   "--resolution", self.RESOLUTION)
+            self.assertEqual(unconfirmed.returncode, 1,
+                             unconfirmed.stdout + unconfirmed.stderr)
+            self.assertIn("adoption checkpoint", unconfirmed.stderr)
+            self.assertTrue(
+                self._state_of(ticket)["escalation"]["required"])
+
+            # The senior confirms all six items (the same State confirmation
+            # the dirty-adoption fixture models); the clear still checks it.
+            data = self._state_of(ticket)
+            data["adoption_checkpoint"] = {
+                name: True for name in workflow_v2.ADOPTION_CONFIRMATIONS}
+            state.save_file(
+                os.path.join(self._work(ticket), "state.yaml"), data)
+
+        if phase == "review":
+            # At a review-phase bootstrap the retained implementation is
+            # historically complete: the senior records the reconstructed
+            # completion history before the checked clear (the same
+            # reconciliation Task 1's pending-review fixture models).
+            data = self._state_of(ticket)
+            data["implementation"]["current_task"] = 1
+            data["implementation"]["completed_tasks"] = [1]
+            state.save_file(
+                os.path.join(self._work(ticket), "state.yaml"), data)
+
+        # -- the referenced clear restores the retained phase -----------------
+        clear = self.cli("escalate", ticket, "--clear", "--resolution",
+                         self.RESOLUTION)
+        self.assertEqual(clear.returncode, 0, clear.stdout + clear.stderr)
+        data = self._state_of(ticket)
+        self.assertFalse(data["escalation"]["required"])
+        self.assertEqual(data["phase"], phase)
+        self.assertEqual(data["status"], "active")
+        # The cleared recovery grants nothing further (the predicate
+        # re-derives from the live State).
+        self.assertIsNone(workflow_v2.recovery_kind(data))
+        self.assertEqual(data["recovery"], {"kind": "bootstrap"})
+
+        if phase == "implementation":
+            # Ordinary execution proceeds.
+            self.assertEqual(data["next_action"]["role"], "ticket-executor")
+            self.assertEqual(data["next_action"]["task"], 1)
+            done = self.cli("complete-task", ticket)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(
+                self._state_of(ticket)["implementation"]["current_task"], 1)
+        else:
+            # Pending review proceeds: the v2 reviewer route, verdict pending.
+            self.assertEqual(data["next_action"]["role"], "reviewer")
+            self.assertEqual(data["review"]["verdict"], "pending")
+            check = self.cli("validate", ticket)
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            self.assertIn("no ERROR findings", check.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

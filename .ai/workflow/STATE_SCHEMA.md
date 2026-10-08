@@ -72,7 +72,8 @@ No other phase transitions exist. The `review -> implementation` edge is v2-only
 | implementation | map {current_task, total_tasks, completed_tasks: [], [, task_hashes: []]} | task progress; on v2 task_hashes is the ordered canonical hash of each registered task |
 | review | map {verdict, artifact_sha256, reviewed_commit, plan_sha256} | additive v2 Review binding; verdict: pending / pass / changes_requested |
 | escalation | map {required, scope, reason[, previous_status, interrupted_action, interrupted_phase, resolution]} | scope: machine / human; the four bracketed fields are additive v2 escalation facts |
-| upgrade | map {from_version, previous_gate, requires_reconstruction} | additive v2 conversion facts written by `upgrade-ticket`; absent on v1 |
+| upgrade | map {from_version, previous_gate, requires_reconstruction} | additive v2 conversion facts written by `upgrade-ticket`; absent on v1 and on every freshly created v2 State |
+| recovery | map {kind} | additive v2 recovery marker; `kind: bootstrap` marks a late-phase start/adopt bootstrap (written by `start --phase` / `adopt --phase` at `implementation`/`review`); read together with the escalation block, and granted nothing once the escalation clears |
 | claim | map {harness, model, claimed_at} | soft claim, advisory |
 | next_action | map {role, action, task} | intended next step |
 | provenance | map {last_harness, last_model} | who wrote last |
@@ -303,6 +304,46 @@ permission. Registering the reconstructed Plan first binds the absent
 historical completed prefix (recording the task hashes while preserving the
 numeric history); every later registration must match those recorded
 contracts, even while the reconstruction is still active.
+
+## v2 late-phase bootstrap recovery
+
+Starting or adopting a Ticket directly at `implementation` or `review` on a
+`workflow_version: 2` install is a senior bootstrap act, not an ordinary entry
+point: the retained phase's current contracts (audited Evidence, registered
+Plan, Decision) do not exist yet. `start --phase` / `adopt --phase` therefore
+create the scaffold in an explicit bootstrap recovery and fabricate no
+readiness:
+
+- `recovery.kind: bootstrap` — an additive marker; the rest of the State keeps
+  its unknown keys, and no `upgrade` conversion facts are invented for the
+  freshly created v2 State.
+- `escalation.required: true`, `scope: machine`, with
+  `previous_status` (the Status the fresh scaffold would have had),
+  `interrupted_action` (the retained phase's ordinary route) and
+  `interrupted_phase` recorded like any first escalation, and
+  `resolution: null`.
+- `status` locked to `escalation_required`; `next_action.role` is
+  `workflow-bootstrap` (the bootstrap's senior resolver, like a recorded
+  reconstruction), and the requested `phase` is kept unchanged.
+
+The marker is read only on a coherent unresolved recovery (the predicate
+`recovery_kind`): a `bootstrap` marker with a cleared or divergent escalation
+grants nothing. While it is active, `set-gate` and `register-plan` are
+permitted outside their ordinary phases, while routine advance, task
+completion and a raw status overwrite stay rejected. The recovery ends only
+through the public sequence — audited Evidence and a bound gate, a registered
+Plan (for a `review`-phase bootstrap with the reconstructed completion
+history recorded), the retained phase's `decision.md`, a confirmed adoption
+checkpoint when the repo is adopted — and a referenced
+`escalate --clear --resolution`. The clear is the same atomic, checked clear
+as every v2 escalation: it judges the proposed restored State against the
+retained phase's contracts before the single save, restores the recorded
+previous Status, and recomputes the phase-appropriate `next_action`
+(`ticket-executor` at `implementation`, the v2 `reviewer` at `review`). The
+`recovery` marker is kept afterwards as history; with the escalation cleared
+it grants no permission. Existing half-ready v2 States without the marker are
+not retro-fitted — they enter this recovery through the ordinary `escalate`
+command.
 
 ## Migration blocks (adopted repos only)
 

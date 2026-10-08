@@ -54,6 +54,28 @@ ai-workflow start TICKET-002 --title "..." --spec docs/specs/spec.md --ticket .s
 
 `start` 从模板生成状态，`source_artifacts` 引用 Matt 的产物（不复制）。之后走 [quickstart.md](quickstart.md) 的完整阶段机。
 
+### 直接从实现/评审阶段开票 → 显式 bootstrap 恢复
+
+在 v2 安装上，`start --phase implementation|review` 或 `adopt --phase implementation|review`（资深角色确认工作确实已处于该阶段时）**不会**得到一个看似就绪的半成品状态，而是进入显式的 bootstrap 恢复：
+
+- 请求的 `phase` 保持不变；`source_artifacts` 引用原样保留；绝不伪造 `upgrade` 转换字段。
+- 状态文件写入 `recovery.kind: bootstrap`，并记录一条未解决的 `machine` 升级（含 `previous_status` 与被打断的常规下一步），`status` 锁定为 `escalation_required`，路由指向资深角色 `workflow-bootstrap`。
+- **初始化的文件 ≠ 就绪的契约**：脚手架里的 `evidence.md`/`handoff.md`/`progress.md` 只是占位，没有审计、没有注册 Plan、没有 `decision.md`。此期间 `advance`/`complete-task`/改状态一律被拒，`resume` 会点名 `workflow-bootstrap` 与未解决的升级。
+
+资深角色用公开命令补齐当前阶段契约后引用式清账：
+
+```bash
+# 1. 补证据并审计，绑定门槛（恢复期允许在实现/评审阶段执行 set-gate）
+ai-workflow set-gate TICKET --gate sufficient --round 1
+# 2. 注册 Plan（恢复期允许在 planning 之外注册；review 阶段需先补记已完成的实现历史）
+ai-workflow register-plan TICKET --path docs/plan.md --total 1
+# 3. 重建 decision.md；被采纳的仓库还需资深确认六项 adoption_checkpoint
+# 4. 带引用的清账（原子检查，拒绝时状态字节不变）
+ai-workflow escalate TICKET --clear --resolution "按 evidence.md、decision.md 与 plan.md 重建"
+```
+
+清账成功后票回到原阶段：`implementation` 恢复常规执行（`ticket-executor`），`review` 恢复待评审（`reviewer`，verdict 仍为 pending）。清账后的恢复标记只是历史，不再授予任何越阶段权限。**已有的**半成品 v2 状态（没有该标记）不做回填——用普通 `escalate` 进入同一套受检恢复。
+
 ## 与 Matt / Superpowers 的具体配合
 
 | kit 阶段 | kit 角色（CLI） | 可叠加的 Matt / Superpowers 技能 |
@@ -72,3 +94,4 @@ ai-workflow start TICKET-002 --title "..." --spec docs/specs/spec.md --ticket .s
 - **已有 v1 Ticket 怎么升到 v2？** 先用 `ai-workflow upgrade` 升级已安装协议（不改任何 Ticket），再用 `upgrade-ticket <ticket-id>` 显式转换单个 active v1 Ticket；随后由资深角色按 [.ai/workflow/MIGRATION.md](../.ai/workflow/MIGRATION.md) 重建当前阶段契约并 `escalate --clear --resolution`。转换保留阶段/引用/已完成计数，重置 gate/review，绝不伪造历史审计、Plan 或 review；历史已 `done` 的 Ticket 保持 v1。
 - **`adopt` 产出 v1 还是 v2？** 当前安装默认 `workflow_version: 2`，故 `adopt` 产出 v2 脚手架且六个 checkpoint 布尔全为 `false`；未升级的 v1 安装仍产出 v1。adoption 语义（历史标注、追溯最小证据、检查点门禁）两版一致。
 - **`adopt` 和 `start` 什么区别？** `adopt` = 已有仓库/半成品（迁移语义，带历史标注与检查点）；`start` = 全新工作（greenfield，从模板干净起票）。
+- **直接从实现/评审阶段开票为什么被锁住？** 这是设计而非故障：该阶段还没有证据、Plan 和 decision，脚手架不允许表现得"可执行"。`start/adopt --phase implementation|review` 会进入显式 bootstrap 恢复（`recovery.kind: bootstrap` + 未解决升级，路由 `workflow-bootstrap`），由资深角色按上方"公开恢复序列"补齐契约后 `escalate --clear --resolution` 清账；初始化的脚手架文件本身不是就绪契约。

@@ -10,7 +10,11 @@ Idempotent and non-destructive: never deletes and never overwrites an existing
 file (a second run on an already-adopted ticket is a no-op). It does not fabricate
 history: historical phases are scaffolded as `not_performed` and
 `adoption_checkpoint.continuation_safe` stays `false` until a senior confirms the
-six checkpoint items.
+six checkpoint items. On a v2 install, an adoption directly at
+`implementation`/`review` additionally enters explicit bootstrap recovery: the
+scaffold records an unresolved machine escalation routed to the
+workflow-bootstrap senior resolver, and only the public recovery sequence plus a
+referenced `escalate --clear` make it ready (MIGRATION.md, STATE_SCHEMA.md).
 """
 
 import os
@@ -19,6 +23,7 @@ import subprocess
 import init
 import state
 import validate
+import workflow_v2
 
 __all__ = ["adopt", "MIGRATION_REPORT_NAME"]
 
@@ -229,6 +234,38 @@ def _build_state(version, ticket_id, title, phase, base_commit, branch,
             "reviewed_commit": None,
             "plan_sha256": None,
         }
+        if ph in ("implementation", "review"):
+            # Late-phase v2 adoption enters explicit bootstrap recovery
+            # (HARDEN-003): the adopted-at phase's current contracts do not
+            # exist yet, so the scaffold must never present itself as
+            # executor-ready. Record the interrupted ordinary continuation
+            # and the previous Status, raise an unresolved machine escalation
+            # routed to the workflow-bootstrap senior resolver, and mark the
+            # bounded recovery; the source references and the unconfirmed
+            # adoption checkpoint are preserved untouched. Only the public
+            # recovery sequence plus a referenced
+            # `escalate --clear --resolution` leaves it; existing half-ready
+            # states keep entering Task 1 recovery through ordinary
+            # `escalate` instead.
+            interrupted = workflow_v2.next_action(data, ph)
+            data["escalation"] = {
+                "required": True,
+                "scope": "machine",
+                "reason": "late-phase adoption at %s (senior bootstrap "
+                          "recovery)" % ph,
+                "previous_status": data["status"],
+                "interrupted_action": interrupted,
+                "interrupted_phase": ph,
+                "resolution": None,
+            }
+            data["recovery"] = {"kind": "bootstrap"}
+            data["status"] = "escalation_required"
+            data["next_action"] = {
+                "role": "workflow-bootstrap",
+                "action": "senior: complete adoption then confirm adoption "
+                          "checkpoint per MIGRATION.md",
+                "task": None,
+            }
     return data
 
 
@@ -257,7 +294,9 @@ def adopt(root, ticket_id, phase=None, title=None,
     Creates `.ai/migration-report.md` and scaffolds `.ai/work/<ticket-id>/`
     (state.yaml with the migration / historical_phases / adoption_checkpoint
     blocks, plus evidence/handoff/progress). Returns created paths; a no-op if
-    the ticket is already adopted.
+    the ticket is already adopted. On a v2 install a
+    `--phase implementation`/`--phase review` adoption enters explicit
+    bootstrap recovery instead of a half-ready active State.
     """
     created = []
 

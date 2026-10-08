@@ -8,7 +8,11 @@ phase), and records `source_artifacts` pointers by reference — never a copy.
 Idempotent and non-destructive: never deletes and never overwrites an existing
 ticket (a second run on an already-started ticket is a no-op). `decision.md` is
 senior-only and is not faked here; `evidence-audit.md` comes when evidence is
-audited.
+audited. On a v2 install, a start directly at `implementation`/`review` enters
+explicit bootstrap recovery: the scaffold records an unresolved machine
+escalation routed to the workflow-bootstrap senior resolver, and only the public
+recovery sequence plus a referenced `escalate --clear` make it ready
+(MIGRATION.md, STATE_SCHEMA.md).
 """
 
 import os
@@ -18,10 +22,17 @@ import init
 import parser
 import state
 import validate
+import workflow_v2
 
 __all__ = ["start"]
 
 _WORK_DIR_REL = os.path.join(".ai", "work")
+
+# The v2 phases whose direct entry is a senior bootstrap act: the retained
+# phase's contracts (Evidence, Plan, Decision) do not exist yet, so the
+# scaffold must never present itself as executor-ready. Earlier phases keep
+# the ordinary entry-point scaffolds.
+_BOOTSTRAP_PHASES = ("implementation", "review")
 
 
 def _git(root, *args):
@@ -62,6 +73,39 @@ def _template_state(root, ticket_id, title, phase, base_commit, branch,
         # (senior reconstruction), never an executor's; it has no current
         # evidence/Plan contracts yet.
         data["next_action"]["action"] = "continue work from %s" % ph
+        if data.get("workflow_version") == 2 and ph in _BOOTSTRAP_PHASES:
+            # Late-phase v2 start enters explicit bootstrap recovery
+            # (HARDEN-003): the requested phase has none of its contracts yet,
+            # so the scaffold must never present itself as executor-ready.
+            # Record the interrupted ordinary continuation and the previous
+            # Status, raise an unresolved machine escalation routed to the
+            # workflow-bootstrap senior resolver, and mark the bounded
+            # recovery additively (the template's unknown keys survive). Only
+            # the public recovery sequence plus a referenced
+            # `escalate --clear --resolution` leaves it; existing half-ready
+            # states keep entering Task 1 recovery through ordinary
+            # `escalate` instead.
+            previous_status = data.get("status", "active")
+            interrupted = workflow_v2.next_action(data, ph)
+            esc = dict(data.get("escalation") or {})
+            esc.update({
+                "required": True,
+                "scope": "machine",
+                "reason": "late-phase start at %s (senior bootstrap recovery)"
+                          % ph,
+                "previous_status": previous_status,
+                "interrupted_action": interrupted,
+                "interrupted_phase": ph,
+                "resolution": None,
+            })
+            data["escalation"] = esc
+            data["recovery"] = {"kind": "bootstrap"}
+            data["status"] = "escalation_required"
+            data["next_action"] = {
+                "role": "workflow-bootstrap",
+                "action": "continue work from %s" % ph,
+                "task": None,
+            }
     return data
 
 
@@ -89,6 +133,8 @@ def start(root, ticket_id, title=None, phase=None,
 
     Creates `.ai/work/<ticket-id>/` (state.yaml + evidence/handoff/progress
     scaffolds). Returns created paths; a no-op if the ticket already exists.
+    On a v2 install a `--phase implementation`/`--phase review` start enters
+    explicit bootstrap recovery instead of a half-ready active State.
     """
     work_dir = os.path.join(root, _WORK_DIR_REL, ticket_id)
     state_path = os.path.join(work_dir, "state.yaml")
