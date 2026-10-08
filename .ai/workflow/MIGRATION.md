@@ -110,12 +110,18 @@ A converted Ticket is `escalation_required` and not yet valid: the retained
 phase's current contracts must be reconstructed before it can continue. The senior
 resolver supplies them through the public commands (`set-gate`, `register-plan`,
 and the required artifacts), then clears the reconstruction with
-`escalate --clear --resolution ...`. Clearing requires the current phase's
-contracts (a pending Review is acceptable unless entering `done`), a current
-sufficient audit when the phase is decisionward, and a confirmed adoption
-checkpoint when the repo is adopted. Registering the reconstructed Plan first
-records the completed task hashes while preserving the numeric history. See
-`STATE_SCHEMA.md` for the exact `upgrade` fields.
+`escalate --clear --resolution ...`. The unresolved reconstruction is a bounded
+recovery context: `set-gate` and `register-plan` are permitted outside their
+ordinary phases while it is active, and the allowance ends with the clear. The
+first registration of the reconstructed Plan binds the absent historical
+completed prefix (it records the completed task hashes while preserving the
+numeric history); every later registration must match those recorded contracts,
+even while the reconstruction is still active. The clear is atomic: it prepares
+the proposed cleared State and checks it against the retained phase's current
+contracts (a pending Review is acceptable only with every original task
+complete), a current sufficient audit when the phase is decisionward, and a
+confirmed adoption checkpoint when the repo is adopted — a rejected clear
+changes no State bytes. See `STATE_SCHEMA.md` for the exact `upgrade` fields.
 
 ## Rules that never bend
 

@@ -108,6 +108,8 @@ A `changes_requested` Review is repaired append-only: the senior registers an ap
 
 Escalations are recorded in `state.yaml` (`escalation` block) and handled per ESCALATION.md. Two scopes: `machine` (default — resolved by a senior role, never interrupts the user) and `human` (the only scope that interrupts the user).
 
+On a `workflow_version: 2` Ticket an unresolved escalation is a bounded recovery context: the senior resolver may re-audit Evidence (`set-gate`) and register a corrected Plan (`register-plan`) outside their ordinary phases, while routine execution and forward transitions stay blocked. The same recovery semantics serve a recorded v1→v2 reconstruction (`upgrade-ticket`, `upgrade.requires_reconstruction`). Recovery clear is atomic and checked: it prepares the proposed cleared State and judges it against the retained phase's current contracts before the single save, restores only an allowed previous Status (a restored paused/blocked Ticket is not made executable), preserves completed task identities, and fabricates no verdict — see ESCALATION.md and STATE_SCHEMA.md for the exact contracts.
+
 ## 9. Handoff discipline
 
 Before stopping work on a ticket:

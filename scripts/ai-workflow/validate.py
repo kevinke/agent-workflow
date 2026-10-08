@@ -11,12 +11,13 @@ Two severities (CONTEXT.md "Validate Severity"):
 Read-only: never writes state.yaml.
 """
 
+import copy
 import os
 import subprocess
 
 import contracts
 import parser
-import review
+import phase_checks
 import state
 import workflow_v2
 from status import list_tickets
@@ -25,10 +26,11 @@ __all__ = ["validate_ticket", "validate_repo", "reconstruction_problems",
            "PHASES", "STATUSES", "GATES", "SCOPES", "ROLES", "DECISIONWARDS"]
 
 
-PHASES = {
-    "requirement", "evidence_collection", "evidence_audit", "followup_evidence",
-    "technical_decision", "planning", "implementation", "review", "done",
-}
+# The phase/artifact maps live in `phase_checks` (shared with the recovery
+# checks); these names are retained for the mutator and other consumers.
+PHASES = phase_checks.PHASES
+DECISIONWARDS = phase_checks.DECISIONWARD_PHASES
+
 STATUSES = {"active", "blocked", "escalation_required", "paused", "abandoned"}
 GATES = {"sufficient", "insufficient"}
 SCOPES = {"machine", "human"}
@@ -37,86 +39,6 @@ ROLES = {
     "ticket-executor", "checkpoint-handoff", "workflow-bootstrap", "reviewer",
 }
 
-# Phases that require a sufficient evidence gate before they may be entered.
-# Public: shared with the `mutate` module so write-time checks use one rule.
-DECISIONWARDS = {"technical_decision", "planning", "implementation", "review", "done"}
-
-# Phases whose Evidence report must be a structurally valid concrete report
-# on v2 Tickets (requirement/evidence_collection reports may still be
-# pending scaffolds and are only WARNed about, per the common phase rules).
-_V2_EVIDENCE_STRUCTURAL_PHASES = {
-    "evidence_audit", "followup_evidence",
-    "technical_decision", "planning", "implementation", "review", "done",
-}
-_V2_AUDIT_STRUCTURAL_PHASES = {
-    "technical_decision", "planning", "implementation", "review", "done",
-}
-_V2_PENDING_PHASES = {"requirement", "evidence_collection"}
-
-# Phases where a v2 executor may run: the execution-readiness gate and its
-# problems (registered Plan, coherence, active Status, adoption checkpoint)
-# apply here, and the shared counter rule is reported through it.
-_V2_EXECUTION_PHASES = {"implementation", "review", "done"}
-
-
-def _validate_v2_artifacts(work_dir, ticket, data, filenames, phase, bad, warn):
-    """Structural artifact contracts for v2 Tickets; v1 semantics unchanged."""
-    evidence_block = data.get("evidence") or {}
-    gate = evidence_block.get("gate")
-    round_no = evidence_block.get("round")
-
-    ev_path = os.path.join(work_dir, filenames.get("evidence", "evidence.md"))
-    audit_path = os.path.join(
-        work_dir, filenames.get("evidence_audit", "evidence-audit.md"))
-
-    # A sufficient verdict binds it to the audited artifact bytes; if either
-    # changed the binding is stale -- the same blocker decisionward advances hit.
-    # An insufficient verdict is meant to be superseded by the follow-up round,
-    # so its (necessarily aging) binding is not reported here.
-    if gate == "sufficient":
-        recorded = (
-            ("evidence.md", ev_path, evidence_block.get("report_sha256")),
-            ("evidence-audit.md", audit_path, evidence_block.get("audit_sha256")),
-        )
-        for label, path, expected in recorded:
-            if expected and os.path.exists(path):
-                if contracts.sha256_file(path) != expected:
-                    bad("%s changed since the evidence gate was recorded (stale "
-                        "binding: re-audit and set-gate again)" % label)
-
-    if phase in _V2_PENDING_PHASES:
-        # A scaffold is not a completed report: surface shape problems as
-        # WARN so placeholders here are never structural failures.
-        if os.path.exists(ev_path):
-            try:
-                report = contracts.read_artifact(ev_path, "evidence")
-                problems = contracts.validate_evidence(report, ticket)
-            except contracts.ContractError as exc:
-                warn("evidence.md is not a structured report yet (%s)" % exc)
-            else:
-                for msg in problems:
-                    warn("evidence.md pending scaffold: %s" % msg)
-        return
-
-    if phase in _V2_EVIDENCE_STRUCTURAL_PHASES and os.path.exists(ev_path):
-        try:
-            report = contracts.read_artifact(ev_path, "evidence")
-            problems = contracts.validate_evidence(report, ticket)
-        except contracts.ContractError as exc:
-            bad("evidence.md violates the artifact grammar: %s" % exc)
-        else:
-            for msg in problems:
-                bad("evidence.md: %s" % msg)
-
-    if phase in _V2_AUDIT_STRUCTURAL_PHASES and os.path.exists(audit_path):
-        try:
-            report = contracts.read_artifact(audit_path, "evidence-audit")
-            problems = contracts.validate_audit(report, ticket, gate, round_no)
-        except contracts.ContractError as exc:
-            bad("evidence-audit.md violates the artifact grammar: %s" % exc)
-        else:
-            for msg in problems:
-                bad("evidence-audit.md: %s" % msg)
 
 def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
     """v2 Review binding agreement with command-time completion guards.
@@ -125,11 +47,9 @@ def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
     missing/malformed fields are reported as ERRORs rather than tracebacks.
     - phase `done` with a verdict other than `pass` is an ERROR;
     - a recorded verdict in `review`/`done` must carry its binding fields
-      (reported by the shared check like every other binding disagreement);
-    - a recorded `pass` OR `changes_requested` whose Review artifact, registered
-      Plan, literal immutable reviewed commit, or reviewed code no longer
-      matches is an ERROR (the same blocker `advance` reports, via the shared
-      `review.binding_problems` check).
+      and still agree with what it was bound to (the shared both-verdict
+      `phase_checks.recorded_review_problems` check, with the narrow
+      appended-rework exception for a recorded `changes_requested`).
     The intermediate states stay valid here: a `pending` verdict has no recorded
     binding, and a coherent `changes_requested` append (registered rework Plan,
     unchanged completed contracts) permits only that Plan drift.
@@ -145,12 +65,8 @@ def _validate_v2_review(root, work_dir, ticket, data, filenames, bad):
     if phase == "done" and verdict != "pass":
         bad("phase=done but review.verdict is %r (a current `pass` is required "
             "to complete)" % (verdict,))
-    if verdict in ("pass", "changes_requested") \
-            and phase in ("review", "done"):
-        for problem in review.binding_problems(
-                root, ticket, data,
-                allow_rework=(verdict == "changes_requested")):
-            bad(problem)
+    for problem in phase_checks.recorded_review_problems(root, ticket, data):
+        bad(problem)
 
 
 _HANDOFF_SECTIONS = [
@@ -337,7 +253,7 @@ def validate_ticket(root, ticket, findings):
     # current <= total, registered total == task-hash count) lives in
     # workflow_v2 so `validate` and `mutate` cannot drift. On a ready v2
     # execution phase it is reported through `readiness_problems` below.
-    execution_phase = ver == 2 and phase in _V2_EXECUTION_PHASES
+    execution_phase = ver == 2 and phase in phase_checks.EXECUTION_PHASES
     if "implementation" in data and not execution_phase:
         for msg in workflow_v2.counter_problems(data.get("implementation") or {}):
             bad(msg)
@@ -347,36 +263,21 @@ def validate_ticket(root, ticket, findings):
         bad("phase=done but next_action is still set")
 
     # --- missing artifacts per required phase --------------------------------
-    artifacts = data.get("artifacts") or {}
-    filenames = {
-        "evidence": artifacts.get("evidence", "evidence.md"),
-        "evidence_audit": artifacts.get("evidence_audit", "evidence-audit.md"),
-        "decision": artifacts.get("decision", "decision.md"),
-        "handoff": artifacts.get("handoff", "handoff.md"),
-        "review": artifacts.get("review", "review.md"),
-    }
-
-    def artifact_exists(key):
-        return os.path.exists(os.path.join(work_dir, filenames[key]))
-
-    # handoff is required whenever the ticket is in progress or done.
-    if phase in PHASES and not artifact_exists("handoff"):
-        bad("missing artifact handoff.md for phase=%s" % phase)
-    if phase in {"evidence_audit", "followup_evidence", "technical_decision",
-                 "planning", "implementation", "review", "done"} \
-            and not artifact_exists("evidence"):
-        bad("missing artifact evidence.md for phase=%s" % phase)
-    if phase in {"technical_decision", "planning", "implementation", "review", "done"} \
-            and not artifact_exists("evidence_audit"):
-        bad("missing artifact evidence-audit.md for phase=%s" % phase)
-    if phase in {"planning", "implementation", "review", "done"} \
-            and not artifact_exists("decision"):
-        bad("missing artifact decision.md for phase=%s" % phase)
+    filenames = phase_checks.artifact_names(data)
+    for key in phase_checks.required_artifacts(phase):
+        if not os.path.exists(os.path.join(work_dir, filenames[key])):
+            bad("missing artifact %s for phase=%s" % (filenames[key], phase))
 
     # --- v2 structured artifact contracts --------------------------------------
     if ver == 2:
-        _validate_v2_artifacts(work_dir, ticket, data, filenames, phase,
-                               bad, warn)
+        # Early scaffolds keep their WARN behavior: pending-phase shape
+        # problems come back as notices and never become ERRORs.
+        problems, notices = phase_checks.artifact_contract_problems(
+            work_dir, ticket, data, filenames, phase)
+        for msg in problems:
+            bad(msg)
+        for msg in notices:
+            warn(msg)
         _validate_v2_review(root, work_dir, ticket, data, filenames, bad)
 
     # --- v2 execution readiness ------------------------------------------------
@@ -407,84 +308,34 @@ def validate_ticket(root, ticket, findings):
 def reconstruction_problems(root, ticket, data):
     """Problems that block clearing a v1->v2 reconstruction; [] means clearable.
 
-    Read-only. The reconstruction flag's own blocker and the unresolved
-    escalation are provisionally cleared here, so this judges only whether the
-    *retained phase's current contracts* are genuinely satisfied:
-
-    - the phase's required artifacts are present on disk;
-    - a decisionward phase has a current sufficient gate, freshly bound to the
-      audited Evidence and its audit;
-    - the v2 structured artifact contracts hold (see `_validate_v2_artifacts`);
-    - an execution phase has a current registered Plan, coherent counters and a
-      confirmed adoption checkpoint.
-
-    The active-Status execution requirement is deliberately excluded: a
-    reconstructed paused/blocked Ticket is not silently made executable. Review
-    is not checked here — a pending Review is acceptable, and the current
-    `pass`/`done` rules apply only once a verdict is recorded or `done` is
-    entered (which a `done` v1 Ticket never is).
+    Compatibility wrapper: it prepares the proposed cleared State — the
+    unresolved escalation and the reconstruction flag provisionally cleared,
+    the recorded previous Status restored (falling back to `active` when it
+    is not a valid Status) — and delegates to the shared
+    `phase_checks.continuation_problems`. Read-only: nothing is written and
+    the caller's `data` is never mutated, so this judges only whether the
+    *retained phase's current contracts* are genuinely satisfied. The
+    active-Status execution requirement is excluded only for paused/blocked
+    recovery, so a reconstructed paused/blocked Ticket is not silently made
+    executable.
     """
-    work_dir = os.path.join(root, ".ai", "work", ticket)
-    phase = data.get("phase")
-    problems = []
-    if phase not in PHASES:
-        return ["retained phase %r is not a valid phase" % phase]
-
-    evidence = data.get("evidence") or {}
-    gate = evidence.get("gate")
-    artifacts = data.get("artifacts") or {}
-    filenames = {
-        "evidence": artifacts.get("evidence", "evidence.md"),
-        "evidence_audit": artifacts.get("evidence_audit", "evidence-audit.md"),
-        "decision": artifacts.get("decision", "decision.md"),
-        "handoff": artifacts.get("handoff", "handoff.md"),
-        "review": artifacts.get("review", "review.md"),
-    }
-
-    def missing(key):
-        return not os.path.exists(os.path.join(work_dir, filenames[key]))
-
-    if missing("handoff"):
-        problems.append("missing artifact %s for phase=%s"
-                        % (filenames["handoff"], phase))
-    if phase in {"evidence_audit", "followup_evidence", "technical_decision",
-                 "planning", "implementation", "review", "done"} \
-            and missing("evidence"):
-        problems.append("missing artifact %s for phase=%s"
-                        % (filenames["evidence"], phase))
-    if phase in {"technical_decision", "planning", "implementation", "review",
-                 "done"} and missing("evidence_audit"):
-        problems.append("missing artifact %s for phase=%s"
-                        % (filenames["evidence_audit"], phase))
-    if phase in {"planning", "implementation", "review", "done"} \
-            and missing("decision"):
-        problems.append("missing artifact %s for phase=%s"
-                        % (filenames["decision"], phase))
-
-    if phase in DECISIONWARDS and gate != "sufficient":
-        problems.append("phase=%s requires a current sufficient evidence gate "
-                        "(evidence.gate=%r)" % (phase, gate))
-
-    _validate_v2_artifacts(work_dir, ticket, data, filenames, phase,
-                           problems.append, lambda _msg: None)
-    # The registered-Plan / counter / adoption contracts apply only to the
-    # execution phases (as in `validate_ticket`); an earlier retained phase has
-    # no Plan to register yet. The active-Status requirement is excluded so a
-    # reconstructed paused/blocked Ticket stays reconstructed, not executable.
-    if phase in _V2_EXECUTION_PHASES:
-        problems.extend(workflow_v2.readiness_problems(
-            root, ticket, data, require_active=False))
-        if phase == "review":
-            impl = data.get("implementation") or {}
-            if workflow_v2.executable_task(impl) is not None:
-                problems.append(
-                    "phase=review requires every registered task complete "
-                    "(current_task=%r of total_tasks=%r)"
-                    % (impl.get("current_task"), impl.get("total_tasks")))
-    elif "implementation" in data:
-        problems.extend(
-            workflow_v2.counter_problems(data.get("implementation") or {}))
-    return problems
+    proposed = copy.deepcopy(data)
+    esc = dict(proposed.get("escalation") or {})
+    previous = esc.get("previous_status")
+    if previous == "escalation_required" or previous not in STATUSES:
+        previous = "active"
+    esc["required"] = False
+    proposed["escalation"] = esc
+    proposed["status"] = previous
+    upgrade_block = proposed.get("upgrade")
+    if isinstance(upgrade_block, dict) \
+            and upgrade_block.get("requires_reconstruction"):
+        cleared_upgrade = dict(upgrade_block)
+        cleared_upgrade["requires_reconstruction"] = False
+        proposed["upgrade"] = cleared_upgrade
+    require_active = previous not in ("paused", "blocked")
+    return phase_checks.continuation_problems(
+        root, ticket, proposed, require_active=require_active)
 
 
 def validate_repo(root):

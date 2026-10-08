@@ -13,7 +13,8 @@ import contracts
 
 __all__ = ["version", "problems", "check_transition", "next_action",
            "readiness_problems", "counter_problems", "executable_task",
-           "is_nonneg_int", "escalated_next_action", "ADOPTION_CONFIRMATIONS",
+           "is_nonneg_int", "escalated_next_action", "recovery_kind",
+           "ADOPTION_CONFIRMATIONS",
            "TRANSITIONS", "V2_TRANSITIONS", "NEXT_ACTIONS", "ESCALATION_RESOLVERS",
            "SUPPORTED_VERSIONS", "RECONSTRUCTION_ROLE", "RECONSTRUCTION_ACTION"]
 
@@ -191,6 +192,39 @@ def problems(root, data):
         out.append("upgrade.requires_reconstruction must be a boolean")
 
     return out
+
+
+def recovery_kind(data):
+    """The bounded recovery context of a v2 Ticket, or None.
+
+    Returns "upgrade" (a converted v1 Ticket still requiring reconstruction,
+    `upgrade.requires_reconstruction`), "bootstrap" (a late-phase v2
+    bootstrap, `recovery.kind: bootstrap`), or "escalation" (an ordinary
+    unresolved escalation) for a *coherent unresolved* v2 recovery: the
+    escalation is recorded and the Status is locked to `escalation_required`.
+    Anything else — a v1 Ticket, no escalation, or a divergent Status — is
+    None, so a stale or hand-corrupted flag grants no out-of-phase
+    permission. Pure and read-only: while a kind is active the senior
+    resolver may re-audit Evidence and register a corrected Plan, while
+    routine execution stays blocked; the permission ends with the recovery
+    (the mutating commands re-derive it from the live State every time).
+    """
+    try:
+        if version(data) != 2:
+            return None
+    except contracts.ContractError:
+        return None
+    esc = data.get("escalation") or {}
+    if esc.get("required") is not True \
+            or data.get("status") != "escalation_required":
+        return None
+    upgrade_block = data.get("upgrade") or {}
+    if upgrade_block.get("requires_reconstruction") is True:
+        return "upgrade"
+    recovery = data.get("recovery")
+    if isinstance(recovery, dict) and recovery.get("kind") == "bootstrap":
+        return "bootstrap"
+    return "escalation"
 
 
 def check_transition(root, data, to):

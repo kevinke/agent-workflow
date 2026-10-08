@@ -270,6 +270,40 @@ class PlanV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertEqual(self.state_bytes(), before)
 
+    # -- recovery registration (HARDEN-003) ----------------------------------
+
+    def test_recovery_registration_preserves_completed_prefix(self):
+        """A recovery re-registration keeps the completed prefix; a rewrite rejects."""
+        self._seed_implementation(2)
+        proc = self.cli("complete-task", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.cli("escalate", self.TICKET, "--scope", "machine",
+                                  "--reason", "unresolved dependency").returncode,
+                         0)
+
+        # The senior may register a corrected Plan while escalated; the
+        # completed task 1 contract survives the re-registration untouched.
+        appended = valid_plan(self.TICKET, 3)
+        rel3 = self._write_plan_text(appended, name="appended.md")
+        proc = self.cli("register-plan", self.TICKET, "--path", rel3,
+                        "--total", "3")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        data = self.read_state()
+        self.assertEqual(data["implementation"]["current_task"], 1)
+        self.assertEqual(data["implementation"]["completed_tasks"], [1])
+        self.assertEqual(len(data["implementation"]["task_hashes"]), 3)
+
+        # Rewriting the completed contract is rejected, State bytes unchanged.
+        rewritten = valid_plan(self.TICKET, 3).replace(
+            "Carry out bounded step 1 for the fixture.",
+            "REDESIGNED: do something else entirely.")
+        self._write_plan_text(rewritten, name="appended.md")
+        before = self.state_bytes()
+        proc = self.cli("register-plan", self.TICKET, "--path", rel3,
+                        "--total", "3")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
     # -- execution readiness: explicit next task ----------------------------
 
     def test_initial_next_task_is_one(self):

@@ -7,11 +7,13 @@ and saves through the kit's own parser — rejecting illegal transitions and gat
 violations at write time instead of relying on a later `validate` pass.
 """
 
+import copy
 import datetime
 import os
 import re
 
 import contracts
+import phase_checks
 import review
 import state
 import validate
@@ -107,11 +109,17 @@ def _artifact_path(root, ticket_id, data, key, default):
 
 
 def _set_gate_allowed(data, phase):
-    """set-gate is an evidence_audit act, or a recorded senior reconstruction."""
+    """set-gate is an evidence_audit act, or a senior act in a recovery context.
+
+    While a coherent unresolved v2 recovery is active (an ordinary escalation,
+    a recorded reconstruction, or a late-phase bootstrap — see
+    `workflow_v2.recovery_kind`) the senior resolver may re-audit the Evidence
+    outside `evidence_audit`. The allowance is re-derived from the live State
+    on every call, so a cleared recovery grants nothing further.
+    """
     if phase == "evidence_audit":
         return True
-    upgrade = data.get("upgrade") or {}
-    return bool(upgrade.get("requires_reconstruction"))
+    return workflow_v2.recovery_kind(data) is not None
 
 
 def _require_fresh_binding(root, ticket_id, data):
@@ -142,8 +150,8 @@ def _bind_v2_gate(root, ticket_id, data, gate, round_no):
     phase = data.get("phase")
     if not _set_gate_allowed(data, phase):
         raise MutateError(
-            "set-gate is only allowed in evidence_audit (or a recorded senior "
-            "escalation resolution); current phase=%r" % phase)
+            "set-gate is only allowed in evidence_audit (or while a senior "
+            "recovery context is active); current phase=%r" % phase)
 
     ev_path = _artifact_path(root, ticket_id, data, "evidence", "evidence.md")
     audit_path = _artifact_path(root, ticket_id, data, "evidence_audit",
@@ -456,9 +464,16 @@ def complete_task(root, ticket_id, total=None):
 
 
 def _register_mode(data):
-    """Why register-plan is allowed here (or None): the spec's three contexts."""
-    if (data.get("upgrade") or {}).get("requires_reconstruction"):
-        return "reconstruction"
+    """Why register-plan is allowed here (or None): the spec's contexts.
+
+    A coherent unresolved v2 recovery (ordinary escalation, recorded
+    reconstruction, or late-phase bootstrap — `workflow_v2.recovery_kind`)
+    lets the senior register a corrected Plan outside the ordinary phases;
+    planning and the appending changes_requested review keep their ordinary
+    allowances.
+    """
+    if workflow_v2.recovery_kind(data) is not None:
+        return "recovery"
     phase = data.get("phase")
     if phase == "planning":
         return "planning"
@@ -475,9 +490,9 @@ def register_plan(root, ticket_id, path, total):
     checks the declared task count, and records the reference, the Plan's byte
     hash and the ordered canonical task hashes without counting any task
     complete. Re-registration preserves the completed-task prefix and counter
-    history and is allowed only in planning, a recorded senior reconstruction, or
-    a strictly-appending changes_requested review. Every rejection leaves State
-    unchanged.
+    history and is allowed only in planning, while a senior recovery context is
+    active, or in a strictly-appending changes_requested review. Every
+    rejection leaves State unchanged.
     """
     data = _load(root, ticket_id)
     if workflow_v2.version(data) != 2:
@@ -516,9 +531,9 @@ def register_plan(root, ticket_id, path, total):
     mode = _register_mode(data)
     if mode is None:
         raise MutateError(
-            "register-plan is allowed only in planning, a recorded senior "
-            "escalation resolution, or changes_requested review append; "
-            "current phase=%r" % data.get("phase"))
+            "register-plan is allowed only in planning, while a senior "
+            "recovery context is active, or in changes_requested review "
+            "append; current phase=%r" % data.get("phase"))
 
     impl = dict(data.get("implementation") or {})
     current = impl.get("current_task", 0) or 0
@@ -533,10 +548,15 @@ def register_plan(root, ticket_id, path, total):
         raise MutateError(
             "the new Plan has %d tasks but %d are already complete; a new total "
             "cannot be less than the completed count" % (len(tasks), current))
-    if mode != "reconstruction":
-        # A recorded senior reconstruction first *records* the completed task
-        # hashes from the reconstructed Plan (there were none on v1), so the
-        # completed-prefix identity checks do not apply to that one conversion.
+
+    # The completed prefix is immutable once bound. An absent historical
+    # prefix (a reconstructed v1 Ticket whose completed tasks never recorded
+    # hashes) is bound by this first registration; every later registration —
+    # including another one while the recovery is still active — must match
+    # the recorded contracts exactly, so a stale flag never becomes a
+    # completed-contract rewrite permission.
+    binds_history = mode == "recovery" and not old_hashes
+    if not binds_history:
         if current and len(old_hashes) < current:
             raise MutateError(
                 "implementation.task_hashes does not cover the %d completed tasks; "
@@ -714,10 +734,15 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False,
     block only). On a v2 Ticket escalation is atomic: it records the interrupted
     continuation, sets `status=escalation_required` and routes `next_action` to
     the phase's senior resolver, while routine advances/completion and a raw
-    Status overwrite are rejected. Clearing requires a documented `--resolution`
-    (with supporting references, and the user's answer for a human scope) and
-    restores the previous Status and a recomputed phase-appropriate action.
-    Every rejection leaves State unchanged.
+    Status overwrite are rejected. While it is unresolved the senior resolver
+    may re-audit Evidence and register a corrected Plan (`recovery_kind`).
+    Clearing requires a documented `--resolution`
+    (with supporting references, and the user's answer for a human scope),
+    prepares the proposed cleared State (flags provisionally cleared, previous
+    Status restored, phase action recomputed), checks it against the retained
+    phase's current contracts with the shared `phase_checks` rule set, and —
+    only on success — saves that one proposed State. Every rejection leaves
+    State bytes unchanged.
     """
     data = _load(root, ticket_id)
 
@@ -755,21 +780,6 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False,
                 "a human escalation must record the user's answer: mention the "
                 "user and the answer in --resolution")
 
-        # A converted v1 Ticket may only be cleared once the retained phase's
-        # current contracts are genuinely satisfied. The check excludes only the
-        # reconstruction flag's own blocker (it is being cleared here), never the
-        # artifact/counter/Plan/gate/adoption errors; it is computed before any
-        # mutation so a rejection leaves State bytes unchanged.
-        upgrade_block = data.get("upgrade") or {}
-        reconstructing = bool(upgrade_block.get("requires_reconstruction"))
-        if reconstructing:
-            problems = validate.reconstruction_problems(root, ticket_id, data)
-            if problems:
-                raise MutateError(
-                    "cannot clear the reconstruction: the retained phase's "
-                    "current contracts are not yet satisfied: %s"
-                    % "; ".join(problems))
-
         previous = esc.get("previous_status")
         if previous == "escalation_required":
             raise MutateError(
@@ -778,20 +788,47 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False,
         if previous not in validate.STATUSES:
             previous = "active"
 
-        esc["required"] = False
+        # The clear is atomic: prepare the proposed cleared State (a deep copy
+        # of the loaded State, so every unknown field survives), clear the
+        # recovery/escalation flags provisionally, restore the allowed
+        # previous Status and compute its phase action — then judge that
+        # proposed State with the shared retained-phase checks before anything
+        # is saved. A rejected clear leaves the State bytes unchanged, the
+        # cleared flags leave no continuing out-of-phase write permission, and
+        # the resolution/interrupted continuation history is preserved.
+        proposed = copy.deepcopy(data)
+        proposed_esc = dict(proposed.get("escalation") or {})
+        proposed_esc["required"] = False
         if current_scope in validate.SCOPES:
-            esc["scope"] = current_scope
-        esc["reason"] = None
-        esc["resolution"] = text
-        data["escalation"] = esc
-        data["status"] = previous
-        data["next_action"] = workflow_v2.next_action(data, data.get("phase"))
-        if reconstructing:
-            # Clear the reconstruction flag in the same save: the retained phase
-            # was just checked against its current contracts above.
+            proposed_esc["scope"] = current_scope
+        proposed_esc["reason"] = None
+        proposed_esc["resolution"] = text
+        proposed["escalation"] = proposed_esc
+        proposed["status"] = previous
+        try:
+            proposed["next_action"] = workflow_v2.next_action(
+                proposed, proposed.get("phase"))
+        except contracts.ContractError:
+            pass  # an invalid retained phase is reported by the checks below
+        upgrade_block = proposed.get("upgrade")
+        if isinstance(upgrade_block, dict) \
+                and upgrade_block.get("requires_reconstruction"):
             cleared_upgrade = dict(upgrade_block)
             cleared_upgrade["requires_reconstruction"] = False
-            data["upgrade"] = cleared_upgrade
+            proposed["upgrade"] = cleared_upgrade
+
+        # Active-status enforcement is excluded only for paused/blocked
+        # recovery: a restored paused/blocked Ticket stays reconstructed, not
+        # silently executable.
+        require_active = previous not in ("paused", "blocked")
+        problems = phase_checks.continuation_problems(
+            root, ticket_id, proposed, require_active=require_active)
+        if problems:
+            raise MutateError(
+                "cannot clear the escalation: the retained phase's current "
+                "contracts are not yet satisfied: %s" % "; ".join(problems))
+
+        data = proposed
         _save(root, ticket_id, data)
         return "%s: escalation cleared (status=%s)" % (ticket_id, previous)
 

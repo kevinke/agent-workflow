@@ -362,6 +362,37 @@ class UpgradeTicketV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertEqual(self.state_bytes(), before)
 
+    def test_cleared_reconstruction_grants_no_out_of_phase_writes(self):
+        """After the clear, the stale recovery flags grant no further writes."""
+        original = self._half_completed("implementation")
+        self.assertEqual(self._upgrade_ticket().returncode, 0)
+
+        # The reconstruction context permits the senior's out-of-phase writes.
+        self.write_evidence(round_no=1)
+        self.write_audit(gate="sufficient", round_no=1)
+        self.assertEqual(self.cli("set-gate", self.TICKET, "--gate", "sufficient",
+                                  "--round", "1").returncode, 0)
+        self.write_decision()
+        rel = self.write_plan(2)
+        self.assertEqual(self.cli("register-plan", self.TICKET, "--path", rel,
+                                  "--total", "2").returncode, 0)
+        self.assertEqual(self._clear().returncode, 0)
+
+        # Unknown extension fields survive the atomic clear untouched.
+        self.assertEqual(self.read_state()["unknown_map"],
+                         original["unknown_map"])
+
+        # Reconstruction is over: the cleared flag no longer permits
+        # out-of-phase set-gate or register-plan, and State bytes stay put.
+        before = self.state_bytes()
+        proc = self.cli("set-gate", self.TICKET, "--gate", "insufficient")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+        proc = self.cli("register-plan", self.TICKET, "--path", rel,
+                        "--total", "2")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.state_bytes(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

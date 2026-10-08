@@ -122,8 +122,11 @@ the audited bytes. The command validates the concrete reports and only then
 writes `evidence.round`, `evidence.gate`, `evidence.report_sha256` (SHA-256 of
 `evidence.md`) and `evidence.audit_sha256` (SHA-256 of `evidence-audit.md`):
 
-- It is allowed only in `evidence_audit`, or while a senior reconstruction is
-  recorded (`upgrade.requires_reconstruction`); otherwise it is rejected.
+- It is allowed only in `evidence_audit`, or while a bounded senior recovery
+  context is active on a v2 Ticket: an ordinary unresolved escalation, a
+  recorded v1→v2 reconstruction (`upgrade.requires_reconstruction`), or a
+  late-phase bootstrap. The allowance is re-derived from the live State on
+  every command and ends when the recovery clears; otherwise it is rejected.
 - The Evidence must be a structurally valid report whose Metadata `round` is a
   positive integer, and the CLI/`--round` value must name that same round.
 - The Audit must be structurally valid and its Metadata `gate`, `round` and
@@ -156,10 +159,15 @@ It does **not** count any task complete: `current_task` stays the completed
 count and `completed_tasks` is preserved. Re-registration keeps the completed
 prefix and counter history and refuses a rewritten completed contract, a new
 total below the completed count, or a non-appending changes_requested review.
-Registration is allowed only in `planning`, a recorded senior reconstruction
-(`upgrade.requires_reconstruction`), or an appending `changes_requested` review.
-A v1 Ticket, or any other phase, is rejected. Every rejection leaves the State
-bytes unchanged with an actionable error.
+The completed prefix binds once: when a recovered Ticket has completed tasks
+but no recorded `task_hashes` (a reconstructed v1 history), the first recovery
+registration records them, and every later registration must match the recorded
+contracts — even while the recovery is still active. Registration is allowed
+only in `planning`, while a bounded senior recovery context is active (an
+ordinary unresolved escalation, a recorded reconstruction, or a late-phase
+bootstrap), or in an appending `changes_requested` review. A v1 Ticket, or any
+other phase, is rejected. Every rejection leaves the State bytes unchanged
+with an actionable error.
 
 ## v2 escalation fields
 
@@ -180,11 +188,23 @@ These are recorded on the first escalation only: repeating an escalation updates
 `interrupted_phase`. While `escalation.required` is true the Status is locked to
 `escalation_required` and `next_action.role` is the phase's senior resolver;
 `advance`, `complete-task`, and a `set-status` away from `escalation_required`
-are rejected without changing State bytes. `escalate --clear` requires a
-documented `--resolution`, restores `previous_status`, and recomputes the
-phase-appropriate `next_action`. `validate` reports escalation/Status/route
-divergence (and malformed additive fields) as ERROR Findings. `required`, `scope`,
-and `reason` keep their v1 meanings; the four fields above are written only on v2.
+are rejected without changing State bytes. The unresolved escalation is a
+bounded recovery context: the senior resolver may re-audit Evidence
+(`set-gate`) and register a corrected Plan (`register-plan`) outside their
+ordinary phases while it is active. `escalate --clear` requires a documented
+`--resolution`, then prepares the proposed cleared State (flags provisionally
+cleared, the recorded `previous_status` restored, the phase-appropriate
+`next_action` recomputed) and checks it against the retained phase's current
+contracts — required artifacts, gate, Plan, counters, adoption checkpoint, and
+any recorded Review verdict's bindings — before the single save. A pending
+Review is clearable only with every original task complete; a valid recorded
+`changes_requested` with its appending rework Plan clears into the normal
+repair path. A rejected clear changes no State bytes; a restored
+paused/blocked Status is not silently made executable; and the cleared flags
+grant no continuing out-of-phase write permission. `validate` reports
+escalation/Status/route divergence (and malformed additive fields) as ERROR
+Findings. `required`, `scope`, and `reason` keep their v1 meanings; the four
+fields above are written only on v2.
 
 ## v2 Review binding
 
@@ -272,13 +292,17 @@ unsatisfied by design: `set-gate` and `register-plan` are permitted for the
 senior resolver, `validate` reports the reconstruction as an ERROR blocker, and
 the escalation resolver is `workflow-bootstrap`. The resolver supplies the
 current phase's artifacts through the public commands and clears the flag with
-`escalate --clear --resolution ...`. Clearing requires the current phase's
-contracts (a pending Review is acceptable unless entering `done`), a current
-sufficient audit when the phase is decisionward, and a confirmed adoption
-checkpoint when the repo is adopted; it clears the flag, restores the interrupted
-Status, and recomputes the phase-appropriate `next_action`. Registering the
-reconstructed Plan first records the task hashes while preserving the numeric
-history.
+`escalate --clear --resolution ...`. Clearing is atomic: it prepares the
+proposed cleared State and checks it against the retained phase's current
+contracts (a pending Review is acceptable only with every original task
+complete), a current sufficient audit when the phase is decisionward, and a
+confirmed adoption checkpoint when the repo is adopted; it then clears the
+flag, restores the interrupted Status, and recomputes the phase-appropriate
+`next_action` in one save — leaving no continuing out-of-phase write
+permission. Registering the reconstructed Plan first binds the absent
+historical completed prefix (recording the task hashes while preserving the
+numeric history); every later registration must match those recorded
+contracts, even while the reconstruction is still active.
 
 ## Migration blocks (adopted repos only)
 
