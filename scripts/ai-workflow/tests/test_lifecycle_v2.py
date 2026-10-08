@@ -492,6 +492,26 @@ class LateBootstrapRecoveryTest(V2CLITestCase):
         # Task 1's predicate reads this exact shape as a bootstrap recovery.
         self.assertEqual(workflow_v2.recovery_kind(data), "bootstrap")
 
+        # During the recovery window validate still reports the missing
+        # retained-phase contracts (the scaffold is never executor-ready),
+        # but the coherent workflow-bootstrap route is not route corruption.
+        check = self.cli("validate", ticket)
+        self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
+        self.assertIn("ERRORS PRESENT", check.stdout)
+        self.assertNotIn("route corruption", check.stdout)
+        # The carve-out is not a bypass: a tampered executor route on the
+        # bootstrap State is still reported as corruption.
+        data["next_action"]["role"] = "ticket-executor"
+        state.save_file(
+            os.path.join(self._work(ticket), "state.yaml"), data)
+        tampered = self.cli("validate", ticket)
+        self.assertEqual(tampered.returncode, 1,
+                         tampered.stdout + tampered.stderr)
+        self.assertIn("route corruption", tampered.stdout)
+        data["next_action"]["role"] = "workflow-bootstrap"
+        state.save_file(
+            os.path.join(self._work(ticket), "state.yaml"), data)
+
         # -- unresolved: resume names the resolver; completion rejects --------
         before = self._bytes_of(ticket)
         brief = self.cli("resume", ticket)

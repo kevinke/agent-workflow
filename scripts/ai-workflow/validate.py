@@ -114,7 +114,13 @@ def _validate_escalation(data, bad):
 
     if required:
         reconstructing = (data.get("upgrade") or {}).get("requires_reconstruction")
-        if reconstructing:
+        # A late-phase v2 start/adopt scaffold (HARDEN-003) carries the same
+        # reconstruction-style carve-out: its recovery marker routes the
+        # unresolved escalation to the workflow-bootstrap senior resolver, so
+        # the coherent bootstrap route is not route corruption.
+        bootstrapping = isinstance(data.get("recovery"), dict) \
+            and data["recovery"].get("kind") == "bootstrap"
+        if reconstructing or bootstrapping:
             expected = workflow_v2.RECONSTRUCTION_ROLE
         else:
             expected = workflow_v2.ESCALATION_RESOLVERS.get(phase)
