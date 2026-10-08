@@ -115,12 +115,14 @@ def _validate_escalation(data, bad):
     if required:
         reconstructing = (data.get("upgrade") or {}).get("requires_reconstruction")
         # A late-phase v2 start/adopt scaffold (HARDEN-003) carries the same
-        # reconstruction-style carve-out: its recovery marker routes the
-        # unresolved escalation to the workflow-bootstrap senior resolver, so
-        # the coherent bootstrap route is not route corruption.
-        bootstrapping = isinstance(data.get("recovery"), dict) \
-            and data["recovery"].get("kind") == "bootstrap"
-        if reconstructing or bootstrapping:
+        # reconstruction-style carve-out while its bounded recovery window is
+        # actually open: the coherence predicate (`recovery_kind`) reads the
+        # marker only on an unresolved escalation whose Status is still
+        # locked, and the checked clear resolves the marker — so the window
+        # self-extinguishes and a later ordinary escalation expects its
+        # phase's own resolver again (a stale workflow-bootstrap route is
+        # route corruption).
+        if reconstructing or workflow_v2.recovery_kind(data) == "bootstrap":
             expected = workflow_v2.RECONSTRUCTION_ROLE
         else:
             expected = workflow_v2.ESCALATION_RESOLVERS.get(phase)

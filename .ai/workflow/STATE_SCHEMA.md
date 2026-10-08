@@ -73,7 +73,7 @@ No other phase transitions exist. The `review -> implementation` edge is v2-only
 | review | map {verdict, artifact_sha256, reviewed_commit, plan_sha256} | additive v2 Review binding; verdict: pending / pass / changes_requested |
 | escalation | map {required, scope, reason[, previous_status, interrupted_action, interrupted_phase, resolution]} | scope: machine / human; the four bracketed fields are additive v2 escalation facts |
 | upgrade | map {from_version, previous_gate, requires_reconstruction} | additive v2 conversion facts written by `upgrade-ticket`; absent on v1 and on every freshly created v2 State |
-| recovery | map {kind} | additive v2 recovery marker; `kind: bootstrap` marks a late-phase start/adopt bootstrap (written by `start --phase` / `adopt --phase` at `implementation`/`review`); read together with the escalation block, and granted nothing once the escalation clears |
+| recovery | map {kind} | additive v2 recovery marker; `kind: bootstrap` marks a late-phase start/adopt bootstrap (written by `start --phase` / `adopt --phase` at `implementation`/`review`); read only while the bounded recovery window is open — the checked clear resolves it (`kind: null`, unknown keys preserved) |
 | claim | map {harness, model, claimed_at} | soft claim, advisory |
 | next_action | map {role, action, task} | intended next step |
 | provenance | map {last_harness, last_model} | who wrote last |
@@ -340,8 +340,11 @@ as every v2 escalation: it judges the proposed restored State against the
 retained phase's contracts before the single save, restores the recorded
 previous Status, and recomputes the phase-appropriate `next_action`
 (`ticket-executor` at `implementation`, the v2 `reviewer` at `review`). The
-`recovery` marker is kept afterwards as history; with the escalation cleared
-it grants no permission. Existing half-ready v2 States without the marker are
+clear resolves the marker (`recovery.kind: null`; the map and its unknown
+keys are preserved), so with the escalation cleared it grants no permission
+and a later ordinary escalation expects the phase's own senior resolver
+again — a stale `workflow-bootstrap` route is reported as route corruption.
+Existing half-ready v2 States without the marker are
 not retro-fitted — they enter this recovery through the ordinary `escalate`
 command.
 

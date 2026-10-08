@@ -816,6 +816,16 @@ def escalate(root, ticket_id, scope=None, reason=None, clear=False,
             cleared_upgrade = dict(upgrade_block)
             cleared_upgrade["requires_reconstruction"] = False
             proposed["upgrade"] = cleared_upgrade
+        # The late-phase bootstrap marker is self-extinguishing like the
+        # reconstruction flag: the clear resolves it (keeping the map and its
+        # unknown keys), so a later ordinary escalation expects the phase's
+        # own senior resolver again instead of the bootstrap route.
+        recovery_block = proposed.get("recovery")
+        if isinstance(recovery_block, dict) \
+                and recovery_block.get("kind") == "bootstrap":
+            resolved_recovery = dict(recovery_block)
+            resolved_recovery["kind"] = None
+            proposed["recovery"] = resolved_recovery
 
         # Active-status enforcement is excluded only for paused/blocked
         # recovery: a restored paused/blocked Ticket stays reconstructed, not

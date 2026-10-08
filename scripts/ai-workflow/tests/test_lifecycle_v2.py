@@ -592,9 +592,10 @@ class LateBootstrapRecoveryTest(V2CLITestCase):
         self.assertEqual(data["phase"], phase)
         self.assertEqual(data["status"], "active")
         # The cleared recovery grants nothing further (the predicate
-        # re-derives from the live State).
+        # re-derives from the live State), and the clear resolves the
+        # self-extinguishing bootstrap marker (unknown keys would survive).
         self.assertIsNone(workflow_v2.recovery_kind(data))
-        self.assertEqual(data["recovery"], {"kind": "bootstrap"})
+        self.assertIsNone(data["recovery"]["kind"])
 
         if phase == "implementation":
             # Ordinary execution proceeds.
@@ -611,6 +612,26 @@ class LateBootstrapRecoveryTest(V2CLITestCase):
             check = self.cli("validate", ticket)
             self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
             self.assertIn("no ERROR findings", check.stdout)
+
+        # The marker is self-extinguishing: after the clear, an ordinary
+        # escalation expects the phase's own senior resolver again. Validate
+        # reports no route corruption for that contract-correct State (it
+        # still reports the execution-phase status blocker), and a stale
+        # workflow-bootstrap route is corruption once more.
+        esc = self.cli("escalate", ticket, "--scope", "machine",
+                       "--reason", "ordinary follow-up block")
+        self.assertEqual(esc.returncode, 0, esc.stdout + esc.stderr)
+        data = self._state_of(ticket)
+        self.assertIsNone(data["recovery"]["kind"])
+        self.assertEqual(data["next_action"]["role"], "technical-decision")
+        check = self.cli("validate", ticket)
+        self.assertNotIn("route corruption", check.stdout)
+        data["next_action"]["role"] = "workflow-bootstrap"
+        state.save_file(
+            os.path.join(self._work(ticket), "state.yaml"), data)
+        stale = self.cli("validate", ticket)
+        self.assertEqual(stale.returncode, 1, stale.stdout + stale.stderr)
+        self.assertIn("route corruption", stale.stdout)
 
 
 if __name__ == "__main__":

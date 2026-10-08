@@ -74,7 +74,7 @@ ai-workflow register-plan TICKET --path docs/plan.md --total 1
 ai-workflow escalate TICKET --clear --resolution "按 evidence.md、decision.md 与 plan.md 重建"
 ```
 
-清账成功后票回到原阶段：`implementation` 恢复常规执行（`ticket-executor`），`review` 恢复待评审（`reviewer`，verdict 仍为 pending）。清账后的恢复标记只是历史，不再授予任何越阶段权限。**已有的**半成品 v2 状态（没有该标记）不做回填——用普通 `escalate` 进入同一套受检恢复。
+清账成功后票回到原阶段：`implementation` 恢复常规执行（`ticket-executor`），`review` 恢复待评审（`reviewer`，verdict 仍为 pending）。清账会把恢复标记解析为已解决（`kind: null`），不再授予任何越阶段权限；此后的普通 `escalate` 按阶段自身的资深路由校验，残留的 `workflow-bootstrap` 路由会被报为路由损坏。**已有的**半成品 v2 状态（没有该标记）不做回填——用普通 `escalate` 进入同一套受检恢复。
 
 ## 与 Matt / Superpowers 的具体配合
 
