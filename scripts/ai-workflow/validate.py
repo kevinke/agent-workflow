@@ -19,10 +19,12 @@ import contracts
 import parser
 import phase_checks
 import state
+import transport
 import workflow_v2
 from status import list_tickets
 
 __all__ = ["validate_ticket", "validate_repo", "reconstruction_problems",
+           "bound_artifact_paths",
            "PHASES", "STATUSES", "GATES", "SCOPES", "ROLES", "DECISIONWARDS"]
 
 
@@ -153,6 +155,44 @@ def _validate_escalation(data, bad):
         resolution = esc.get("resolution")
         if resolution is not None and not isinstance(resolution, str):
             bad("escalation.resolution must be a string or null")
+
+
+def bound_artifact_paths(root, work_dir, data):
+    """Repository-relative paths of bound artifacts + the registered Plan.
+
+    The paths a raw-byte SHA-256 binding currently names (HARDEN-006): the
+    sufficient-gate Evidence/audit bytes, a recorded Review artifact, and the
+    registered Plan reference. Shared by `validate_ticket` and the resume
+    brief so both surfaces assess exactly the same paths. Missing files are
+    skipped — a missing bound artifact is already reported elsewhere.
+    """
+    names = phase_checks.artifact_names(data)
+    evidence = data.get("evidence") or {}
+    review = data.get("review")
+    if not isinstance(review, dict):
+        review = {}
+
+    fulls = []
+    if isinstance(evidence.get("report_sha256"), str) \
+            and isinstance(names.get("evidence"), str):
+        fulls.append(os.path.join(work_dir, names["evidence"]))
+    if isinstance(evidence.get("audit_sha256"), str) \
+            and isinstance(names.get("evidence_audit"), str):
+        fulls.append(os.path.join(work_dir, names["evidence_audit"]))
+    if review.get("artifact_sha256") and isinstance(names.get("review"), str):
+        fulls.append(os.path.join(work_dir, names["review"]))
+    plan = (data.get("source_artifacts") or {}).get("plan") or {}
+    if isinstance(plan, dict) and isinstance(plan.get("path"), str) \
+            and plan.get("path"):
+        fulls.append(os.path.join(root, plan["path"]))
+
+    paths = []
+    for full in fulls:
+        if os.path.isfile(full):
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            if rel not in paths:
+                paths.append(rel)
+    return paths
 
 
 def _git_dirty(root):
@@ -287,6 +327,16 @@ def validate_ticket(root, ticket, findings):
         for msg in notices:
             warn(msg)
         _validate_v2_review(root, work_dir, ticket, data, filenames, bad)
+
+    # --- v2 raw transport notices (HARDEN-006) ---------------------------------
+    # Bound artifact bytes must survive checkouts: an effective `text`
+    # attribute other than -text can rewrite them on a clone/checkout and
+    # invalidate every SHA-256 binding. WARN only — never a new execution
+    # gate; pinning a path with `-text` stays the user's explicit decision.
+    if ver == 2:
+        for msg in transport.attribute_problems(
+                root, bound_artifact_paths(root, work_dir, data)):
+            warn(msg)
 
     # --- v2 execution readiness ------------------------------------------------
     # In an execution phase a v2 Ticket must be genuinely ready: a current

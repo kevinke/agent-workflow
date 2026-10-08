@@ -41,6 +41,22 @@ class InitTest(unittest.TestCase):
         self.assertEqual(_count_marker(agents, init.BEGIN_MARKER), 1)
         self.assertEqual(_count_marker(agents, init.END_MARKER), 1)
 
+    def test_installs_work_attributes_only_if_absent(self):
+        # HARDEN-006: raw work-artifact bytes must survive checkouts, so init
+        # installs the single-purpose protection file; a user's existing
+        # attribute file is never overwritten.
+        init.init(self.target)
+        attrs = os.path.join(self.target, ".ai", "work", ".gitattributes")
+        with open(attrs, "rb") as fh:
+            self.assertEqual(fh.read(), b"** -text\n")
+        custom = b"*.md text=auto\n*.bin -text\n"
+        with open(attrs, "wb") as fh:
+            fh.write(custom)
+        created = init.init(self.target)
+        self.assertNotIn(attrs, created)
+        with open(attrs, "rb") as fh:
+            self.assertEqual(fh.read(), custom)
+
     def test_installs_v2_default_template(self):
         # The shipped default is workflow_version 2 (SCOUT-007 Task 2) while the
         # schema stays 1: pending review/bindings, an empty task-hash list, and

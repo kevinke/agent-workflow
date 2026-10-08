@@ -86,6 +86,28 @@ def _copy_tree(src, dst, seen):
             seen.append(dest_path)
 
 
+def _install_work_attributes(target):
+    """Install `.ai/work/.gitattributes` from the template, only if absent.
+
+    Raw work-artifact bytes must survive clones/checkouts (HARDEN-006): the
+    single `** -text` rule disables end-of-line conversion for everything
+    under `.ai/work/`. A user's existing attribute file is never overwritten,
+    and nothing outside that one file is ever created or modified.
+    """
+    dest = os.path.join(target, ".ai", "work", ".gitattributes")
+    if os.path.exists(dest):
+        return None  # idempotent: never overwrite existing user attributes
+    src = os.path.join(target, ".ai", "workflow", "templates",
+                       "work.gitattributes")
+    if not os.path.isfile(src):
+        src = os.path.join(_protocol_source(), "templates", "work.gitattributes")
+    if not os.path.isfile(src):
+        return None
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copy2(src, dest)
+    return dest
+
+
 def _read_or_create_agents(path):
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
@@ -131,6 +153,12 @@ def init(target, agents_name="AGENTS.md"):
     dst_workflow = os.path.join(target, ".ai", "workflow")
     os.makedirs(dst_workflow, exist_ok=True)
     _copy_tree(_protocol_source(), dst_workflow, created)
+
+    # 1b. Raw-byte work protection (HARDEN-006): install .ai/work/.gitattributes
+    # only when absent; a user's existing attribute file is never touched.
+    work_attributes = _install_work_attributes(target)
+    if work_attributes:
+        created.append(work_attributes)
 
     # 2. Skills directory scaffold.
     skills_dir = os.path.join(target, ".agents", "skills")

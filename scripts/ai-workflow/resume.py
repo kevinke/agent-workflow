@@ -9,7 +9,10 @@ Strictly read-only: this module never writes `updated_at`, never claims the
 ticket, and never mutates a file. Every Git observation uses
 `--no-optional-locks`, so `status` does not refresh its index. Version 1 Tickets
 get explicit notices for the newer contracts instead of invented gates or a
-migration claim.
+migration claim. Bound artifacts and the registered Plan also carry raw
+transport notices (HARDEN-006): an effective `text` attribute other than
+`-text` can rewrite bound bytes on a clone/checkout — the notice is visible
+only, never a new execution gate.
 """
 
 import os
@@ -20,6 +23,7 @@ import contracts
 import review
 import state
 import status
+import transport
 import validate
 import workflow_v2
 
@@ -329,6 +333,7 @@ def _render_artifacts(lines, root, work_dir, ticket_id, data):
     _render_plan(lines, root, data)
     _render_evidence_freshness(lines, root, work_dir, evidence_name)
     _render_review_freshness(lines, root, ticket_id, data)
+    _render_transport_notices(lines, root, work_dir, data)
 
 
 def _render_plan(lines, root, data):
@@ -402,6 +407,23 @@ def _render_review_freshness(lines, root, ticket_id, data):
         allow_rework=(verdict == "changes_requested"))
     for problem in problems:
         lines.append("  review             %s" % problem)
+
+
+def _render_transport_notices(lines, root, work_dir, data):
+    """Raw-transport notices for bound artifacts and the registered Plan.
+
+    The same shared path set `validate_ticket` warns about (its WARN findings
+    also reach the Checks section): an effective `text` attribute other than
+    `-text` can rewrite bound bytes on a clone/checkout and invalidate every
+    SHA-256 binding. Contextual and read-only — never a blocker; pinning a
+    path with `-text` stays the user's explicit decision.
+    """
+    ver, _ = _version(data)
+    if ver != 2:
+        return
+    for problem in transport.attribute_problems(
+            root, validate.bound_artifact_paths(root, work_dir, data)):
+        lines.append("  %-18s %s" % ("transport", problem))
 
 
 def _render_checks(lines, findings, blockers):

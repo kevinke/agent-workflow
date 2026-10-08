@@ -329,3 +329,38 @@ binding stale; `validate` and decisionward advances report the same blocker unti
 the auditor re-audits and re-runs `set-gate`. Version 1 Tickets keep the loose,
 unbound gate.
 
+## Raw-byte transport (Git attributes)
+
+Every SHA-256 binding above hashes the artifact's **raw bytes** — line endings
+included; bytes are never normalized before hashing. Git text normalization
+(`core.autocrlf`, the `text` attribute) can rewrite those bytes on a fresh
+clone or checkout and invalidate every binding, so transport is protected and
+made visible:
+
+- `ai-workflow init` installs a single-purpose `.ai/work/.gitattributes`
+  containing exactly `** -text` — but only when absent. An existing attribute
+  file is never overwritten, and repeated init is byte-stable. The rule
+  disables end-of-line conversion for everything under `.ai/work/`, so bound
+  artifact bytes survive checkouts regardless of `autocrlf`.
+- **Manual external-Plan rule:** a Plan outside `.ai/work/` is not covered by
+  that file. Pin it with an explicit per-path `-text` rule in a root
+  `.gitattributes` (e.g. `docs/plan.md -text`). Git attributes patterns split
+  on whitespace, so a path containing a space cannot be written literally —
+  use a glob instead (e.g. `docs/*.md -text`).
+- `validate` and `resume` report a WARN-level transport notice for every bound
+  artifact (sufficient-gate Evidence/audit bytes, a recorded Review artifact)
+  and the registered Plan whose effective `text` attribute is anything other
+  than unset — `text=auto`, `set`, or unspecified (autocrlf decides). The
+  notice is visible only and never becomes a new execution gate; adding the
+  `-text` rule is always the user's explicit decision. The assessment is
+  read-only: it never edits root attributes or global config, and never
+  renormalizes tracked files.
+
+Adopting protection for existing Tickets keeps their bindings: adding the
+attributes file changes no committed artifact content, so current SHA-256
+bindings stay current. Commit the attributes file itself and do **not**
+renormalize (`git add --renormalize .` rewrites bytes and invalidates
+bindings). Where Git attributes are unavailable — artifacts leaving the
+repository by mail or attachment — a ZIP archive is the transport escape
+hatch: an archive carries the bytes verbatim without attribute support.
+
