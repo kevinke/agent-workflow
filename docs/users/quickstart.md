@@ -133,3 +133,17 @@ v2 的字节身份门禁（`set-gate` / `set-review` / `register-plan`）绑定�
 | `validate` 报 "missing artifact" | 当前阶段要求的 artifact（evidence/audit/decision/handoff）没写 |
 | `validate` 报 "missing updated_at" | state.yaml 被手工改过、没走 kit 保存 |
 | `validate`/`resume` 报 "transport:" | 该路径的有效 `text` 属性不是 `-text`，clone/checkout 可能改写已绑定字节；加 `-text` 规则（见上节） |
+
+## 导出已验证归档：`archive-artifacts`（HARDEN-006）
+
+Ticket 评审通过（或评审结论为 `changes_requested` 且所有绑定仍然新鲜）后，可以把全部工作 artifact 一次性导出为带清单的 ZIP：
+
+```bash
+ai-workflow archive-artifacts <ticket-id> --output artifacts.zip
+```
+
+- ZIP 内是 `manifest.json` + 各 artifact 的**原始字节**（哈希含行尾，绝不归一化）：State、Evidence、Audit、Decision、Progress、Handoff、Review，以及**注册 Plan 在其真实源路径**下的文件。
+- `manifest.json`（`format_version: 1`）按仓库相对路径排序，逐条给出 `path`、`sha256`（成员字节哈希）、`bound_sha256`（State 记录的绑定哈希；未绑定过的辅助文件为 `null`，不会假装被绑定过）。
+- 这是**验证边界，不是通用备份**：v1 Ticket、Review 仍为 pending、任何绑定过期（Review/Plan/门禁哈希、被评审代码漂移、追加 rework 待重审）都会被拒绝（exit 1）；导出**不继承** repair 的 Plan 例外。
+- 发布是**非覆盖原子**的：输出文件已存在则拒绝且原字节不动，失败不留半截归档；成员名在写盘前校验（相对路径规范化、禁止穿越与重名，`manifest.json` 保留名），输入必须符号链接解析后仍在仓库内，输出不得与任何被收集文件重合。
+- 在别处恢复归档时请**连同对应的代码仓库/历史**一起：清单的 `snapshot_head` 与 `review.reviewed_commit` 指明被评审的提交，字节哈希本身不能重建代码上下文。

@@ -364,3 +364,46 @@ bindings). Where Git attributes are unavailable — artifacts leaving the
 repository by mail or attachment — a ZIP archive is the transport escape
 hatch: an archive carries the bytes verbatim without attribute support.
 
+
+## Verified export: `archive-artifacts` (manifest.json, format_version 1)
+
+`ai-workflow archive-artifacts <ticket-id> --output <new.zip>` publishes a
+Ticket's work artifacts as a single ZIP of **exact raw bytes** plus a
+`manifest.json` describing them. It is a verification boundary, not a generic
+backup API: a v1 Ticket, a pending Review, or any stale binding is refused
+(exit 1); both a `pass` and a *current* `changes_requested` verdict export.
+
+- **Export scope.** The archive collects the exact raw bytes of the State
+  (`state.yaml`), Evidence, Evidence Audit, Decision, Progress, Handoff and
+  Review artifacts, plus the registered Plan **at its actual registered source
+  path** (from `source_artifacts.plan.path`), under safe unique
+  repository-relative paths. Membership is fixed by this contract; the command
+  takes no per-file options.
+- **Currentness.** Before publication the collected bytes themselves are
+  compared with every recorded hash — `evidence.report_sha256`,
+  `evidence.audit_sha256`, `review.artifact_sha256`,
+  `review.plan_sha256`/`source_artifacts.plan.sha256` — and the Review
+  bindings are assessed WITHOUT the repair path's rework exception: a stale
+  failed Review or an appended rework Plan awaiting a new review cannot be
+  exported. Hashes are over raw bytes; line endings are never normalized.
+- **Manifest.** `manifest.json` (JSON, `format_version: 1`) carries
+  `ticket_id`, `snapshot_head` (the Git commit the export was taken at) and
+  `entries`: a list sorted by repository-relative path, each entry holding
+  `path`, `sha256` (of the member's raw bytes) and `bound_sha256` — the
+  recorded State hash for the four bound members (Evidence, Audit, Review,
+  registered Plan), and `null` for supporting files (`state.yaml`,
+  `decision.md`, `progress.md`, `handoff.md`), which were never previously
+  bound and are not pretended to be.
+- **Safe publication.** Member names are validated before any write
+  (normalized relative paths, no traversal, no duplicates; `manifest.json` is
+  reserved), collected inputs must symlink-resolve inside the repository, and
+  the output must not collide with a collected input or an existing file. The
+  ZIP is built beside the output and published with a non-overwriting atomic
+  hard link — `os.replace` is never used, so a pre-existing output keeps its
+  exact bytes and a failed write leaves no partial archive. All failures are
+  reported as errors; nothing is written on refusal.
+- **Resuming elsewhere.** The archive re-verifies byte identity on arrival,
+  but byte hashes alone do not re-establish the reviewed code: resume an
+  exported Ticket WITH the matching code repository/history (the manifest's
+  `snapshot_head` and `review.reviewed_commit` name the commits), or treat
+  the archive as durable evidence only.

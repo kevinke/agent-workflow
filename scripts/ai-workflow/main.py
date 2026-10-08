@@ -15,6 +15,7 @@ Usage:
     ai-workflow escalate <ticket-id> [opts]
     ai-workflow set-status <ticket-id> --status <s>
     ai-workflow resume <ticket-id>
+    ai-workflow archive-artifacts <ticket-id> --output <new.zip>
     ai-workflow install-skills [target]
     ai-workflow upgrade
     ai-workflow upgrade-ticket <ticket-id>
@@ -29,6 +30,7 @@ import re
 import sys
 
 import adopt
+import artifact_archive
 import init
 import mutate
 import resume
@@ -40,8 +42,8 @@ import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
             "release", "complete-task", "register-plan", "set-gate", "escalate",
-            "set-status", "set-review", "resume", "install-skills", "upgrade",
-            "upgrade-ticket"}
+            "set-status", "set-review", "resume", "archive-artifacts",
+            "install-skills", "upgrade", "upgrade-ticket"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
 
@@ -68,6 +70,13 @@ commands:
   escalate <ticket-id> --scope S --reason "..." | --clear [--resolution TEXT]  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
   resume <ticket-id>  print a read-only continuation brief (exit 1 on ERROR blockers)
+  archive-artifacts <ticket-id> --output <new.zip>
+                      export the Ticket's verified raw artifacts (manifest.json
+                      + member bytes) once its Review bindings are current; v1
+                      or pending/unbound Tickets are refused — not a backup API.
+                      Resume the archive elsewhere WITH the matching code
+                      repository/history: the bindings are byte hashes plus a
+                      reviewed commit.
   install-skills [target]  install the eight role skills into the target repo (idempotent)
   upgrade             explicit protocol upgrade using workflow_version
   upgrade-ticket <ticket-id>  explicitly convert one active v1 Ticket to
@@ -313,6 +322,31 @@ def _cmd_mutate(name, usage, args, root, known_opts, apply):
     return 0
 
 
+def cmd_archive_artifacts(args, root):
+    """Verified export: usage -> 2, contract/IO refusal -> 1, success -> 0."""
+    rest = args[1:]
+    if not rest or rest[0].startswith("--"):
+        sys.stderr.write("usage: ai-workflow archive-artifacts <ticket-id> "
+                         "--output <new.zip>\n")
+        return 2
+    ticket_id = rest[0]
+    opts, err = _parse_options(rest[1:], {"--output"})
+    if err:
+        sys.stderr.write("archive-artifacts: %s\n" % err)
+        return 2
+    if not opts.get("output"):
+        sys.stderr.write("usage: ai-workflow archive-artifacts <ticket-id> "
+                         "--output <new.zip>\n")
+        return 2
+    try:
+        dest = artifact_archive.archive_ticket(root, ticket_id, opts["output"])
+    except artifact_archive.ArchiveError as exc:
+        sys.stderr.write("archive-artifacts: %s\n" % exc)
+        return 1
+    print("archived %s to %s" % (ticket_id, dest))
+    return 0
+
+
 def cmd_advance(args, root):
     def apply(ticket_id, opts):
         to = opts.get("to")
@@ -456,6 +490,8 @@ def main(argv=None):
         return cmd_status(argv, root)
     if cmd == "resume":
         return cmd_resume(argv, root)
+    if cmd == "archive-artifacts":
+        return cmd_archive_artifacts(argv, root)
     if cmd == "validate":
         return cmd_validate(argv, root)
     if cmd == "adopt":

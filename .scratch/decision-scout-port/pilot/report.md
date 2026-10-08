@@ -246,3 +246,22 @@ The pilot supports the pilot decision: structured cheap-scout → senior handoff
 worked across two real Harnesses on small tasks, with the observed costs being
 one administrative rework loop and two environment-level frictions (sandbox
 policy, CRLF byte gates) — both recorded for separate follow-ups.
+
+## Durable package (HARDEN-006, 2026-10-09 — appended; original run results above are untouched)
+
+The archived ticket artifacts are now preserved as verified ZIP packages
+produced by the kit's `artifact_archive.write_archive`:
+[pilot/bug/artifacts.zip](bug/artifacts.zip) and
+[pilot/feature/artifacts.zip](feature/artifacts.zip). All eight
+Evidence/Audit/Plan/Review hashes were verified against the recorded
+`state.yaml` bindings BEFORE packaging, from the archived working bytes only
+(no checkout, edit, or re-gate of the original target; no recomputed
+replacements). Bound members carry the recorded hash; unbound supporting
+files (`decision.md`, `progress.md`, `handoff.md`, `state.yaml`) carry
+computed hashes and a null `bound_sha256` in each `manifest.json`
+(`format_version: 1`). Members use the artifacts' original repository paths,
+with the registered Plan at its actual source path (`.scratch/<TICKET>/plan.md`);
+`snapshot_head` is the recorded branch evidence from this report (`pilot/bug`
+head `a1cbdab`, `pilot/feat` head `aea68a6`). Verification details, the full
+path mapping, supporting-file hashes and the fresh-clone re-verification are
+recorded in [archive-manifest.md](archive-manifest.md).
