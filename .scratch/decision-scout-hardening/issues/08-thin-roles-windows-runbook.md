@@ -2,7 +2,7 @@
 
 Ticket ID: HARDEN-008
 Type: task
-Status: ready-for-agent
+Status: implemented — integration evidence recorded 2026-10-09
 Blocked by: None
 Parent: [supplemental spec](../spec.md#c0--compatibility-and-authority)
 Source findings: ST-02; O3: Windows launch; [disposition](../review-disposition.md)
@@ -18,12 +18,12 @@ Own the complete C0, C8 outcome from contract/documentation through public-comma
 
 ## Acceptance criteria
 
-- [ ] Role Skills retain triggers/links/minimal commands while removing copied business contracts, quotas and gate/task rules.
-- [ ] All eight installed Skills and adapters point to authoritative Protocol/role/migration sections; installation remains idempotent.
-- [ ] Windows guidance cites the observed pilot rejection/fix, records read-only intent and distinguishes policy rejection from technical review.
-- [ ] Diagnostic version/help checks require no new model session; any live smoke needs available budget at execution.
-- [ ] No global model preference, local machine path, automatic policy-bypass retry or permission weakening is introduced.
-- [ ] Existing skill/install tests pass, and a manual rule-source audit records where each role obtains semantic requirements.
+- [x] Role Skills retain triggers/links/minimal commands while removing copied business contracts, quotas and gate/task rules.
+- [x] All eight installed Skills and adapters point to authoritative Protocol/role/migration sections; installation remains idempotent.
+- [x] Windows guidance cites the observed pilot rejection/fix, records read-only intent and distinguishes policy rejection from technical review.
+- [x] Diagnostic version/help checks require no new model session; any live smoke needs available budget at execution.
+- [x] No global model preference, local machine path, automatic policy-bypass retry or permission weakening is introduced.
+- [x] Existing skill/install tests pass, and a manual rule-source audit records where each role obtains semantic requirements.
 
 ## Verification
 
@@ -36,3 +36,4 @@ If implementation requires changing v2 digest semantics, completed task history,
 ## Comments
 
 - 2026-10-08 — Created from the post-implementation review at the user's request; ready for development planning/execution, not a resolved finding.
+- 2026-10-09 — Implemented by 3cef3db; independently reviewed. Integration evidence: full-suite run at 3cef3db — `SkillsLintTest` (test_skills.py) and `InitTest` (test_init.py) passed, covering eight installed Skills, idempotent installation and user-AGENTS byte preservation; the manual rule-source audit is recorded at `.scratch/decision-scout-hardening/role-rule-source-audit.md` and the Windows runbook at `adapters/codex/windows.md` (launch/policy rejection distinguished from technical review; no new model session for version/help diagnostics).

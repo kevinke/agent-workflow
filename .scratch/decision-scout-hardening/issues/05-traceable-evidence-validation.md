@@ -2,7 +2,7 @@
 
 Ticket ID: HARDEN-005
 Type: task
-Status: ready-for-agent
+Status: implemented — integration evidence recorded 2026-10-09
 Blocked by: None
 Parent: [supplemental spec](../spec.md#c5--traceable-structural-evidence-harden-005)
 Source findings: S-06; [disposition](../review-disposition.md)
@@ -18,12 +18,12 @@ Own the complete C5 outcome from contract/documentation through public-command b
 
 ## Acceptance criteria
 
-- [ ] Code Sources require positive ordered lines and a named anchor or justified file-scope; line-only/symbol-only reject.
-- [ ] Supported runtime, configuration/data, inference, scoped negative-search and UNKNOWN examples pass; unrecognized source claims reject.
-- [ ] ANSWERED Facts, finding Questions and INFERENCE Basis require existing stable IDs; explicit justified UNKNOWN remains valid.
-- [ ] Observed commit, timestamps and provenance are concrete; Evidence/Audit rounds are positive typed integers matching each other and CLI.
-- [ ] All six accepted-malformed review examples now reject set-gate without State changes, while existing valid examples retain useful semantics.
-- [ ] Protocol, template and examples explain syntax limits and retain semantic sufficiency for senior audit.
+- [x] Code Sources require positive ordered lines and a named anchor or justified file-scope; line-only/symbol-only reject.
+- [x] Supported runtime, configuration/data, inference, scoped negative-search and UNKNOWN examples pass; unrecognized source claims reject.
+- [x] ANSWERED Facts, finding Questions and INFERENCE Basis require existing stable IDs; explicit justified UNKNOWN remains valid.
+- [x] Observed commit, timestamps and provenance are concrete; Evidence/Audit rounds are positive typed integers matching each other and CLI.
+- [x] All six accepted-malformed review examples now reject set-gate without State changes, while existing valid examples retain useful semantics.
+- [x] Protocol, template and examples explain syntax limits and retain semantic sufficiency for senior audit.
 
 ## Verification
 
@@ -36,3 +36,4 @@ If implementation requires changing v2 digest semantics, completed task history,
 ## Comments
 
 - 2026-10-08 — Created from the post-implementation review at the user's request; ready for development planning/execution, not a resolved finding.
+- 2026-10-09 — Implemented by 46d50c0; independently reviewed. Integration evidence: full-suite run at 3cef3db — `SourceProblemsTest` (`test_code_source_boundary_assertions`, `test_justified_file_scope_anchor_is_accepted`, `test_unjustified_file_scope_anchor_rejected`, `test_runtime_field_aliases_accepted`, `test_runtime_missing_or_non_integer_fields_rejected`, `test_negative_search_requires_scope_exclusions_result`, `test_inference_basis_requires_fact_ids`, `test_unknown_source_needs_unobserved_item_and_collection_target`, `test_unknown_source_only_on_unknown_findings`) and the dangling-reference/round cases in `ContractReadTest`/`ContractAuditTest` passed; `EvidenceGateSyntaxTest.test_accepted_malformed_reports_rejected_by_set_gate` and `test_concrete_families_and_justified_unknown_pass_set_gate` exercised the six rejection variants and the supported families through the public set-gate; the updated grammar/template/examples landed in the same commit.

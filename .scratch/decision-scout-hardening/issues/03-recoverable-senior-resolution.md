@@ -2,7 +2,7 @@
 
 Ticket ID: HARDEN-003
 Type: task
-Status: ready-for-agent
+Status: implemented — integration evidence recorded 2026-10-09
 Blocked by: 01
 Parent: [supplemental spec](../spec.md#c3--recoverable-senior-resolution-and-bootstrap-harden-003)
 Source findings: S-03, S-04, ST-03; [disposition](../review-disposition.md)
@@ -18,12 +18,12 @@ Own the complete C3 outcome from contract/documentation through public-command b
 
 ## Acceptance criteria
 
-- [ ] Ordinary unresolved escalation, explicit upgrade reconstruction and late-phase v2 bootstrap support bounded re-audit and Plan registration.
-- [ ] New late-phase start/adopt creates explicit bootstrap recovery; existing half-ready v2 work can enter ordinary recovery via escalate.
-- [ ] Routine execution stays blocked until a referenced resolution clears all retained-phase blockers atomically.
-- [ ] Completed task hashes bind once when historically absent; subsequent registrations preserve the prefix and counters.
-- [ ] Paused/blocked status and adoption checkpoints are preserved; pending Review and valid failed-review append recover without a deadlock.
-- [ ] Validation and clear use one focused shared phase/artifact check implementation; no arbitrary phase jumps or broad validation rewrite.
+- [x] Ordinary unresolved escalation, explicit upgrade reconstruction and late-phase v2 bootstrap support bounded re-audit and Plan registration.
+- [x] New late-phase start/adopt creates explicit bootstrap recovery; existing half-ready v2 work can enter ordinary recovery via escalate.
+- [x] Routine execution stays blocked until a referenced resolution clears all retained-phase blockers atomically.
+- [x] Completed task hashes bind once when historically absent; subsequent registrations preserve the prefix and counters.
+- [x] Paused/blocked status and adoption checkpoints are preserved; pending Review and valid failed-review append recover without a deadlock.
+- [x] Validation and clear use one focused shared phase/artifact check implementation; no arbitrary phase jumps or broad validation rewrite.
 
 ## Verification
 
@@ -36,3 +36,4 @@ If implementation requires changing v2 digest semantics, completed task history,
 ## Comments
 
 - 2026-10-08 — Created from the post-implementation review at the user's request; ready for development planning/execution, not a resolved finding.
+- 2026-10-09 — Implemented by 235bc88 (shared `phase_checks` + atomic clear), 256b312 (bootstrap start/adopt), and review fix rounds fba580a, bf9b016; independently reviewed. Integration evidence: full-suite run at 3cef3db — `EscalationV2Test.test_ordinary_recovery_can_reaudit_and_register`, `test_clear_rejects_incoherent_retained_phase`, `test_clear_pending_review`, `test_clear_failed_review_with_appended_repair`, `test_recovery_preserves_status_and_prefix` and `LateBootstrapRecoveryTest.test_late_bootstrap_recovers_via_public_commands` all passed; `RecoveryKindBootstrapTest` and the passing lifecycle/upgrade/plan suites confirm the shared retained-phase checks serve validation and clear without a rewrite.

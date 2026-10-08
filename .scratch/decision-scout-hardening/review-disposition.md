@@ -1,8 +1,8 @@
 # Review disposition — 2026-10-08
 
-Status: ready-for-agent
+Status: integration evidence recorded 2026-10-09; HARDEN-009 open
 Source: [full review with reproductions](../decision-scout-port/post-implementation-review-2026-10-08.md)
-Baseline reviewed: `5ae8e27..00a3904`; follow-up implementation has not started.
+Baseline reviewed: `5ae8e27..00a3904`; the follow-up fixes have since landed on branch `decision-scout-hardening` (see Evidence status below).
 Spec: [supplemental contracts](spec.md)
 Delivery: [tickets](tickets.md) · [plans](../../docs/superpowers/plans/2026-10-08-scout-hardening.md)
 
@@ -46,17 +46,35 @@ one owning ticket; combined findings share a verifiable outcome.
 
 ## Evidence status and delivery priority
 
-The original live bug/feature review paths are historical successes. The later
-review's full unittest run had one dirty-edit failure; an isolated rerun passed.
-That is unresolved evidence for HARDEN-002, not an all-green baseline. Seven of
-eight bound archive identities differ in committed text blobs even though the
-verified working bytes match. Keep both findings visible until their owners
-supply deterministic regression and fresh-clone evidence respectively.
-
-Start with HARDEN-001/002, then recovery and preservation. The index lists actual
-blocking edges separately from suggested priority and shared-file scheduling.
-Do not reopen or rewrite old pilot results to manufacture a new completion.
+Update 2026-10-09 — every fix-bearing finding now has a landed, independently
+reviewed fix on `decision-scout-hardening`: S-01/ST-01/S-09 (HARDEN-001:
+0f1f2b5, 477e65c), S-02 (HARDEN-002: 8a0b92b), S-03/S-04/ST-03 (HARDEN-003:
+235bc88, 256b312, fba580a, bf9b016), S-07/S-08 (HARDEN-004: d822833, b76f51f),
+S-06 (HARDEN-005: 46d50c0), S-05 (HARDEN-006: 793ac20, 3014423, 9ee8a4f,
+cebc72), O2 (HARDEN-007: 924a580) and ST-02/O3 (HARDEN-008: 3cef3db). The
+2026-10-09 one-shot integration run
+(`PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s scripts/ai-workflow/tests -p 'test_*.py' -v`
+at 3cef3db: 399 tests, 397 passed, 2 pre-existing symlink-privilege skips,
+1 failure) passed every slice's named regression except HARDEN-002's
+`test_racy_edit_blocks_done_and_resume`, which failed in test-fixture setup
+before exercising production code: on this Windows host the following `git add`
+process observed the file's pre-backdate mtime, so the fixture's determinism
+precondition fired. It is diagnosed as a host cross-process mtime-visibility
+race, not a recurrence of the S-02 dirty-edit escape: the same helper passed
+four other times in that run, the deterministic detection regressions
+(`test_racy_equal_size_edit_is_detected_read_only`,
+`test_racy_drift_with_real_index_lock`) passed, and the installed-kit lifecycle
+(`InstalledLifecycleV2Test.test_installed_lifecycle_with_followup_and_rework`)
+and v1 compatibility cases passed. The racy done/resume assertions still need a
+rerun-of-record; the suite was not rerun to get green. The earlier baseline
+observations (one dirty-edit failure with a passing isolated rerun; seven of
+eight archive identities differing in committed text blobs) are resolved by
+8a0b92b and the verified fresh-clone export evidence in
+`.scratch/decision-scout-port/pilot/archive-manifest.md` (9ee8a4f).
+O1 (HARDEN-009) remains open: no live run has occurred, and it consumes a newly
+authorized session budget.
 
 ## Comments
 
 - 2026-10-08 — User requested spec supplementation, separate tickets and development plans; all are prepared as documentation, with runtime work pending.
+- 2026-10-09 — Evidence updated after integration: landed fixes are listed per finding in Evidence status with the slices' named-test evidence from the single full-suite run. S-02 keeps one open caveat (racy done/resume fixture awaiting a rerun-of-record). O1/HARDEN-009 stays pending — no live sessions were run and no budget was authorized; historical pilot results remain unchanged.

@@ -2,7 +2,7 @@
 
 Ticket ID: HARDEN-004
 Type: task
-Status: ready-for-agent
+Status: implemented — integration evidence recorded 2026-10-09
 Blocked by: None
 Parent: [supplemental spec](../spec.md#c4--lossless-explicit-upgrade-harden-004)
 Source findings: S-07, S-08; [disposition](../review-disposition.md)
@@ -18,11 +18,11 @@ Own the complete C4 outcome from contract/documentation through public-command b
 
 ## Acceptance criteria
 
-- [ ] Unknown keys survive in every existing nested map, including upgrade and extension maps.
-- [ ] Malformed owned maps, counters and unsupported version/status/phase values are preflighted before any save.
-- [ ] CLI failures return a normal error without Traceback and preserve exact input bytes.
-- [ ] Already-v2 is byte-preserving; historical done v1 and unsupported conversion states remain rejected/preserved.
-- [ ] Converted half-done work retains original phase, paused/blocked status and completion history without invented gates or Review.
+- [x] Unknown keys survive in every existing nested map, including upgrade and extension maps.
+- [x] Malformed owned maps, counters and unsupported version/status/phase values are preflighted before any save.
+- [x] CLI failures return a normal error without Traceback and preserve exact input bytes.
+- [x] Already-v2 is byte-preserving; historical done v1 and unsupported conversion states remain rejected/preserved.
+- [x] Converted half-done work retains original phase, paused/blocked status and completion history without invented gates or Review.
 
 ## Verification
 
@@ -35,3 +35,4 @@ If implementation requires changing v2 digest semantics, completed task history,
 ## Comments
 
 - 2026-10-08 — Created from the post-implementation review at the user's request; ready for development planning/execution, not a resolved finding.
+- 2026-10-09 — Implemented by d822833 and review fix round b76f51f; independently reviewed. Integration evidence: full-suite run at 3cef3db — `UpgradeTicketV2Test.test_upgrade_preserves_nested_extensions`, `test_malformed_owned_maps_rejected_unchanged`, `test_malformed_counters_rejected_unchanged`, `test_malformed_nested_source_references_rejected_unchanged`, `test_uninterpretable_versions_rejected_unchanged`, `test_malformed_state_rejected_unchanged` and `test_escalated_or_abandoned_status_rejected_unchanged` all passed; already-v2 byte preservation and historical done-v1 rejection stayed covered by the existing no-op/historical cases plus `ProtocolUpgradePreservesTicketsTest` and `UpgradeTest` (v1), which passed in the same run.
