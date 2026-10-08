@@ -22,8 +22,6 @@ import artifact_archive  # noqa: E402
 
 from v2_support import V2CLITestCase  # noqa: E402
 
-BOUND_KEYS = ("evidence.md", "evidence-audit.md", "review.md")
-
 
 class ArtifactArchiveTest(V2CLITestCase):
     """CLI- and library-level tests for the verified export."""
