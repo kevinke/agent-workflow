@@ -1,6 +1,6 @@
 # Decision Scout hardening: Ticket index
 
-Status: historical 01–08 complete; 12 published and fresh-checkout verified; 10–11 ready for planning; 09 pending safety prerequisites and budget
+Status: historical 01–08 complete; 10 integrated (cc9be8f); 12 published and fresh-checkout verified; 11 ready for planning; 09 pending safety prerequisites and budget
 Parent: [spec](spec.md)
 Disposition: [review mapping](review-disposition.md)
 Plan: [development plan and shared interfaces](../../docs/superpowers/plans/2026-10-08-scout-hardening.md)
@@ -24,7 +24,7 @@ independently reviewable; the index does not replace its file.
 | [07 — Phase-aware Handoff readiness](issues/07-phase-aware-handoff.md) | 03 | Complete (automated) | A model taking over review or completion gets a concrete handoff while early workflow drafts remain usable. |
 | [08 — Thin role entries and Windows launch diagnostics](issues/08-thin-roles-windows-runbook.md) | None | Complete (automated) | Each Harness follows one authoritative rule set, and a Windows policy failure has a bounded documented diagnostic path. |
 | [09 — Distinct Scout-to-senior model and Harness pilot](issues/09-paired-model-pilot.md) | 01, 02, 03, 04, 05, 06, 07, 08, 10, 11 | Pending fixes and live budget | A documented real experiment shows a cheap Scout handing structured facts to a different senior decision model across Harnesses on a bounded nontrivial task. |
-| [10 — Review drift independent of index hints](issues/10-index-flag-independent-review.md) | None | Planned; review/execution pending | Flagged dirty/deleted code cannot obtain or retain either Review verdict; real index and racy-stat detection are preserved. |
+| [10 — Review drift independent of index hints](issues/10-index-flag-independent-review.md) | None | Complete (automated); integrated at cc9be8f | Flagged dirty/deleted code cannot obtain or retain either Review verdict; real index and racy-stat detection are preserved. |
 | [11 — Isolated reviewer verification and publication](issues/11-isolated-reviewer-publication.md) | 10 | Planned; review/execution pending | Verifier writes stay inside a restricted snapshot; only a current, identified review is published to live workflow records. |
 | [12 — LF-stable installer template](issues/12-lf-stable-installer-template.md) | None | Published (86a823c); fresh-checkout verified | The protection template and installed output remain LF across six checkout scenarios; 400 tests pass. |
 
@@ -38,12 +38,13 @@ method before implementing 10, then 11 with actual host-boundary evidence.
 These planned Tickets are not registered execution contracts.
 Shared Review/protocol files require serial writes. 12 is published at 86a823c
 with its six-case matrix and fresh-checkout verification recorded; it needs no
-further implementation round and now supplies the LF attribute rule that a
-HARDEN-010 checkout requires before its integration run.
+further implementation round, and the LF attribute rule it supplies was
+published before HARDEN-010's integration run, as that run required.
 
-09 waits for 10 and 11 as well as its separately authorized available budget.
-Their prerequisites are now in the original pilot plan; do not reuse the
-original exhausted allocation. The original 01–08 acceptance stays historical
+10 is integrated at cc9be8f, so 09 waits only for 11 plus its separately
+authorized available budget. Those prerequisites are recorded in the original
+pilot plan; do not reuse the original exhausted allocation. The original
+01–08 acceptance stays historical
 and does not claim these new follow-ups were tested. The earlier frontier below
 records the original delivery order rather than today's outstanding work.
 
@@ -80,4 +81,26 @@ Shared files require serial writes or explicit coordination; independence in the
   `test_init test_transport`: 17 tests, OK, exit 0. 12's publication acceptance
   is closed. 10 remains unimplemented: `review.py` is untouched and its new
   tests exist only in the `harden-010` worktree, where the added block is
-  duplicated and the fix is absent.
+  duplicated and the fix is absent. (State as of that entry; superseded by the
+  next one.)
+
+- 2026-10-09 — Implemented, independently reviewed and integrated 10 on branch
+  `harden-010` (Task 1 376e4b6, Task 2 487adb7, task fix round 4830255,
+  whole-branch fix wave 48e2051, corrections a542486, evidence cc9be8f),
+  fast-forwarded into `master` at cc9be8f. `review.py` now assesses drift
+  against a disposable `GIT_INDEX_FILE` copy whose `assume-unchanged` and
+  `skip-worktree` bits are cleared and whose mtimes are restored so racy-stat
+  detection still applies; flagged edits, deletes and unusual paths can no
+  longer exempt themselves from either verdict, unmerged entries are assessed
+  instead of raising, and the probe creates nothing in the real Git directory.
+  The five public consumers (`set-review`, `validate`, `resume`,
+  `advance --to done`, `archive-artifacts`) share that one `code_drift`
+  assessment. Full-suite run of record on the merged tree at cc9be8f:
+  `Ran 420 tests in 455.868s` — `OK (skipped=2)`, exit 0, the skips still the
+  two pre-existing symlink-privilege cases; identical counts to the pre-merge
+  run on the same commit. Worktree removed and branch deleted. 11 is unblocked.
+  Surfaced as non-blocking follow-ups, not fixed here: the `.gitignore`
+  concatenation at 3a4a980 leaves neither `.superpowers/` nor `.worktrees/`
+  ignored, `git status`'s Repository row in `resume` is still hint-blind, and
+  `core.fsmonitor` (same defect family, unset in this repo) is out of 10's
+  scope.
