@@ -123,6 +123,58 @@ class ArtifactArchiveTest(V2CLITestCase):
         if state_before is not None:
             self.assertEqual(self.state_bytes(), state_before)
 
+    # -- index hints (HARDEN-010) ---------------------------------------------
+    # Git pathspecs take forward slashes while file I/O needs the platform
+    # separator, so hint targets are named repo-relative with `/`.
+
+    def _set_flag(self, path, flag):
+        """Set one or both index hints via separate Git commands.
+
+        A single `update-index` cannot express the combination, so each bit is
+        set on its own — the same reason the assessment clears them separately.
+        """
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _clear_flag(self, path, flag):
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--no-assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--no-skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _flagged_edit(self, flag, rel):
+        """Hint `rel`, then rewrite it at an unchanged byte size."""
+        self._set_flag(rel, flag)
+        full = os.path.join(self.root, rel)
+        with open(full, "r", encoding="utf-8", newline="") as fh:
+            original = fh.read()
+        dirty = original.replace("return 42", "return 43")
+        self.assertEqual(len(dirty), len(original))
+        self.assertNotEqual(dirty, original)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(dirty)
+
+    def _flagged_delete(self, flag, rel):
+        self._set_flag(rel, flag)
+        os.remove(os.path.join(self.root, rel))
+
+    def _restore_code(self, rel):
+        """Rewind `rel`'s worktree bytes from the index, keeping the binding.
+
+        The reviewed HEAD predates `write_review`, so a `clean -fd`/`reset`
+        rewind would delete the Review artifact and unbind the verdict; the
+        mutated path is restored on its own instead. Hints must be cleared
+        first, since `git checkout` skips a `skip-worktree` path.
+        """
+        proc = self._git("checkout", "--", rel)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
     # -- success --------------------------------------------------------------
 
     def test_export_pass_review_produces_verified_zip(self):
@@ -258,6 +310,67 @@ class ArtifactArchiveTest(V2CLITestCase):
         before = self.state_bytes()
         proc, out = self._export()
         self._assert_rejected(proc, out, before)
+
+    def test_flagged_drift_leaves_no_archive(self):
+        """A hint-hidden change refuses export and leaves no archive behind.
+
+        `archive-artifacts` re-verifies against the same shared assessment, so an
+        equal-size edit or a deletion under `assume-unchanged`/`skip-worktree`
+        must refuse the export outright. Two things are pinned beyond the
+        existing stale-code rejection: the refusal leaves nothing at all in the
+        output directory (not just not the requested name, so no partial or temp
+        archive survives), and the refused export still cannot touch the real
+        index, its hint flags, or the recorded verdict.
+
+        The same fixture exports while nothing is hidden, so the refusal is
+        attributable to the hint rather than to an already-stale binding.
+        """
+        rel = "src/app.py"
+        self._prepare_reviewed("pass")
+        baseline_proc, baseline_out = self._export(name="baseline.zip")
+        self.assertEqual(baseline_proc.returncode, 0,
+                         baseline_proc.stdout + baseline_proc.stderr)
+        self.assertTrue(os.path.exists(baseline_out))
+
+        for flag in ("assume-unchanged", "skip-worktree", "both"):
+            for kind in ("edit", "delete"):
+                with self.subTest(flag=flag, kind=kind):
+                    case_dir = os.path.join(self.out_dir, "case-%s-%s"
+                                            % (flag, kind))
+                    os.makedirs(case_dir)
+                    if kind == "edit":
+                        self._flagged_edit(flag, rel)
+                    else:
+                        self._flagged_delete(flag, rel)
+
+                    index = os.path.join(self.root, ".git", "index")
+                    before_state = self.state_bytes()
+                    with open(index, "rb") as fh:
+                        before_index = fh.read()
+                    before_mtime = os.stat(index).st_mtime_ns
+                    before_flags = self._git(
+                        "ls-files", "-v", "-z", "--", rel).stdout
+
+                    proc, out = self._export(
+                        output=os.path.join(case_dir, "artifacts.zip"))
+                    self._assert_rejected(proc, out, before_state)
+                    self.assertEqual(os.listdir(case_dir), [],
+                                     "refused export left output behind: %r"
+                                     % os.listdir(case_dir))
+                    self.assertEqual(
+                        self.read_state()["review"]["verdict"], "pass")
+                    with open(index, "rb") as fh:
+                        self.assertEqual(fh.read(), before_index,
+                                         ".git/index bytes changed")
+                    self.assertEqual(os.stat(index).st_mtime_ns, before_mtime,
+                                     ".git/index mtime changed")
+                    self.assertEqual(
+                        self._git("ls-files", "-v", "-z", "--", rel).stdout,
+                        before_flags,
+                        "index hints changed: the probe cleared the real index")
+
+                    self._clear_flag(rel, flag)
+                    self._restore_code(rel)
 
     def test_reject_stale_gate_binding(self):
         # The Review bindings stay intact; only the recorded Evidence hash no

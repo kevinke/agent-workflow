@@ -264,6 +264,15 @@ Ticket's own `state.yaml`, `progress.md`, `handoff.md`, and `review.md` are
 exempt from the code-drift check. Structural validity is not proof that
 acceptance criteria passed.
 
+Hint neutralization happens only inside a disposable index copy and changes no
+binding: `validate`, `resume`, the `review -> done` gate and `archive-artifacts`
+all re-assess through that same rule, so an `assume-unchanged` or
+`skip-worktree` hint cannot leave a recorded verdict current for one consumer
+while another sees the change, and a relevant path absent because sparse checkout
+excluded it is drift or a named blocker rather than silence. A refused
+`archive-artifacts` leaves no archive and no partial or temporary output at the
+requested path.
+
 Both recorded verdicts are re-assessed against their immutable bindings by
 `validate`, `resume`, and the mutation guards: a `pass` and a
 `changes_requested` each keep matching Review bytes, the same literal commit,

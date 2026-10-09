@@ -240,6 +240,23 @@ match, or an unrelated history (not an ancestor of HEAD) also reject it.
 Every rejection leaves the State bytes unchanged; Version 1 Tickets keep their
 existing semantics.
 
+`assume-unchanged` and `skip-worktree` are Git index hints, not Protocol
+exemptions: neither hides an edit or a deletion from this assessment. Both bits
+are neutralized in a disposable copy of the index and never in the real index,
+which no read-only check or rejected mutation may rewrite, refresh, or change
+the byte content, nanosecond timestamp, or hint flags of. A relevant tracked
+path absent from the worktree because sparse checkout excluded it is drift or a
+named assessment blocker; the assessment never materializes it as a side effect.
+Clearing the hints rewrites the disposable copy's timestamp, so that copy's
+original nanosecond access and modification times are restored before the first
+comparison — the equal-size, colliding-mtime detection above therefore still
+applies after hint clearing rather than depending on the initial copy. An
+assessment that cannot establish currentness is rejected and never read as
+current: a Git or operating-system failure raises a named contract error, and a
+repository shape whose currentness cannot be established even though every
+command succeeded — a split index that cannot be safely expanded in the copy —
+is reported as a blocker naming that limitation.
+
 Both recorded verdicts stay under the same immutability contract after
 recording: `validate`, `resume`, and the mutation guards re-check a recorded
 `pass` and a recorded `changes_requested` against their Review artifact bytes,

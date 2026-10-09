@@ -888,6 +888,126 @@ class ReviewV2Test(V2CLITestCase):
                 proc = self._git("update-index", "--no-split-index")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    # -- consumer agreement on flagged staleness (HARDEN-010 Task 2) ---------
+
+    def _assert_flagged_staleness(self, rel, verdict, named):
+        """Assert `validate`, `resume` and the done gate all reject the binding.
+
+        `named` is whether the shared assessment is expected to name `rel` in
+        its own message. The `review -> done` gate only reaches the drift check
+        for a recorded `pass`, because a `changes_requested` verdict blocks done
+        for its own reason regardless of drift, so the path assertion is skipped
+        there while the rejection itself is still required.
+        """
+        index_path = Path(self.root, ".git", "index")
+        review_path = os.path.join(self.work, "review.md")
+        before_state = self.state_bytes()
+        before_index = index_path.read_bytes()
+        before_index_mtime = index_path.stat().st_mtime_ns
+        before_flags = self._git("ls-files", "-v", "-z", "--", rel).stdout
+        with open(review_path, "rb") as fh:
+            before_review = fh.read()
+        before_review_mtime = os.stat(review_path).st_mtime_ns
+
+        validate_proc = self.cli("validate", self.TICKET)
+        self.assertEqual(validate_proc.returncode, 1,
+                         validate_proc.stdout + validate_proc.stderr)
+        self.assertNotIn("Traceback", validate_proc.stderr)
+        self.assertIn("stale", validate_proc.stdout)
+        if named:
+            self.assertIn(rel, validate_proc.stdout)
+
+        resume_proc = self.cli("resume", self.TICKET)
+        self.assertEqual(resume_proc.returncode, 1,
+                         resume_proc.stdout + resume_proc.stderr)
+        self.assertNotIn("Traceback", resume_proc.stderr)
+        if named:
+            self.assertIn(rel, resume_proc.stdout)
+
+        done_proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(done_proc.returncode, 1,
+                         done_proc.stdout + done_proc.stderr)
+        self.assertNotIn("Traceback", done_proc.stderr)
+        if named:
+            self.assertIn(rel, done_proc.stderr)
+
+        # A stale verdict stays stale: no consumer upgraded it to a fresh pass.
+        self.assertEqual(self.read_state()["review"]["verdict"], verdict)
+        self.assertEqual(self.state_bytes(), before_state)
+        with open(review_path, "rb") as fh:
+            self.assertEqual(fh.read(), before_review)
+        self.assertEqual(os.stat(review_path).st_mtime_ns, before_review_mtime)
+        self.assertEqual(index_path.read_bytes(), before_index)
+        self.assertEqual(index_path.stat().st_mtime_ns, before_index_mtime)
+        self.assertEqual(
+            self._git("ls-files", "-v", "-z", "--", rel).stdout, before_flags)
+
+    def test_flagged_binding_is_stale(self):
+        """Hints cannot keep a bound Review current for the other consumers.
+
+        `set-review` is only one reader of the shared assessment. Here the
+        Review is bound against a clean tree first, then an index hint hides an
+        equal-size edit or a deletion. `validate`, `resume` and the
+        `review -> done` gate must all reject, and none of them may write or
+        upgrade the recorded verdict. The clean baseline is pinned by asserting
+        `rel` is absent from `validate` before the mutation, so the rejection is
+        attributable to the flagged change rather than to fixture noise.
+
+        One fixture is seeded and rewound per subcase (`setUp` builds a single
+        repository per method): restoring to the reviewed commit returns
+        `state.yaml` to its unbound state, so each subcase binds exactly once
+        from pending rather than re-binding a recorded verdict.
+        """
+        rel = "src/feature.py"
+        reviewed = self._seed_review()
+        for verdict in ("pass", "changes_requested"):
+            for flag in ("assume-unchanged", "skip-worktree", "both"):
+                for kind in ("edit", "delete"):
+                    with self.subTest(verdict=verdict, flag=flag, kind=kind):
+                        self.write_review(verdict, reviewed_commit=reviewed)
+                        self._bind(verdict)
+                        self.assertNotIn(rel, self.cli(
+                            "validate", self.TICKET).stdout)
+                        if kind == "edit":
+                            self._flagged_edit(flag, rel)
+                        else:
+                            self._flagged_delete(flag, rel)
+                        # Only a recorded `pass` reaches the drift check at the
+                        # done gate; a `changes_requested` blocks done anyway.
+                        self._assert_flagged_staleness(
+                            rel, verdict, named=(verdict == "pass"))
+                        self._clear_flag(rel, flag)
+                        self._restore(reviewed)
+
+    def test_flagged_binding_stale_survives_metadata_commit(self):
+        """A workflow-only commit does not launder a flagged dirty file current.
+
+        Committing only a workflow record advances HEAD while `rel` stays dirty
+        under its hint, so the drift probe still compares the worktree against
+        the reviewed commit and every consumer keeps rejecting. This pins the
+        interaction between the existing metadata-only allowance and hint
+        clearing rather than trusting that the reviewed commit moved.
+        """
+        rel = "src/feature.py"
+        reviewed = self._seed_review()
+        for flag in ("assume-unchanged", "skip-worktree", "both"):
+            with self.subTest(flag=flag):
+                self.write_review("pass", reviewed_commit=reviewed)
+                self._bind("pass")
+                self._flagged_edit(flag, rel)
+                self._append_file(os.path.join(self.work, "progress.md"),
+                                  "\n- flagged-cycle note\n")
+                # Stage the record alone, so the bound State stays a worktree
+                # change and this commit is genuinely workflow-only.
+                add = self._git("add", "--", ".ai/work/T1/progress.md")
+                self.assertEqual(add.returncode, 0, add.stderr)
+                commit = self._git("commit", "-q", "-m",
+                                   "fixture: workflow-only commit")
+                self.assertEqual(commit.returncode, 0, commit.stderr)
+                self._assert_flagged_staleness(rel, "pass", named=True)
+                self._clear_flag(rel, flag)
+                self._restore(reviewed)
+
     # -- artifact / verdict rejections --------------------------------------
 
     def test_malformed_review_artifact_rejected(self):

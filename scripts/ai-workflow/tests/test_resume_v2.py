@@ -109,6 +109,97 @@ class ResumeV2Test(V2CLITestCase):
         with open(full, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
 
+    # -- index hints (HARDEN-010) ---------------------------------------------
+
+    def _set_flag(self, path, flag):
+        """Set one or both index hints via separate Git commands.
+
+        Both bits need their own command: a single `update-index` cannot express
+        the combination, and clearing is likewise done bit by bit.
+        """
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _clear_flag(self, path, flag):
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--no-assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--no-skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _flagged_edit(self, flag, rel="src/feature.py",
+                      old="return 1", new="return 9"):
+        """Hint `rel`, then rewrite it at an unchanged byte size."""
+        self._set_flag(rel, flag)
+        full = os.path.join(self.root, rel)
+        with open(full, "r", encoding="utf-8", newline="") as fh:
+            original = fh.read()
+        dirty = original.replace(old, new)
+        self.assertEqual(len(dirty), len(original))
+        self.assertNotEqual(dirty, original)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(dirty)
+
+    def _flagged_delete(self, flag, rel="src/feature.py"):
+        self._set_flag(rel, flag)
+        os.remove(os.path.join(self.root, rel))
+
+    def _restore_code(self, rel):
+        """Rewind `rel`'s worktree bytes from the index, leaving the binding.
+
+        The resume seeds bind their verdict *after* the reviewed commit, so
+        `review.md` is untracked there and the bound `state.yaml` is a worktree
+        change. A `git clean -fd`/`reset --hard` rewind would therefore delete
+        the Review artifact and unbind the verdict, so subcases restore the
+        mutated path alone instead. Hints must be cleared first: `git checkout`
+        skips a `skip-worktree` path.
+        """
+        proc = self._git("checkout", "--", rel)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def _assert_flagged_resume_blocker(self, rel, verdict):
+        """`resume` must surface the hidden change and change nothing.
+
+        Asserts the currentness blocker, that the recorded verdict was not
+        rewritten, and that the real index (bytes, nanosecond mtime and its
+        hint flags) plus the State and Review artifact bytes are untouched.
+        """
+        index = os.path.join(self.root, ".git", "index")
+        review_path = os.path.join(self.work, "review.md")
+        before_state = self.state_bytes()
+        with open(index, "rb") as fh:
+            before_index = fh.read()
+        before_index_mtime = os.stat(index).st_mtime_ns
+        before_flags = self._git("ls-files", "-v", "-z", "--", rel).stdout
+        with open(review_path, "rb") as fh:
+            before_review = fh.read()
+
+        result = self.cli("resume", self.TICKET)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ERROR", result.stdout)
+        self.assertIn("stale", result.stdout)
+        self.assertIn(rel, result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
+        self.assertEqual(self.read_state()["review"]["verdict"], verdict)
+        self.assertEqual(self.state_bytes(), before_state)
+        with open(index, "rb") as fh:
+            self.assertEqual(fh.read(), before_index,
+                             ".git/index bytes changed: resume wrote to it")
+        self.assertEqual(os.stat(index).st_mtime_ns, before_index_mtime,
+                         ".git/index mtime changed: resume rewrote it")
+        self.assertEqual(
+            self._git("ls-files", "-v", "-z", "--", rel).stdout, before_flags,
+            "index hints changed: the probe cleared flags in the real index")
+        with open(review_path, "rb") as fh:
+            self.assertEqual(fh.read(), before_review)
+
     def _mtimes(self):
         """st_mtime_ns for every non-Git file currently under the repo."""
         return {rel: os.stat(os.path.join(self.root, rel)).st_mtime_ns
@@ -410,6 +501,45 @@ class ResumeV2Test(V2CLITestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("Review artifact changed", result.stdout)
         self.assertNotIn("Traceback", result.stderr)
+
+    # -- flagged drift reaches the receiving session (HARDEN-010 Task 2) -----
+
+    def test_flagged_binding_is_stale(self):
+        """A hidden edit or deletion still blocks the receiving session.
+
+        The `resume` read path runs the same shared assessment as `set-review`,
+        so an `assume-unchanged` or `skip-worktree` hint must not let a stale
+        pass look current to the agent that picks the Ticket up. One bound Review
+        is seeded and each subcase restores only the mutated path, keeping the
+        binding the probe measures against.
+        """
+        rel = "src/feature.py"
+        self._seed_review()
+        for flag in ("assume-unchanged", "skip-worktree", "both"):
+            for kind in ("edit", "delete"):
+                with self.subTest(flag=flag, kind=kind):
+                    if kind == "edit":
+                        self._flagged_edit(flag, rel)
+                    else:
+                        self._flagged_delete(flag, rel)
+                    self._assert_flagged_resume_blocker(rel, "pass")
+                    self._clear_flag(rel, flag)
+                    self._restore_code(rel)
+
+    def test_flagged_binding_keeps_failed_review_identity(self):
+        """A recorded `changes_requested` stays stale, never a fresh pass.
+
+        The other verdict binds too, and the receiver must see the hidden change
+        as a blocker while the State still records `changes_requested`.
+        """
+        rel = "src/feature.py"
+        self._seed_failed_review()
+        for flag in ("assume-unchanged", "skip-worktree", "both"):
+            with self.subTest(flag=flag):
+                self._flagged_edit(flag, rel)
+                self._assert_flagged_resume_blocker(rel, "changes_requested")
+                self._clear_flag(rel, flag)
+                self._restore_code(rel)
 
 
 if __name__ == "__main__":
