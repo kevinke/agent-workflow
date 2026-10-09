@@ -1,7 +1,7 @@
 # Decision Scout hardening: Ticket index
 
-Status: historical 01–08 complete; 10 integrated (cc9be8f); 11 complete on branch
-`harden-011` (488 tests, `OK (skipped=4)`), awaiting integration; 12 published and
+Status: historical 01–08 complete; 10 integrated (cc9be8f); 11 integrated (cba2497,
+488 tests `OK (skipped=4)` on the merged result); 12 published and
 fresh-checkout verified; 09 pending safety prerequisites and budget
 Parent: [spec](spec.md)
 Disposition: [review mapping](review-disposition.md)
@@ -27,7 +27,7 @@ independently reviewable; the index does not replace its file.
 | [08 — Thin role entries and Windows launch diagnostics](issues/08-thin-roles-windows-runbook.md) | None | Complete (automated) | Each Harness follows one authoritative rule set, and a Windows policy failure has a bounded documented diagnostic path. |
 | [09 — Distinct Scout-to-senior model and Harness pilot](issues/09-paired-model-pilot.md) | 01, 02, 03, 04, 05, 06, 07, 08, 10, 11 | Pending fixes and live budget | A documented real experiment shows a cheap Scout handing structured facts to a different senior decision model across Harnesses on a bounded nontrivial task. |
 | [10 — Review drift independent of index hints](issues/10-index-flag-independent-review.md) | None | Complete (automated); integrated at cc9be8f | Flagged dirty/deleted code cannot obtain or retain either Review verdict; real index and racy-stat detection are preserved. |
-| [11 — Isolated reviewer verification and publication](issues/11-isolated-reviewer-publication.md) | 10 | Complete (automated + real-host boundary) on branch `harden-011`; awaiting integration | Verifier writes stay inside a restricted snapshot; only a current, identified review is published to live workflow records. |
+| [11 — Isolated reviewer verification and publication](issues/11-isolated-reviewer-publication.md) | 10 | Complete (automated + real-host boundary); integrated at cba2497 | Verifier writes stay inside a restricted snapshot; only a current, identified review is published to live workflow records. |
 | [12 — LF-stable installer template](issues/12-lf-stable-installer-template.md) | None | Published (86a823c); fresh-checkout verified | The protection template and installed output remain LF across six checkout scenarios; 400 tests pass. |
 
 ## Current follow-up frontier (2026-10-09)

@@ -2,7 +2,7 @@
 
 Ticket ID: HARDEN-011
 Type: task
-Status: complete (automated + real-host boundary) — branch `harden-011`, awaiting integration
+Status: complete (automated + real-host boundary) — integrated at cba2497
 Blocked by: 10
 Parent: [C10 reviewer isolation](../spec.md#c10--isolated-reviewer-verification-and-guarded-publication-harden-011)
 Source findings: O4; [disposition](../review-disposition.md)
@@ -98,7 +98,9 @@ module groups of 98 (`OK (skipped=2)`, 212.559s), 211 (`OK (skipped=1)`,
 symlink-privilege legs — unprivileged `os.symlink` returns `WinError 1314` on
 this host. No boundary leg skipped in this run: all six
 `test_review_boundary.ReviewBoundaryTest` cases exercised the real
-`linux-bwrap-v1` path.
+`linux-bwrap-v1` path. Re-run serially on the merged `master` at `cba2497`, the
+same three groups came back `Ran 98`/`Ran 211`/`Ran 179`, each `OK` with the same
+four skips.
 
 Real-host restriction, measured rather than asserted: `review_boundary.preflight`
 on a genuinely prepared context records `enforced: true`, `blocker: null`,
