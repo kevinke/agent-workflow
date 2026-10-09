@@ -913,15 +913,26 @@ class ReviewV2Test(V2CLITestCase):
         Clearing hints rewrites the disposable index copy, and git honors
         `core.splitIndex` (which its own `feature.manyFiles` recipe turns on) by
         splitting whatever index it writes — dropping an orphan
-        `sharedindex.<oid>` into the real common dir. Nothing is rewritten when
-        no entry carries a hint, and the rewrite that is needed passes
-        `--no-split-index`, so the common dir keeps exactly the files it had.
+        `sharedindex.<oid>` into the real common dir. The hint-free leg pins the
+        fix that closed the reported defect: nothing is rewritten at all when no
+        entry carries a hint, which is exactly the shape that used to create the
+        orphan. The hinted leg then asserts the same non-creation on the path
+        that does rewrite the copy.
 
-        The listing is taken with `os.listdir` immediately before each
-        assessment rather than through the shared snapshot: once the setting is
-        on, any Git command that touches the index — including `ls-files` in the
-        snapshot helper and the fixture's own `update-index` that sets the hint —
-        may split it, and that write must not be mistaken for the assessment's.
+        The hinted leg does not prove `--no-split-index` load-bearing. On this
+        Git build a small repository's index copy is not split by `update-index`
+        even with `core.splitIndex` on — removing the flag leaves this test
+        passing — so the flag is kept as defence in depth against git's
+        documented behavior, not as something pinned here.
+
+        The hint is set *before* the setting is enabled, because `update-index`
+        with `core.splitIndex` already on splits the real index itself, which
+        would hand the assessment a genuinely split index and send it down the
+        blocker path instead.
+
+        The listing is taken with `os.listdir` rather than through the shared
+        snapshot: the fixture's own `update-index` can rewrite the index between
+        the two legs, and that write must not be mistaken for the assessment's.
         """
         rel = "src/feature.py"
         reviewed = self._seed_review()
@@ -930,29 +941,33 @@ class ReviewV2Test(V2CLITestCase):
         def listing():
             return sorted(os.listdir(git_dir))
 
-        cfg = self._git("config", "core.splitIndex", "true")
-        self.assertEqual(cfg.returncode, 0, cfg.stderr)
-        self.addCleanup(self._git, "config", "--unset", "core.splitIndex")
+        def enable_split():
+            self.assertEqual(
+                self._git("config", "core.splitIndex", "true").returncode, 0)
+            self.addCleanup(self._git, "config", "--unset", "core.splitIndex")
 
-        # No hint set anywhere: the copy is never rewritten at all.
+        # No hint set anywhere: the copy is never rewritten, so nothing appears
+        # in the common dir and the tree still assesses as current.
+        enable_split()
         before = listing()
         self.assertEqual(review.code_drift(self.root, self.TICKET, reviewed,
                                            ".ai/work/T1/plan.md"), [])
         self.assertEqual(listing(), before,
                          "a hint-free assessment created files under .git")
+        self._git("config", "--unset", "core.splitIndex")
 
-        # Setting a hint runs `update-index` against the real index, which git
-        # splits once the setting is on. From there the assessment must refuse
-        # with the documented blocker instead of expanding the shared half, and
-        # it must still add nothing of its own — the non-empty blocker is also
-        # proof an unassessable tree is never reported as current.
+        # A hint set, the real index still unified: the copy *is* rewritten to
+        # clear it, and that rewrite must not split. Without `--no-split-index`
+        # this is exactly where the orphan `sharedindex.<oid>` appears.
         self._flagged_edit("both", rel)
+        enable_split()
         before = listing()
         drift = review.code_drift(self.root, self.TICKET, reviewed,
                                   ".ai/work/T1/plan.md")
-        self.assertTrue(any("split index" in item for item in drift), drift)
+        self.assertTrue(any(rel in item for item in drift), drift)
+        self.assertFalse(any("split index" in item for item in drift), drift)
         self.assertEqual(listing(), before,
-                         "a refused assessment created files under .git")
+                         "clearing hints created files under .git")
         self._unhint_and_rewind(rel)
 
     # -- consumer agreement on flagged staleness (HARDEN-010 Task 2) ---------
@@ -970,6 +985,7 @@ class ReviewV2Test(V2CLITestCase):
         """
         snap = self._snapshot(rel)
         proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertFalse(any(rel in line for line in
                              self._stale_lines(proc.stdout)), proc.stdout)
         self._assert_unchanged(rel, snap)

@@ -264,6 +264,9 @@ a repository shape whose currentness cannot be established even though every
 command succeeded — an index that is genuinely split, whose shared half this
 assessment does not expand — is reported as a blocker naming that limitation, and
 every command that checks the binding refuses there until the index is unified.
+A blocker is an inability to assess, not a change: the reporting prefixes are
+worded as drift ("the reviewed code changed since…", "review is stale…") and the
+blocker text follows them, so read the named limitation rather than the prefix.
 
 Both recorded verdicts stay under the same immutability contract after
 recording: `validate`, `resume`, and the mutation guards re-check a recorded

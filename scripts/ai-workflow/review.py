@@ -372,9 +372,10 @@ def _clear_index_hints(root, env):
     the real index (a missing redirect is refused outright).
 
     Only entries that actually carry a hint are rewritten. `ls-files -v -z`
-    marks an `assume-unchanged` entry with a lowercase stage letter and a
-    `skip-worktree` entry with `S`, while an unmerged entry carries `U` and an
-    ordinary staged entry carries an uppercase letter. Feeding *every* tracked
+    prefixes each record with a stage letter: `assume-unchanged` lowers it (so
+    `h` for a staged file) and `skip-worktree` replaces it with `S`, or `s` when
+    both bits are set. An ordinary staged entry keeps an uppercase letter and an
+    unmerged entry prints `M`, so both are excluded. Feeding *every* tracked
     path instead would break two ways: `update-index` refuses to mark an
     unmerged entry, so an ordinary in-progress merge conflict would fail the
     whole assessment and every consumer would report a Git-internal error
@@ -404,12 +405,14 @@ def _clear_index_hints(root, env):
         return
     payload = b"\0".join(hinted) + b"\0"
     for flag in ("--no-assume-unchanged", "--no-skip-worktree"):
-        # `--no-split-index` keeps a repository configured with
-        # `core.splitIndex`/`feature.manyFiles` from splitting the copy on
-        # write, which would drop an orphan `sharedindex.<oid>` into the real
-        # common dir from a check the contract calls read-only. A genuinely
-        # split index is refused earlier as a named blocker, so this never has
-        # to expand one.
+        # `--no-split-index` asks git not to split the copy it is about to
+        # write, so a repository configured with `core.splitIndex`/
+        # `feature.manyFiles` cannot drop an orphan `sharedindex.<oid>` into the
+        # real common dir from a check the contract calls read-only. Git does not
+        # split a small index on every build, so the early return above is what
+        # actually closed the reported case; this flag is defence in depth for the
+        # rewrite that is genuinely needed. A genuinely split index is refused
+        # earlier as a named blocker, so this never has to expand one.
         proc = _run_git(root, ["update-index", "--no-split-index", flag,
                                "-z", "--stdin"], env, input_bytes=payload)
         if proc.returncode != 0:
