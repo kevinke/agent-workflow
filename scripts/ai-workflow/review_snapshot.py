@@ -349,7 +349,7 @@ def _check_symlink(root, full, rel):
             "repository root" % rel)
 
 
-def _manifest(root, paths, kinds):
+def _manifest(root, paths):
     """{path: {kind, sha256, mode}} for the in-scope paths present under root.
 
     File hashes cover raw bytes; symlink hashes cover the link-target bytes.
@@ -534,7 +534,7 @@ def prepare(root, ticket_id, reviewed_commit, output):
             "cannot prepare a review snapshot: cannot read the in-scope "
             "repository content"):
         paths, kinds, ignore_rules = _scope_paths(root, ticket_id)
-        live_entries = _manifest(root, paths, kinds)
+        live_entries = _manifest(root, paths)
         inputs = _configured_inputs(root, ticket_id, data)
 
     try:
@@ -551,7 +551,7 @@ def prepare(root, ticket_id, reviewed_commit, output):
             _clone(root, clone_root, full_oid)
             _copy_raw_inputs(root, clone_root, inputs)
             os.makedirs(os.path.join(output, _SCRATCH_DIR), exist_ok=True)
-            snapshot_entries = _manifest(clone_root, paths, kinds)
+            snapshot_entries = _manifest(clone_root, paths)
             # The post-capture drift check proves capture itself changed
             # nothing; it runs against the live repository, not the snapshot.
             _require_clean_drift(root, ticket_id, full_oid, plan_path)
@@ -625,7 +625,7 @@ def assert_current(root, ticket_id, context_path):
     kinds = scope.get("paths") or {}
     scope_paths = sorted(kinds.keys())
     with _io_contract("cannot re-validate the review context"):
-        live_entries = _manifest(root, scope_paths, kinds)
+        live_entries = _manifest(root, scope_paths)
         if _canonical_sha(live_entries) != manifest.get("live_manifest"):
             raise contracts.ContractError(
                 "the live repository no longer matches the captured review "

@@ -687,13 +687,12 @@ def _pinned_paths(context):
     code or a captured verification input must not be able to slip past one.
     """
     scope = context.get("scope") or {}
-    kinds = dict(scope.get("paths") or {})
-    paths = set(kinds)
+    paths = set(scope.get("paths") or {})
     paths.update(context.get("inputs") or {})
     plan_path = (context.get("plan") or {}).get("path")
     if plan_path:
         paths.add(plan_path)
-    return sorted(paths), kinds
+    return sorted(paths)
 
 
 def _scope_identity(entries, context):
@@ -710,8 +709,8 @@ def _scope_identity(entries, context):
 
 def _pinned_identity(root, context):
     """(entries, canonical-JSON SHA-256) over the pinned scope, raw bytes."""
-    paths, kinds = _pinned_paths(context)
-    entries = review_snapshot._manifest(root, paths, kinds)
+    paths = _pinned_paths(context)
+    entries = review_snapshot._manifest(root, paths)
     return entries, review_snapshot._canonical_sha(entries)
 
 

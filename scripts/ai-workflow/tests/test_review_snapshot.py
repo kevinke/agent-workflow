@@ -494,9 +494,9 @@ class ReviewSnapshotTest(V2CLITestCase):
         roots = []
         real_manifest = review_snapshot._manifest
 
-        def recording_manifest(base, paths, kinds):
+        def recording_manifest(base, paths):
             roots.append(os.path.realpath(base))
-            return real_manifest(base, paths, kinds)
+            return real_manifest(base, paths)
 
         review_snapshot._manifest = recording_manifest
         try:
@@ -513,12 +513,12 @@ class ReviewSnapshotTest(V2CLITestCase):
         self.assertEqual(
             context["snapshot_manifest"],
             review_snapshot._canonical_sha(
-                real_manifest(clone_root, sorted(kinds), kinds)),
+                real_manifest(clone_root, sorted(kinds))),
             "the persisted snapshot identity is not the clone's own content")
         self.assertEqual(
             context["live_manifest"],
             review_snapshot._canonical_sha(
-                real_manifest(live_root, sorted(kinds), kinds)),
+                real_manifest(live_root, sorted(kinds))),
             "the persisted live identity is not the live tree's content")
 
     def test_context_manifest_failure_is_a_contract_error(self):

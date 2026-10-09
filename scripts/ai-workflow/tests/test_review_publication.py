@@ -321,7 +321,7 @@ class ReviewPublicationTest(V2CLITestCase):
         for index, (kind, script) in enumerate(
                 (("baseline", FAILING_BASELINE_SCRIPT),
                  ("probe", PROBE_EDIT_SCRIPT))):
-            before_entries = review_snapshot._manifest(repo, pinned, scope)
+            before_entries = review_snapshot._manifest(repo, pinned)
             before = review_snapshot._canonical_sha(before_entries)
             before_tree = self._tree(repo)
             run_id = "%032x" % (index + 1)
@@ -335,7 +335,7 @@ class ReviewPublicationTest(V2CLITestCase):
             if kind == "probe":
                 self._write_bytes(os.path.join(scratch, "probe-note.txt"),
                                   b"scratch write ok\n")
-            after_entries = review_snapshot._manifest(repo, pinned, scope)
+            after_entries = review_snapshot._manifest(repo, pinned)
             after = review_snapshot._canonical_sha(after_entries)
             after_tree = self._tree(repo)
             self._write_json(self._meta("runs", "%s.json" % run_id), {
@@ -1362,7 +1362,7 @@ class ReviewPublicationTest(V2CLITestCase):
         plan_rel = (self.context.get("plan") or {}).get("path")
         pinned = sorted(set(scope) | set(self.context["inputs"])
                         | ({plan_rel} if plan_rel else set()))
-        entries = review_snapshot._manifest(repo, pinned, scope)
+        entries = review_snapshot._manifest(repo, pinned)
         return entries, review_snapshot._canonical_sha(entries)
 
     def _record_extra_probe(self):
