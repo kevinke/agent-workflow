@@ -480,6 +480,71 @@ class ReviewSnapshotTest(V2CLITestCase):
             review_snapshot._manifest = real_manifest
         self.assertIn("simulated live read failure", str(ctx.exception))
 
+    def test_snapshot_identity_is_the_clone_not_the_live_tree(self):
+        """`snapshot_manifest` must be measured over the snapshot checkout.
+
+        Task 2 baselines the reviewer's residual-change report on this value, so
+        computing it from the live tree would report changes that never happened.
+        A clean reviewed tree gives live and snapshot identities that legitimately
+        COINCIDE, which is why asserting they differ would prove nothing; instead
+        pin which roots the capture pass actually measured, then compare each
+        persisted identity against that root's own content.
+        """
+        reviewed = self.prepare_v2_review()
+        roots = []
+        real_manifest = review_snapshot._manifest
+
+        def recording_manifest(base, paths, kinds):
+            roots.append(os.path.realpath(base))
+            return real_manifest(base, paths, kinds)
+
+        review_snapshot._manifest = recording_manifest
+        try:
+            context, output = self._prepare(commit=reviewed)
+        finally:
+            review_snapshot._manifest = real_manifest
+
+        live_root = os.path.realpath(self.root)
+        clone_root = os.path.realpath(os.path.join(output, "repo"))
+        self.assertEqual(roots, [live_root, clone_root],
+                         "the capture pass must measure the live tree then the "
+                         "clone, in that order")
+        kinds = context["scope"]["paths"]
+        self.assertEqual(
+            context["snapshot_manifest"],
+            review_snapshot._canonical_sha(
+                real_manifest(clone_root, sorted(kinds), kinds)),
+            "the persisted snapshot identity is not the clone's own content")
+        self.assertEqual(
+            context["live_manifest"],
+            review_snapshot._canonical_sha(
+                real_manifest(live_root, sorted(kinds), kinds)),
+            "the persisted live identity is not the live tree's content")
+
+    def test_context_manifest_failure_is_a_contract_error(self):
+        """A colliding `meta` path fails cleanly and rolls the context back."""
+        reviewed = self.prepare_v2_review()
+        real_clone = review_snapshot._clone
+
+        def clone_with_a_meta_file(root_, clone_root, full_oid):
+            real_clone(root_, clone_root, full_oid)
+            # `_write_context` runs last. A `meta` that is a regular file makes
+            # its makedirs raise even with exist_ok=True; that OSError used to
+            # escape untranslated, so the rollback ran and then re-raised raw.
+            with open(os.path.join(os.path.dirname(clone_root), "meta"),
+                      "wb") as fh:
+                fh.write(b"not a directory\n")
+
+        review_snapshot._clone = clone_with_a_meta_file
+        output = self._new_output("meta-collision")
+        try:
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review_snapshot.prepare(self.root, self.TICKET, reviewed, output)
+        finally:
+            review_snapshot._clone = real_clone
+        self.assertIn("cannot persist the snapshot manifest", str(ctx.exception))
+        self.assertFalse(os.path.exists(output))
+
     def test_unsafe_input_scopes_reject(self):
         """External/escaping inputs, external links and submodules refuse."""
         reviewed = self.prepare_v2_review()
@@ -597,8 +662,6 @@ class ReviewSnapshotTest(V2CLITestCase):
             review_snapshot._scope_paths(self.root, self.TICKET)
         self.assertIn("symlink", str(ctx.exception))
 
-    def test_linked_worktree_is_presented_as_snapshot(self):
-        """A linked worktree's context resolves against the linked root."""
     def test_linked_worktree_is_presented_as_snapshot(self):
         """A linked worktree's context resolves against the linked root."""
         self.prepare_v2_review()

@@ -88,6 +88,10 @@ def _remove_tree(path):
         for name in dirnames + filenames:
             full = os.path.join(dirpath, name)
             try:
+                # `os.access`/`os.chmod` follow a link to its target. Safe here:
+                # a context is built from a scope pass that already refused any
+                # link escaping the repository, and this only ever widens the
+                # writable bit on a tree that is about to be deleted.
                 if not os.access(full, os.W_OK):
                     os.chmod(full, stat.S_IWRITE | stat.S_IREAD)
             except OSError:
@@ -462,9 +466,10 @@ def _copy_raw_inputs(root, clone_root, inputs):
 
 def _clone(root, clone_root, full_oid):
     """Independent clone (`--no-local --no-checkout`) checked out at the OID."""
-    # No OSError handler here: `prepare` shields the whole capture pass, and an
-    # inner translation would escape the outer guard. Git is already reached by
-    # the drift and scope passes before this runs.
+    # No OSError handler here: `prepare` already shields the whole capture pass,
+    # so a local translation would only pre-empt the pass's message. (This is
+    # not a nesting hazard — `ContractError` is not an `OSError`.) Git is
+    # reached by the drift and scope passes before this runs.
     proc = subprocess.run(
         ["git", "clone", "--no-local", "--no-checkout", "--", root,
          clone_root], capture_output=True)
@@ -489,11 +494,14 @@ def _clone(root, clone_root, full_oid):
 def _write_context(output, manifest):
     """Persist meta/context.json exclusively from the supervisor."""
     meta_dir = os.path.join(output, _META_DIR)
-    os.makedirs(meta_dir, exist_ok=True)
     path = os.path.join(meta_dir, _CONTEXT_FILE)
     raw = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
     tmp = path + ".tmp"
     try:
+        # Inside the try, not before it: `exist_ok=True` still raises when
+        # `meta` exists as a file, and an OSError escaping here would roll the
+        # context back and then re-raise raw, reaching the CLI as a traceback.
+        os.makedirs(meta_dir, exist_ok=True)
         with open(tmp, "wb") as fh:
             fh.write(raw)
         os.replace(tmp, path)
