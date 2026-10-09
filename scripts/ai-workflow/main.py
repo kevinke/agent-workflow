@@ -13,6 +13,7 @@ Usage:
     ai-workflow register-plan <ticket-id> --path <plan> --total N
     ai-workflow set-gate <ticket-id> --gate <g> [--round N]
     ai-workflow prepare-review <ticket-id> --commit <oid> --output <dir>
+    ai-workflow run-review <ticket-id> --review-context <dir> --kind <k> -- <argv...>
     ai-workflow escalate <ticket-id> [opts]
     ai-workflow set-status <ticket-id> --status <s>
     ai-workflow resume <ticket-id>
@@ -36,6 +37,7 @@ import contracts
 import init
 import mutate
 import resume
+import review_boundary
 import review_snapshot
 import skills
 import start
@@ -45,8 +47,8 @@ import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
             "release", "complete-task", "register-plan", "set-gate", "escalate",
-            "set-status", "set-review", "prepare-review", "resume",
-            "archive-artifacts",
+            "set-status", "set-review", "prepare-review", "run-review",
+            "resume", "archive-artifacts",
             "install-skills", "upgrade", "upgrade-ticket"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
@@ -75,6 +77,15 @@ commands:
                       prepare an identified independent review snapshot
                       (independent clone + raw-byte Plan/input copies +
                       supervisor manifest) for isolated reviewer verification
+  run-review <ticket-id> --review-context <dir> --kind baseline|probe -- <argv...>
+                      run one verifier command under the enforced
+                      linux-bwrap-v1 host boundary inside a prepared review
+                      snapshot and record a supervisor receipt (stdout/stderr
+                      captured, real exit status, residual snapshot changes).
+                      Exits with the command's own status; a boundary blocker
+                      exits 1 and never falls back to an unconstrained run.
+                      Requires an available host boundary (bwrap via WSL on
+                      Windows); unsupported hosts report a named blocker.
   escalate <ticket-id> --scope S --reason "..." | --clear [--resolution TEXT]  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
   resume <ticket-id>  print a read-only continuation brief (exit 1 on ERROR blockers)
@@ -457,6 +468,84 @@ def cmd_prepare_review(args, root):
     return 0
 
 
+def _run_review_status(exit_code):
+    """Map the verifier's own status to a process exit status.
+
+    A failing verifier stays failing: the status is passed through untouched
+    when it is expressible, and an unexpressible one (a signal-reported or
+    Windows NTSTATUS value) becomes 255 rather than silently reading as
+    success. Failure is never transformed into success.
+    """
+    if exit_code == 0:
+        return 0
+    if isinstance(exit_code, int) and 0 < exit_code <= 255:
+        return exit_code
+    return 255
+
+
+def cmd_run_review(args, root):
+    """Boundary run: usage -> 2, contract/boundary refusal -> 1, else the
+    command's own exit status."""
+    usage = ("usage: ai-workflow run-review <ticket-id> --review-context "
+             "<directory> --kind baseline|probe -- <argv...>\n")
+    rest = args[1:]
+    if not rest or rest[0].startswith("--"):
+        sys.stderr.write(usage)
+        return 2
+    ticket_id = rest[0]
+    rest = rest[1:]
+    separator = next((index for index, item in enumerate(rest) if item == "--"),
+                     None)
+    if separator is None:
+        sys.stderr.write("run-review: the verifier command must follow a '--' "
+                         "separator\n%s" % usage)
+        return 2
+    options, inner = rest[:separator], rest[separator + 1:]
+    opts, err = _parse_options(options, {"--review-context", "--kind"})
+    if err:
+        sys.stderr.write("run-review: %s\n" % err)
+        return 2
+    context_path = opts.get("review-context")
+    kind = opts.get("kind")
+    if not context_path:
+        sys.stderr.write(usage)
+        return 2
+    if kind not in review_boundary.KINDS:
+        sys.stderr.write("run-review: --kind must be baseline or probe (got "
+                         "%r)\n" % (kind,))
+        return 2
+    if not inner:
+        sys.stderr.write(usage)
+        return 2
+    # The root/Ticket context is verified before anything is launched: a stale
+    # preparation baseline is refused up front, not discovered afterwards.
+    try:
+        review_snapshot.assert_current(root, ticket_id, context_path)
+    except contracts.ContractError as exc:
+        sys.stderr.write("run-review: %s\n" % exc)
+        return 1
+    try:
+        receipt = review_boundary.run(context_path, kind, inner)
+    except contracts.ContractError as exc:
+        sys.stderr.write("run-review: %s\n" % exc)
+        return 1
+    summary = ("kind=%s exit=%s changed=%d added=%d removed=%d boundary=%s"
+               % (receipt["kind"], receipt["exit_code"],
+                  len(receipt["changed_paths"]), len(receipt["added_paths"]),
+                  len(receipt["removed_paths"]),
+                  "enforced" if receipt["boundary"]["enforced"] else "not-enforced"))
+    line = "run-review: %s; receipt %s" % (summary, _receipt_path(context_path,
+                                                                   receipt))
+    stream = sys.stdout if receipt["exit_code"] == 0 else sys.stderr
+    stream.write(line + "\n")
+    return _run_review_status(receipt["exit_code"])
+
+
+def _receipt_path(context_path, receipt):
+    return os.path.join(context_path, "meta", "runs",
+                        "%s.json" % receipt["run_id"])
+
+
 def cmd_set_status(args, root):
     def apply(ticket_id, opts):
         st = opts.get("status")
@@ -551,6 +640,8 @@ def main(argv=None):
         return cmd_set_review(argv, root)
     if cmd == "prepare-review":
         return cmd_prepare_review(argv, root)
+    if cmd == "run-review":
+        return cmd_run_review(argv, root)
     if cmd == "escalate":
         return cmd_escalate(argv, root)
     if cmd == "set-status":
