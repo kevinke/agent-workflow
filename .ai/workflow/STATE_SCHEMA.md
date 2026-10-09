@@ -248,18 +248,22 @@ existing semantics.
 exemptions: neither hides an edit or a deletion from this assessment. Both bits
 are neutralized in a disposable copy of the index and never in the real index,
 which no read-only check or rejected mutation may rewrite, refresh, or change
-the byte content, nanosecond timestamp, or hint flags of. A relevant tracked
-path absent from the worktree because sparse checkout excluded it is drift or a
-named assessment blocker; the assessment never materializes it as a side effect.
-Clearing the hints rewrites the disposable copy's timestamp, so that copy's
-original nanosecond access and modification times are restored before the first
-comparison — the equal-size, colliding-mtime detection above therefore still
-applies after hint clearing rather than depending on the initial copy. An
-assessment that cannot establish currentness is rejected and never read as
-current: a Git or operating-system failure raises a named contract error, and a
-repository shape whose currentness cannot be established even though every
-command succeeded — a split index that cannot be safely expanded in the copy —
-is reported as a blocker naming that limitation.
+the byte content, nanosecond timestamp, or hint flags of — and which no such
+check may add a file beside, including in the repository's Git directory. Only
+entries that actually carry a hint are rewritten, so an ordinary in-progress
+merge conflict is still assessed and its conflicted path reported. A relevant
+tracked path absent from the worktree because sparse checkout excluded it is
+drift or a named assessment blocker; the assessment never materializes it as a
+side effect. Clearing the hints rewrites the disposable copy's timestamp, so
+that copy's original nanosecond access and modification times are restored
+before the first comparison — the equal-size, colliding-mtime detection above
+therefore still applies after hint clearing rather than depending on the initial
+copy. An assessment that cannot establish currentness is rejected and never read
+as current: a Git or operating-system failure raises a named contract error, and
+a repository shape whose currentness cannot be established even though every
+command succeeded — an index that is genuinely split, whose shared half this
+assessment does not expand — is reported as a blocker naming that limitation, and
+every command that checks the binding refuses there until the index is unified.
 
 Both recorded verdicts stay under the same immutability contract after
 recording: `validate`, `resume`, and the mutation guards re-check a recorded

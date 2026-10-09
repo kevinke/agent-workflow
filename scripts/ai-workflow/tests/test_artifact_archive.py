@@ -301,6 +301,12 @@ class ArtifactArchiveTest(V2CLITestCase):
             self.assertEqual(os.listdir(case_dir), [],
                              "refused export left output behind: %r"
                              % os.listdir(case_dir))
+            # Attribute the refusal to the stale binding, as validate/resume/done
+            # do, rather than accepting any exit-1 cause.
+            combined = proc.stdout + proc.stderr
+            self.assertNotIn("update-index", combined)
+            stale = self._stale_lines(combined)
+            self.assertTrue(any(rel in line for line in stale), combined)
             self.assertEqual(self.read_state()["review"]["verdict"], verdict)
             self._assert_unchanged(rel, snap)
         finally:

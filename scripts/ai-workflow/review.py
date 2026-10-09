@@ -369,25 +369,49 @@ def _clear_index_hints(root, env):
     """Clear assume-unchanged and skip-worktree bits in the disposable copy.
 
     `env["GIT_INDEX_FILE"]` must designate the copy; this never runs against
-    the real index (a missing redirect is refused outright). The tracked paths
-    are read from the copy with `ls-files -z` and fed as raw NUL-delimited
-    bytes to two separate `update-index` invocations (`--no-assume-unchanged`,
-    then `--no-skip-worktree`), so paths containing spaces, newlines or
-    non-ASCII bytes survive intact. Every Git failure raises
-    `contracts.ContractError`; there is no fallback to the hinted index.
+    the real index (a missing redirect is refused outright).
+
+    Only entries that actually carry a hint are rewritten. `ls-files -v -z`
+    marks an `assume-unchanged` entry with a lowercase stage letter and a
+    `skip-worktree` entry with `S`, while an unmerged entry carries `U` and an
+    ordinary staged entry carries an uppercase letter. Feeding *every* tracked
+    path instead would break two ways: `update-index` refuses to mark an
+    unmerged entry, so an ordinary in-progress merge conflict would fail the
+    whole assessment and every consumer would report a Git-internal error
+    instead of the drift it should; and honouring the repository's own
+    `core.splitIndex`/`feature.manyFiles` would split the copy, writing an
+    orphan `sharedindex.<oid>` into the real common dir from a check the
+    contract calls read-only.
+
+    Hinted paths are fed as raw NUL-delimited bytes to two separate
+    `update-index` invocations (`--no-assume-unchanged`, then
+    `--no-skip-worktree`), so paths containing spaces, newlines or non-ASCII
+    bytes survive intact. Every Git failure raises `contracts.ContractError`;
+    there is no fallback to the hinted index.
     """
     if not env or not env.get("GIT_INDEX_FILE"):
         raise contracts.ContractError(
             "refusing to clear index hints without a disposable index copy")
-    proc = _run_git(root, ["ls-files", "-z"], env)
+    proc = _run_git(root, ["ls-files", "-v", "-z"], env)
     if proc.returncode != 0:
         raise contracts.ContractError(
-            "git ls-files -z failed on the disposable index copy: %s"
+            "git ls-files -v -z failed on the disposable index copy: %s"
             % proc.stderr.decode("utf-8", "replace").strip())
-    payload = proc.stdout
+    hinted = [record[2:] for record in proc.stdout.split(b"\0")
+              if len(record) > 2
+              and (record[:1].islower() or record[:1] == b"S")]
+    if not hinted:
+        return
+    payload = b"\0".join(hinted) + b"\0"
     for flag in ("--no-assume-unchanged", "--no-skip-worktree"):
-        proc = _run_git(root, ["update-index", flag, "-z", "--stdin"], env,
-                        input_bytes=payload)
+        # `--no-split-index` keeps a repository configured with
+        # `core.splitIndex`/`feature.manyFiles` from splitting the copy on
+        # write, which would drop an orphan `sharedindex.<oid>` into the real
+        # common dir from a check the contract calls read-only. A genuinely
+        # split index is refused earlier as a named blocker, so this never has
+        # to expand one.
+        proc = _run_git(root, ["update-index", "--no-split-index", flag,
+                               "-z", "--stdin"], env, input_bytes=payload)
         if proc.returncode != 0:
             raise contracts.ContractError(
                 "git update-index %s failed on the disposable index copy: %s"
@@ -495,7 +519,10 @@ def code_drift(root, ticket_id, reviewed_commit, plan_path):
     hinted real index. Raises `contracts.ContractError` when Git is missing,
     `root` is not a work tree, the reviewed commit does not resolve, it is
     unrelated history, or the index assessment could not be prepared.
-    Read-only: it never writes.
+    Read-only: it changes no State, artifact or tracked file, and it neither
+    rewrites nor creates anything in the repository's Git directory — the
+    index-copy preparation and hint clearing happen in a disposable directory
+    that is removed afterwards.
     """
     _require_work_tree(root)
     _require_ancestor(root, reviewed_commit)

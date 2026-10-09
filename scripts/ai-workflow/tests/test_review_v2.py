@@ -406,7 +406,11 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(resume_proc.returncode, 1,
                          resume_proc.stdout + resume_proc.stderr)
         self.assertNotIn("Traceback", resume_proc.stderr)
-        self.assertIn("src/feature.py", resume_proc.stdout)
+        # Attribution is checked against the staleness lines: `resume` also names
+        # every path changed since the Evidence observed commit, which includes
+        # this file while the binding is still current.
+        stale = self._stale_lines(resume_proc.stdout)
+        self.assertTrue(any("src/feature.py" in line for line in stale), stale)
 
         self.assertEqual(self.state_bytes(), before_state)
         with open(review_path, "rb") as fh:
@@ -678,7 +682,7 @@ class ReviewV2Test(V2CLITestCase):
         index_path = Path(self.root, ".git", "index")
         lock_path = Path(self.root, ".git", "index.lock")
         review_path = os.path.join(self.work, "review.md")
-        for flag in ("assume-unchanged", "skip-worktree", "both"):
+        for flag in self.INDEX_HINTS:
             with self.subTest(flag=flag):
                 self.write_review("pass", reviewed_commit=reviewed)
                 self._racy_edit(rel)
@@ -859,6 +863,98 @@ class ReviewV2Test(V2CLITestCase):
                 proc = self._git("update-index", "--no-split-index")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    def test_unmerged_index_still_assesses_drift(self):
+        """An in-progress merge conflict must not break the assessment.
+
+        Clearing hints by rewriting *every* tracked path makes `update-index`
+        refuse the unmerged entry ("Unable to mark file"), which turned an
+        ordinary mid-merge repository into one where the shared assessment raised
+        a Git-internal error instead of reporting the drift it was asked about,
+        and all five consumers inherited that opaque refusal. Only entries that
+        actually carry a hint are rewritten, so a conflicted path is still named.
+        """
+        conflict = "src/other.py"
+        self._seed_review(extra_files={
+            conflict: "def other():\n    return 1\n"})
+        branch = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        # Diverge both sides of the same region so the merge cannot fast-forward.
+        self.assertEqual(
+            self._git("checkout", "-q", "-b", "side").returncode, 0)
+        self._write_file(conflict, "def other():\n    return 2\n")
+        self.assertEqual(
+            self._git("commit", "-q", "-am", "fixture: side edit").returncode, 0)
+        self.assertEqual(
+            self._git("checkout", "-q", branch).returncode, 0)
+        self._write_file(conflict, "def other():\n    return 3\n")
+        self.assertEqual(
+            self._git("commit", "-q", "-am", "fixture: main edit").returncode, 0)
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        merge = self._git("merge", "--no-commit", "side")
+        self.assertNotEqual(merge.returncode, 0, merge.stdout + merge.stderr)
+        self.assertIn("UU", self._git("status", "--porcelain").stdout)
+
+        drift = review.code_drift(self.root, self.TICKET, head,
+                                  ".ai/work/T1/plan.md")
+        self.assertTrue(any(conflict in item for item in drift), drift)
+        self.assertFalse(any("update-index" in item for item in drift), drift)
+
+        # The public command must reject because of drift, not because Git
+        # could not mark an unmerged entry.
+        self.write_review("pass", reviewed_commit=head)
+        proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        combined = proc.stdout + proc.stderr
+        self.assertNotIn("update-index", combined)
+        self.assertIn(conflict, combined)
+
+    def test_assessment_creates_nothing_in_git_dir(self):
+        """A read-only assessment must not create files inside `.git`.
+
+        Clearing hints rewrites the disposable index copy, and git honors
+        `core.splitIndex` (which its own `feature.manyFiles` recipe turns on) by
+        splitting whatever index it writes — dropping an orphan
+        `sharedindex.<oid>` into the real common dir. Nothing is rewritten when
+        no entry carries a hint, and the rewrite that is needed passes
+        `--no-split-index`, so the common dir keeps exactly the files it had.
+
+        The listing is taken with `os.listdir` immediately before each
+        assessment rather than through the shared snapshot: once the setting is
+        on, any Git command that touches the index — including `ls-files` in the
+        snapshot helper and the fixture's own `update-index` that sets the hint —
+        may split it, and that write must not be mistaken for the assessment's.
+        """
+        rel = "src/feature.py"
+        reviewed = self._seed_review()
+        git_dir = os.path.join(self.root, ".git")
+
+        def listing():
+            return sorted(os.listdir(git_dir))
+
+        cfg = self._git("config", "core.splitIndex", "true")
+        self.assertEqual(cfg.returncode, 0, cfg.stderr)
+        self.addCleanup(self._git, "config", "--unset", "core.splitIndex")
+
+        # No hint set anywhere: the copy is never rewritten at all.
+        before = listing()
+        self.assertEqual(review.code_drift(self.root, self.TICKET, reviewed,
+                                           ".ai/work/T1/plan.md"), [])
+        self.assertEqual(listing(), before,
+                         "a hint-free assessment created files under .git")
+
+        # Setting a hint runs `update-index` against the real index, which git
+        # splits once the setting is on. From there the assessment must refuse
+        # with the documented blocker instead of expanding the shared half, and
+        # it must still add nothing of its own — the non-empty blocker is also
+        # proof an unassessable tree is never reported as current.
+        self._flagged_edit("both", rel)
+        before = listing()
+        drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                  ".ai/work/T1/plan.md")
+        self.assertTrue(any("split index" in item for item in drift), drift)
+        self.assertEqual(listing(), before,
+                         "a refused assessment created files under .git")
+        self._unhint_and_rewind(rel)
+
     # -- consumer agreement on flagged staleness (HARDEN-010 Task 2) ---------
     # `_snapshot`, `_assert_unchanged` and the hint primitives are inherited
     # from `IndexHintFixture` in `v2_support`.
@@ -995,7 +1091,7 @@ class ReviewV2Test(V2CLITestCase):
 
         Task 1 pins the no-false-positive rule at the assessment level; this pins
         it where a future probe that rejected any hinted path would regress:
-        while both bits are set on a present, unmodified tracked file,
+        while either or both bits are set on a present, unmodified tracked file,
         `validate` and `resume` stay silent and write nothing, and only then may
         the `review -> done` gate succeed. The done call legitimately mutates
         State, so the byte-preservation check runs before it.

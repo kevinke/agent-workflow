@@ -561,6 +561,12 @@ class IndexHintFixture:
         Captured *before* each probe rather than after: a baseline taken once a
         probe has already run would compare that probe's own write against
         itself, so the snapshot has to precede the first command being judged.
+
+        The `.git` directory's file set is part of it deliberately. An
+        allow-list of index bytes, timestamps and flags is blind to a check that
+        *creates* a new file in the repository — an orphan `sharedindex.<oid>`
+        written into the common dir by honoring `core.splitIndex`, say — so the
+        file set is compared, not only the files the test foresaw.
         """
         index_path = os.path.join(self.root, ".git", "index")
         review_path = os.path.join(self.work, "review.md")
@@ -575,6 +581,7 @@ class IndexHintFixture:
             "flags": self._git("ls-files", "-v", "-z", "--", rel).stdout,
             "review": review_bytes,
             "review_mtime": os.stat(review_path).st_mtime_ns,
+            "gitdir": sorted(os.listdir(os.path.join(self.root, ".git"))),
         }
 
     def _stale_lines(self, text):
@@ -607,6 +614,9 @@ class IndexHintFixture:
                              "review.md bytes changed")
         self.assertEqual(os.stat(review_path).st_mtime_ns,
                          snap["review_mtime"])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.root, ".git"))),
+                         snap["gitdir"],
+                         "the probe created or removed a file under .git")
 
 
 class V2CLITestCase(IndexHintFixture, unittest.TestCase):
