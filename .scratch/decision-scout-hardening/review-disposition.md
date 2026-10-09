@@ -1,6 +1,6 @@
 # Review disposition — 2026-10-08
 
-Status: all automated findings verified (green run of record 2026-10-09); HARDEN-009 open
+Status: original automated findings verified; S-10/O4 open; O5 verified locally/pending commit; HARDEN-009 awaits 10/11 and live budget
 Source: [full review with reproductions](../decision-scout-port/post-implementation-review-2026-10-08.md)
 Baseline reviewed: `5ae8e27..00a3904`; the follow-up fixes have since landed on branch `decision-scout-hardening` (see Evidence status below).
 Spec: [supplemental contracts](spec.md)
@@ -27,6 +27,9 @@ one owning ticket; combined findings share a verifiable outcome.
 | O1: Scout and decision share reported model | Measurement gap; supplemental experiment | C9 | HARDEN-009 | Distinct actual decision model and cross-Harness receiving context demonstrated. |
 | O2: unfilled Handoff validates | New syntactic gate; acceptance stays independent | C7 | HARDEN-007 | Early drafts allowed; unchanged placeholders rejected at transfer boundaries. |
 | O3: Windows launch setup | Operational follow-up; host-specific guidance | C8 | HARDEN-008 | Diagnosis and limits captured in thin adapter docs; no global permission changes. |
+| S-10: index flags hide dirty tracked files | Existing currentness defect; C2 follow-up | C2 index flags | HARDEN-010 | Public set-review reproduction admits changed source with assume-unchanged; both flags need byte-preserving regressions. |
+| O4: reviewer can write live tests/fixtures temporarily | New enforced isolation/publication contract | C10 | HARDEN-011 | External incident is unattributed; snapshot + actual denied-live-write boundary + identity-checked publication required. |
+| O5: protection template CRLF breaks byte assertions | Local checkout/installation defect | C11 | HARDEN-012 | Narrow LF attribute rule and template restoration verified locally: 17 focused tests, six clone/install cases and 400 integration tests; commit pending. |
 
 ## Decisions that constrain implementation
 
@@ -44,7 +47,23 @@ one owning ticket; combined findings share a verifiable outcome.
 6. Original SCOUT-008 remains complete. HARDEN-009 validates a different claim;
    its live run consumes a newly authorized available budget, not the old cap.
 
-## Evidence status and delivery priority
+## Latest follow-up evidence (2026-10-09)
+
+S-10 remains open: the public v2 fixture rejected changed src/feature.py, then
+recorded pass after assume-unchanged was set; skip-worktree also hid drift.
+Clearing flags was independently observed to change the copied index mtime,
+so the repair must retain earlier racy-stat protection. O4 also remains open:
+this repository cannot attribute the user's external temporary-test incident,
+and a restored final tree is not proof of an enforced write boundary. The
+Protocol/provenance requirements are now written; runtime enforcement is not.
+
+O5 is verified locally, not published: root attributes pin only the installer
+protection template, whose restored LF bytes match HEAD; 400 tests passed in
+163.087s and all six actual clone/install cases passed. The fix did not change
+other pre-existing tracked bytes or historical pilot packages. Details live in
+Ticket 12. Original 01–08 completion below remains the historical run record.
+
+## Original evidence status and delivery priority
 
 Update 2026-10-09 — every fix-bearing finding now has a landed, independently
 reviewed fix on `decision-scout-hardening`: S-01/ST-01/S-09 (HARDEN-001:
@@ -82,3 +101,7 @@ authorized session budget.
 - 2026-10-08 — User requested spec supplementation, separate tickets and development plans; all are prepared as documentation, with runtime work pending.
 - 2026-10-09 — Evidence updated after integration: landed fixes are listed per finding in Evidence status with the slices' named-test evidence from the single full-suite run. S-02 keeps one open caveat (racy done/resume fixture awaiting a rerun-of-record). O1/HARDEN-009 stays pending — no live sessions were run and no budget was authorized; historical pilot results remain unchanged.
 - 2026-10-09 — Caveat closed by the green run of record at 483a423: after the racy fixture hardening (`test_review_v2.py` only, scoped re-review passed), the full suite finished `OK (skipped=2)` with exit 0 including the racy done/resume regression. All fix-bearing findings S-01..S-09, ST-01..ST-03 and O2/O3 now have landed fixes plus full-suite evidence; O1/HARDEN-009 remains open — still no live run and no authorized session budget.
+
+- 2026-10-09 — Added S-10/O4/O5 disposition and Tickets 10–12. 10/11 have
+  specifications but no implemented fix; 12 is verified locally/pending commit.
+  HARDEN-009 launch now consumes 10/11 while retaining its separate budget gate.

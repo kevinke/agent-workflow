@@ -1,11 +1,12 @@
 # Decision Scout hardening: review follow-up spec
 
-Status: ready-for-agent
+Status: follow-up specifications ready; HARDEN-010/011 await planning; HARDEN-012 verified locally
 Date: 2026-10-08
+Updated: 2026-10-09
 Parent: [Decision Scout baseline](../decision-scout-port/spec.md)
 Evidence: [post-implementation review](../decision-scout-port/post-implementation-review-2026-10-08.md)
 Disposition: [finding-by-finding decisions](review-disposition.md)
-Delivery: [nine tickets](tickets.md)
+Delivery: [ticket index](tickets.md)
 Plans: [development plan](../../docs/superpowers/plans/2026-10-08-scout-hardening.md)
 
 ## Problem Statement
@@ -89,6 +90,42 @@ the copied-index Git assessment honor racy-stat detection without changing the
 original index, index timestamps, State or artifacts. Cover staged, unstaged,
 untracked and deleted paths under existing relevant-path rules. A sleeping or
 retrying test is not the repair.
+
+#### Index-flag follow-up (HARDEN-010)
+
+Added 2026-10-09; implementation pending. See [Ticket 10](issues/10-index-flag-independent-review.md).
+
+`assume-unchanged` and `skip-worktree` are Git index hints, not Workflow
+Protocol exemptions. A relevant tracked file whose on-disk content changed or
+was deleted must still invalidate either recorded verdict even when either or
+both flags are set. A present, unchanged flagged file must not be rejected
+merely because it carries a flag. Keep the exact existing Ticket-record
+exemptions, registered-Plan treatment and untracked-path rules.
+
+Neutralize these hints only in the disposable index, or independently assess
+the relevant worktree contents with equivalent Git comparison semantics. Never
+clear flags in the real index, change repository/global Git configuration, or
+materialize sparse-checkout paths as a side effect of verification. Flag updates
+rewrite the disposable index's mtime: the implementation must retain the
+racy-stat detection guarantee after that update, not assume the initial
+`copy2` is sufficient. Reject an assessment that cannot establish currentness;
+do not fall back to the real index or return an empty drift result on failure.
+
+A relevant tracked path absent from disk with `skip-worktree` set is not
+silently clean. Report deletion drift or an explicit assessment blocker naming
+the missing path, including when sparse checkout caused the absence. This
+follow-up does not add transparent sparse-checkout support; a caller must
+provide the required worktree contents before a clean assessment can succeed.
+
+The shared assessment applies to `set-review` for both verdicts, recorded
+Review checks in `validate` and `resume`, the `review -> done` gate and verified
+archive export. Read-only checks and rejected mutations preserve the real
+index's bytes, flags and nanosecond mtime, State, artifacts and an existing real
+`index.lock`. A refused export leaves no output or partial archive.
+
+The earlier HARDEN-002 timestamp-race acceptance remains historical evidence;
+it does not establish this newly identified flag coverage. This follow-up
+remains open until the regressions below and integration verification pass.
 
 ### C3 — Recoverable senior resolution and bootstrap (HARDEN-003)
 
@@ -209,6 +246,69 @@ Real sessions require an available explicitly authorized budget at execution;
 the old exhausted pilot allocation is not reused. This ticket's runbook can be
 prepared now; its live acceptance remains pending until the run actually occurs.
 
+### C10 — Isolated reviewer verification and guarded publication (HARDEN-011)
+
+Independent context is necessary but does not isolate filesystem writes. Review
+verification runs in a disposable repository snapshot of the immutable reviewed
+commit, with independent Git metadata. Source, tests, fixtures, configuration
+and Git metadata in the live repository are outside the verifier's write
+boundary. Temporary probes, test rewrites, generated files and build caches are
+allowed only in the snapshot or its designated scratch/output directories.
+Restoring live bytes afterward does not make a prohibited write acceptable.
+
+Use an existing Harness/host per-session restriction that actually denies live
+writes; a prompt, a clean final diff, chmod that the same unrestricted process
+can undo, or copying the repository alone is not enforcement. A linked worktree
+that shares writable live Git metadata is not sufficient. Record the supported
+boundary and a controlled denial check against a disposable protected sentinel
+before verification, never attempt the check against real source. If the host
+cannot enforce the boundary, report an isolation blocker and route resolution;
+do not publish a passing review or automatically weaken permissions. This
+contract adds no permission service, model dispatcher or billable session.
+
+Record the reviewed full commit ID, initial snapshot content identity, live
+baseline identity and exact raw hashes of the registered Plan and verification
+inputs. Preserve registered artifact bytes and paths when preparing the
+snapshot. Git checkout normalization of source text must not be confused with
+code drift; capture snapshot and live baseline byte manifests separately.
+Exclude generated outputs only through a declared scope, not a silent omission.
+Probe-modified tests do not replace the baseline acceptance suite: distinguish
+baseline runs from probe runs and record what each can establish.
+
+The Reviewer remains the sole author of the technical verdict. A separately
+controlled publication step may run under checkpoint-handoff coordination and
+write only the Ticket's Review, State and Handoff through the existing public
+commands. It supplies no new technical verdict and does not repair source or
+change phase as part of publication. Before publication, re-read the relevant
+live code, Plan and inputs against the captured baseline using the corrected
+C2 assessment. On identity drift or unavailable verification, reject publication
+without a new verdict or overwriting existing workflow records; collect a fresh
+snapshot and obtain a new review. Pre-existing relevant dirty code cannot be
+approved by omitting it from the snapshot. Preserve the existing four exact
+Ticket-record drift exemptions and v1 compatibility.
+
+Verification provenance belongs to ARTIFACTS.md; the operational boundary
+belongs to PROTOCOL.md, with role and adapter pointers rather than copied rules.
+New reviews must identify their snapshot, restriction, actual commands/results,
+probe changes and publication check. Existing reviews remain historical evidence;
+never invent isolation provenance for them. Their original bindings retain their
+existing semantics. Runtime enforcement and delivery remain pending HARDEN-011.
+
+### C11 — LF-stable installer protection template (HARDEN-012)
+
+The kit's `.ai/workflow/templates/work.gitattributes` must be the bytes
+`** -text\n` in a checkout and when copied into a fresh installation. A root
+Git attribute pins only that template to `text eol=lf`; restore the existing
+worktree template to LF once. Keep the installer's copy and never-overwrite
+semantics. Do not change global Git settings, normalize all repository files,
+rewrite bound pilot artifacts or change raw-byte SHA-256 semantics.
+
+Verify both LF and CRLF source forms through commit, clone and actual `init`
+with local `core.autocrlf=true`, `false` and `input`; all six scenarios produce
+LF. Existing install/transport tests and the complete suite remain green. This
+fix was implemented and verified locally on 2026-10-09 (400 tests passed); its
+repository publication is pending. This documentation step performs no commit.
+
 ## Testing Decisions
 
 Use the existing public-command temporary-Git-repository seam for binding,
@@ -217,6 +317,38 @@ persisted fields and byte preservation rather than exact error prose. Use a
 controlled copied-index experiment to force timestamp equality without sleeps,
 then exercise that dirty edit through set-review, done and resume. Existing
 lifecycle and installed-kit tests protect v1 behavior and command agreement.
+
+For the index-flag follow-up, use disposable Git repositories and public CLI
+commands. Cover `assume-unchanged`, `skip-worktree` and their combination:
+
+- An edited or deleted relevant tracked file cannot record either verdict;
+  rejected `set-review` preserves State bytes. Include a tracked test/fixture
+  and the registered Plan, not only production code.
+- Record a current Review first, then flag and modify code: `validate`,
+  `resume`, `advance --to done` and `archive-artifacts` must report or reject
+  the stale binding. Export must not leave an output.
+- Present, unchanged flagged files remain acceptable, and the existing exact
+  Ticket-record exemptions remain unchanged.
+- A missing skip-worktree path, including a real sparse-checkout fixture,
+  returns drift or a named assessment blocker, never a silent clean result.
+- Combine flag clearing with the existing equal-size/cached-mtime collision;
+  the dirty edit remains detectable after the disposable index is rewritten.
+- Assert real index bytes, flags and nanosecond mtime, State and artifact bytes
+  remain unchanged; repeat with a pre-existing real `index.lock`. A failed
+  disposable-index assessment must reject without touching the real index.
+
+For C10 use a disposable live/snapshot pair: a denied live-write sentinel,
+allowed snapshot probes, a changed live source/Plan/input before publication,
+shared writable Git metadata, unavailable restrictions, failed commands and
+misreported probe scope. Rejected publication preserves existing workflow
+records. Probe execution preserves live source/test/fixture and Git bytes;
+baseline acceptance runs remain distinct. Automated helper tests establish the
+helper's boundary only; an actual Harness adapter restriction needs its own
+recorded host check and is never inferred from a mocked launch. Live model
+sessions still require separately authorized available budget.
+
+For C11 retain the existing LF-output assertions and verify the six actual
+checkout/install scenarios. Do not weaken assertions to hide platform drift.
 
 Test raw bytes through commit and fresh checkout with both autocrlf settings,
 including mixed line endings and an external Plan. Check archive bindings after
@@ -245,4 +377,7 @@ The [disposition table](review-disposition.md) distinguishes existing bugs from
 clarified/new contracts. Existing review, preservation and traceability promises
 remain requirements; they do not become optional enhancements because a pilot
 passed. New archive export and distinct-model supplementation are explicit
-follow-up scope. Implementation details and file ownership live in the plans.
+follow-up scope. Implementation details and file ownership for 01–09 live in their historical
+plans. Tickets 10–11 declare bounded ownership but still require an approved
+implementation plan before execution; Ticket 12 records the local fix. The
+HARDEN-009 live run waits for 10 and 11 without reusing its old budget.

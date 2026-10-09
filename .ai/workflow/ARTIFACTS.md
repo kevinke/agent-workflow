@@ -226,6 +226,32 @@ Required H2 sections, in order, after Metadata: `Acceptance results`,
 substantive for a `changes_requested`. Extra nonreserved prose sections are
 allowed.
 
+### Verification provenance for new isolated reviews
+
+Under `Verification results`, a new isolated review records:
+
+- The full reviewed commit and separate live/snapshot baseline content identities
+  (path/content manifests or immutable referenced manifests), the registered
+  Plan's raw-byte hash and the raw identities of relevant verification inputs.
+- The snapshot location, permitted output scope, actual Harness/host restriction
+  and the controlled disposable-sentinel denial result. Do not copy private
+  machine paths or global settings into shared project files; use a portable
+  snapshot identifier and repository-relative evidence references.
+- Actual commands, execution directory/scope, exit status and observed results,
+  including failures and unavailable checks. Static reading is not a test run.
+- Every temporary probe's affected paths and behavior, baseline versus modified
+  test runs, residual snapshot changes, limitations and what each result proves.
+  Restoring probe bytes is not grounds to omit the execution record.
+- The guarded publication step's currentness check and any mismatch/blocker.
+  Only a successful check permits publication of the reviewer's verdict.
+
+Keep Review Metadata and existing raw-byte bindings unchanged. These provenance
+requirements apply to newly produced isolated reviews; old artifacts retain
+historical validity and are not retroactively presented as isolation evidence.
+Structural report checks cannot attest that a host denied writes or that a
+narrative is true. The launch boundary needs actual denial evidence; enforcement
+and machine validation for new reviews remain pending HARDEN-011.
+
 Recording the verdict with `set-review <ticket-id> --verdict pass|changes_requested`
 binds it to the Review artifact's raw-byte SHA-256, the full resolved commit ID
 (stored once in State, for both verdicts), and the registered Plan SHA-256 (see

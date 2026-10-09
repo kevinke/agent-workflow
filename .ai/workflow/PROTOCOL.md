@@ -123,6 +123,46 @@ Before stopping work on a ticket:
 
 A draft handoff is permitted earlier in the lifecycle; the same readiness problems are surfaced as validate WARN notices there. At the transfer boundaries the handoff must be concrete (`ARTIFACTS.md` defines the syntax): entering `review`, completing to `done`, continuing in `review`/`done` (validate and `resume` report it through the shared phase checks), and clearing an implementation/review recovery. Template tokens, whole-field placeholders and placeholder bullets in the structured sections are rejected at those boundaries; explicit `None` and a justified `N/A — reason` are legitimate where no item exists. Readiness is syntactic: it is not proof that the handoff's narrative is true or that acceptance passed — human review still establishes acceptance.
 
+### Reviewer verification isolation and publication
+
+The reviewer verifies in a disposable snapshot of the immutable reviewed commit
+with independent Git metadata. The verification process may write probes,
+modified tests, fixtures, caches and generated output only inside that snapshot
+or designated scratch/output directories. It may not write live source, tests,
+fixtures, configuration or Git metadata, even if it intends to restore them.
+Independent context and a final clean diff alone do not establish isolation.
+
+An existing per-session Harness/host boundary must actually deny live writes.
+Record its supported scope and demonstrate denial using a disposable protected
+sentinel before verification. Copying alone, a prompt-only prohibition or a
+restriction the unrestricted verifier can undo is not evidence of enforcement.
+Sharing writable Git metadata with the live tree is not an isolated snapshot.
+When enforcement is unavailable, report an isolation blocker and escalate;
+do not automatically weaken permissions or publish a passing verdict.
+
+Capture the reviewed full commit, separate live/snapshot baseline identities,
+and the exact registered Plan/input hashes. Retain artifact raw bytes and path
+references; legitimate source checkout newline conversion is not code drift.
+Run baseline acceptance independently of any probe-modified tests and record
+both scopes. ARTIFACTS.md owns the verification-provenance report fields.
+
+The Reviewer authors the technical verdict. A separate, guarded publication
+step coordinated by checkpoint-handoff may publish the reviewer's exact report
+and update only this Ticket's Review, State and Handoff using public commands.
+It supplies no technical judgment and performs no source repair or phase
+transition during publication. Re-read the relevant live code, Plan and inputs
+before publication; any changed baseline or unavailable currentness check
+rejects publication without a new verdict or overwriting existing records.
+Relevant dirty code cannot be omitted from the snapshot to obtain approval.
+A mismatch requires a fresh snapshot and new independent review.
+
+The index-drift and exact Ticket-record exemptions still apply. Review
+provenance cannot prove acceptance or reconstruct past transient writes.
+Historical reviews keep their original binding semantics; do not fabricate
+isolation claims for them. This is the required procedure; current `set-review`
+alone does not implement snapshot preparation, permission enforcement or
+guarded report publication. Those mechanisms are pending HARDEN-011.
+
 ### Portable continuation
 
 A receiver resumes from persisted state and artifacts, never from chat history:
