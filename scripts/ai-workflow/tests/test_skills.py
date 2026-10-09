@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import contracts  # noqa: E402
 import main  # noqa: E402
+import mutate  # noqa: E402
+import review_boundary  # noqa: E402
 import skills  # noqa: E402
 
 # this file: scripts/ai-workflow/tests/test_skills.py -> 4 levels up to kit root.
@@ -154,6 +156,55 @@ PROTOCOL_ADAPTER_SCOPE = [
 PROTOCOL_FALSE_SCOPE = ["records why Windows is not"]
 
 ISOLATION_SECTION = 'Reviewer verification isolation and publication'
+
+# A guarded publication refuses a report whose cited runs do not distinguish a
+# baseline from a probe (`review_publication._validate_runs`, over
+# `review_boundary.KINDS`), so the rule belongs on the surfaces an agent reads
+# before authoring: the scaffold it copies, the protocol that routes it, and the
+# contract that owns the key list.
+RUN_KIND_PLACES = [
+    ((".ai", "workflow", "templates", "review.md"),
+     "A guarded publication needs both kinds of run named: `runs` must carry at "
+     "least one `baseline` acceptance run **and** at least one `probe` run",
+     "a baseline-only review is unpublishable however honest it is"),
+    ((".ai", "workflow", "PROTOCOL.md"),
+     "a guarded publication refuses a report whose cited runs do not distinguish "
+     "a `baseline` acceptance run from a `probe` run, so both kinds have to be "
+     "named and no recorded receipt may go uncited", None),
+    ((".ai", "workflow", "ARTIFACTS.md"),
+     "the list has to distinguish the two kinds — at least one `baseline` "
+     "acceptance run and at least one `probe` run", None),
+]
+
+# The checkpoint-handoff entry gate, pinned both ways. It must stay scoped to
+# ordinary phase work with the documented publication exception reachable, and it
+# must keep the limit that a mechanical checkpoint-handoff supplies no technical
+# verdict. `HANDOFF_UNSCOPED_GATE` is the dead-end phrasing BLOCKING-1 measured:
+# read literally it handed the role back at step 2 and made the ticket's
+# publication mechanism unreachable through the documented route.
+HANDOFF_UNSCOPED_GATE = "`checkpoint-handoff`. If not, hand back."
+HANDOFF_VERDICT_LIMIT = "supplies no technical verdict"
+HANDOFF_VERDICT_WIDENINGS = [
+    "supplies the technical verdict",
+    "authors the verdict",
+    "writes its own verdict",
+    "a verdict of its own",
+]
+
+# An installed target never receives `adapters/` (init installs `.ai/workflow/`
+# only), so the runbooks have to be pointed at where they do live, and the host
+# answer an installed target acts on has to come from its own preflight record.
+RUNBOOK_LOCATED = "live in the **ai-workflow source repository**"
+PREFLIGHT_IS_THE_HOST_ANSWER = [
+    "the runtime answer for any host is the prepared",
+    "context's own `meta/preflight.json`, which either records an enforced "
+    "boundary or fails closed with a named blocker and no receipt",
+]
+PREPARATION_OWNER = "is run by the trusted coordinator that also performs the"
+STRAY_ARTIFACT_ROUTE = "removing or ignoring the stray artifact and running"
+
+_SHA256_LITERAL = re.compile(r"[0-9a-f]{64}\Z")
+_OPTION_TOKEN = re.compile(r"--[a-z][a-z-]*")
 
 
 def _flat(text):
@@ -499,6 +550,259 @@ class SkillsLintTest(unittest.TestCase):
             template, r"[0-9a-f]{64}",
             "the shipped template carries a full SHA-256: a draft must never "
             "look like a receipt")
+
+    def test_shipped_template_runs_name_the_pair_publication_demands(self):
+        """The scaffold models the run set a guarded publication cites.
+
+        `review_publication._validate_runs` refuses a report whose cited runs do
+        not distinguish both kinds, so a `runs` example carrying only a baseline
+        teaches a reviewer to author a report the shipped mechanism rejects — the
+        reviewer learns the rule from a refusal instead of from the template. The
+        draft values stay placeholders on purpose (`contracts` refuses
+        placeholders: an unfilled scaffold proves nothing), so what is pinned is
+        every run-level structural rule `contracts.parse_artifact` applies, read
+        from `contracts`' own constants.
+        """
+        template = _doc(".ai", "workflow", "templates", "review.md")
+        runs = _template_provenance(template)["runs"]
+        kinds = [run["kind"] for run in runs]
+        self.assertEqual(sorted(kinds), sorted(contracts.PROVENANCE_RUN_KINDS),
+                         "the template's `runs` example must name one baseline "
+                         "and one probe run: guarded publication refuses a "
+                         "report that does not distinguish both kinds (%r)"
+                         % (kinds,))
+        self.assertEqual(set(kinds), set(review_boundary.KINDS),
+                         "the template's run kinds and the boundary's own kinds "
+                         "no longer agree (%r vs %r)"
+                         % (kinds, review_boundary.KINDS))
+        for kind in contracts.PROVENANCE_RUN_KINDS:
+            self.assertEqual(kinds.count(kind), 1,
+                             "the template ships %d %r run examples, expected 1"
+                             % (kinds.count(kind), kind))
+        for index, run in enumerate(runs):
+            owner = "runs[%d]" % index
+            self.assertEqual(set(run), set(contracts.PROVENANCE_RUN_KEYS),
+                             "the template's %s example and contracts.py no "
+                             "longer agree on the run keys" % owner)
+            self.assertIsInstance(run["run_id"], str,
+                                  "field %r must declare a run_id" % owner)
+            self.assertTrue(run["run_id"],
+                            "field %r must declare a non-empty run_id" % owner)
+            self.assertIn(run["kind"], contracts.PROVENANCE_RUN_KINDS,
+                          "field %r must be a %s run, got %r"
+                          % (owner, " or ".join(contracts.PROVENANCE_RUN_KINDS),
+                             run["kind"]))
+            argv = run["argv"]
+            self.assertTrue(isinstance(argv, list) and argv
+                            and all(isinstance(item, str) and item
+                                    for item in argv),
+                            "field %r.argv must be a non-empty list of arguments"
+                            % owner)
+            self.assertIsInstance(run["exit_code"], int,
+                                  "field %r.exit_code must be an integer, got %r"
+                                  % (owner, run["exit_code"]))
+            self.assertNotIsInstance(run["exit_code"], bool,
+                                     "field %r.exit_code must be an integer, not "
+                                     "a boolean" % owner)
+            for key in ("stdout_sha256", "stderr_sha256", "snapshot_before",
+                        "snapshot_after"):
+                value = run[key]
+                # Each is a receipt slot: a real digest or a marked draft that an
+                # author replaces, never prose no hash can stand in for.
+                self.assertTrue(isinstance(value, str)
+                                and (_SHA256_LITERAL.match(value)
+                                     or "draft" in value),
+                                "field %r.%s is neither a SHA-256 nor a marked "
+                                "draft: %r" % (owner, key, value))
+
+    def test_run_kind_rule_is_stated_where_an_agent_reads_it(self):
+        """The both-kinds rule is documented before authoring, not only in code.
+
+        Three surfaces, in the order a reviewer meets them: the scaffold it
+        copies, the protocol that routes the work, the contract that owns the key
+        list. A refusal the agent can only predict from the source is the defect.
+        """
+        for parts, sentence, extra in RUN_KIND_PLACES:
+            with self.subTest(document=os.path.join(*parts)):
+                flat = _flat(_doc(*parts))
+                self.assertIn(_flat(sentence), flat,
+                              "%s never states that a report must name both run "
+                              "kinds: %r" % (os.path.join(*parts), sentence))
+                if extra:
+                    self.assertIn(_flat(extra), flat,
+                                  "%s lost the consequence of the both-kinds "
+                                  "rule: %r" % (os.path.join(*parts), extra))
+
+    def test_checkpoint_handoff_gate_keeps_its_own_publication_reachable(self):
+        """The entry gate routes ordinary phase work; it never vetoes step 6.
+
+        PROTOCOL.md's routing sentence stays as written — in `review` the route is
+        `reviewer`, and `next_action` still says `reviewer` after a verdict is
+        published — so a bare "if not, hand back" gate made the role PROTOCOL §9
+        names as the publisher refuse the very step the same file instructs. Pinned
+        both ways: the scoped gate with its publication exception is stated, and
+        the unscoped dead-end phrasing is gone. The limit that this role supplies
+        no technical verdict stays, so the exception is never read as a licence to
+        judge.
+        """
+        text = self._text("checkpoint-handoff")
+        flat = _flat(text)
+        self.assertNotIn(HANDOFF_UNSCOPED_GATE, flat,
+                         "the checkpoint-handoff gate is unscoped again: read "
+                         "literally it hands back before the publication step it "
+                         "also requires (%r)" % HANDOFF_UNSCOPED_GATE)
+        self.assertIn(HANDOFF_VERDICT_LIMIT, flat,
+                      "the checkpoint-handoff skill lost the limit that it "
+                      "supplies no technical verdict")
+        for phrase in HANDOFF_VERDICT_WIDENINGS:
+            self.assertNotIn(phrase, flat,
+                             "the publication exception widened into %r: this "
+                             "role coordinates the guarded set-review of the "
+                             "reviewer's own candidate bytes and judges nothing"
+                             % phrase)
+        gate = [sentence for sentence in _sentences(text)
+                if "hand back" in sentence.lower()]
+        self.assertTrue(gate, "the skill's role gate disappeared entirely; the "
+                              "route still has to be checked before ordinary "
+                              "phase work")
+        for sentence in gate:
+            self.assertIn("publication", sentence.lower(),
+                          "the hand-back gate is stated without its documented "
+                          "publication exception, which re-creates the dead end: "
+                          "%r" % sentence)
+        self.assertIn("guarded publication", flat)
+        # Coordination stays exactly the guarded publication: the step still names
+        # the trio it runs and nothing else.
+        self.assertIn("--review-context", flat)
+        self.assertIn("coordinate the guarded publication and nothing else", flat,
+                      "the publication step stopped confining this role to "
+                      "coordination")
+
+    def test_guarded_options_refusal_names_options_the_cli_accepts(self):
+        """Every option the partial-guard message prints is a real option.
+
+        `mutate.set_review`'s parameters are `report_path`/`handoff_path`; the CLI
+        spells them `--report`/`--handoff`. The refusal used to derive names from
+        the parameters, so following it produced a second refusal —
+        `unknown or missing-value option '--report-path'` (rc=2) — and the reader
+        never reached the guarded publication.
+        """
+        cases = (({"review_context": "ctx"}, "--review-context",
+                  "--report, --handoff"),
+                 ({"review_context": "ctx", "report_path": "r.md"},
+                  "--review-context, --report", "--handoff"),
+                 ({"report_path": "r.md", "handoff_path": "h.md"},
+                  "--report, --handoff", "--review-context"))
+        for supplied, got, missing in cases:
+            with self.subTest(supplied=sorted(supplied)):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaises(mutate.MutateError) as caught:
+                        mutate.set_review(tmp, "T-DEMO-001", "pass", **supplied)
+                message = str(caught.exception)
+                self.assertIn("must be supplied together", message)
+                self.assertIn("got %s" % got, message,
+                              "the refusal misnames the options already given: %s"
+                              % message)
+                self.assertIn("missing %s" % missing, message,
+                              "the refusal misnames the options still owed: %s"
+                              % message)
+                tokens = _OPTION_TOKEN.findall(message)
+                self.assertTrue(tokens,
+                                "the refusal names no option at all: %s" % message)
+                for token in tokens:
+                    _opts, err = main._parse_options([token, "value"],
+                                                     main.SET_REVIEW_OPTIONS)
+                    self.assertIsNone(
+                        err,
+                        "%r is not an option set-review accepts, so the refusal "
+                        "sends the reader into an unknown-option error: %s"
+                        % (token, message))
+                self.assertFalse([token for token in tokens
+                                  if token.endswith("-path")],
+                                 "an internal parameter name leaked into the "
+                                 "message: %s" % message)
+
+    def test_installed_docs_point_at_resolvable_guidance_and_named_owners(self):
+        """Nothing in an installed target sends a reader to a file it cannot open.
+
+        `init` installs `.ai/workflow/` only, so the host runbooks have to be
+        located in the ai-workflow source repository and the runtime host answer
+        pointed at the context's own `meta/preflight.json`; the adapter doc has to
+        cite committed tests and receipt fields rather than git-ignored working
+        notes; `prepare-review` has to name the role that runs it and document the
+        fail-closed refusal a stray generated artifact produces; and
+        STATE_SCHEMA.md has to document the guarded publication reviewer step 9
+        sends agents to.
+        """
+        protocol = _flat(_doc(".ai", "workflow", "PROTOCOL.md"))
+        self.assertIn(RUNBOOK_LOCATED, protocol,
+                      "the installed protocol points at adapter runbooks again "
+                      "without saying an installed target does not receive them")
+        for sentence in PREFLIGHT_IS_THE_HOST_ANSWER:
+            self.assertIn(_flat(sentence), protocol,
+                          "PROTOCOL.md lost the preflight-is-the-host-answer "
+                          "sentence: %r" % sentence)
+        self.assertIn(PREPARATION_OWNER, protocol,
+                      "`prepare-review` has no documented owner again; the "
+                      "reviewer skill sends the snapshot to a coordinator")
+        self.assertIn(STRAY_ARTIFACT_ROUTE, protocol,
+                      "PROTOCOL.md no longer documents the stray-artifact "
+                      "preparation refusal and the route past it")
+        self.assertIn("__pycache__", protocol,
+                      "the documented preparation blocker lost its concrete case")
+        for sentence in PROTOCOL_ADAPTER_SCOPE:
+            self.assertIn(_flat(sentence), protocol,
+                          "PROTOCOL.md lost the adapter scope sentence: %r"
+                          % sentence)
+        for claim in PROTOCOL_FALSE_SCOPE:
+            self.assertNotIn(claim, protocol,
+                             "PROTOCOL.md again writes off the whole of Windows, "
+                             "which is the supported coordinator: %r" % claim)
+
+        artifacts = _flat(_doc(".ai", "workflow", "ARTIFACTS.md"))
+        self.assertIn("live in the ai-workflow source repository rather",
+                      artifacts,
+                      "the provenance contract cites adapter runbooks an "
+                      "installed target cannot open")
+
+        local = _doc("adapters", "local-review.md")
+        self.assertNotIn(".superpowers", local,
+                         "the adapter doc cites git-ignored working notes; a "
+                         "fresh checkout cannot resolve its evidence")
+        for needle in ("test_review_boundary.py", "test_review_publication.py",
+                       "InstalledIsolatedReviewLifecycleTest",
+                       "meta/preflight.json", "changed_paths", "snapshot_after"):
+            self.assertIn(needle, local,
+                          "the adapter evidence pointer never names %r" % needle)
+        for needle in ("EROFS", "EXDEV", "ENETUNREACH", "bubblewrap 0.9.0",
+                       "network_denial_errno=101", "unsupported"):
+            self.assertIn(needle, local,
+                          "the adapter doc lost a measured number: %r" % needle)
+
+        reviewer = self._text("reviewer")
+        coordinator = [sentence for sentence in _sentences(reviewer)
+                       if "coordinator" in sentence.lower()]
+        self.assertTrue(coordinator,
+                        "the reviewer skill sends the snapshot to no coordinator "
+                        "at all")
+        self.assertTrue(any("checkpoint-handoff" in sentence
+                            for sentence in coordinator),
+                        "'the coordinator' names no role an agent can find among "
+                        "the eight: %r" % coordinator)
+
+        handoff = _flat(self._text("checkpoint-handoff"))
+        self.assertIn("prepare-review", handoff,
+                      "the role that owns preparation never sees the command in "
+                      "its own skill")
+
+        schema = _flat(_doc(".ai", "workflow", "STATE_SCHEMA.md"))
+        self.assertNotIn("pending HARDEN-011", schema)
+        for needle in ("--review-context", "--report", "--handoff",
+                       "required together", "Isolation provenance",
+                       "consumes its context"):
+            self.assertIn(needle, schema,
+                          "STATE_SCHEMA.md's v2 Review binding never documents "
+                          "the guarded publication form (%r)" % needle)
 
     def test_windows_adapter_keeps_the_verdict_without_a_fabricated_blocker(
             self):

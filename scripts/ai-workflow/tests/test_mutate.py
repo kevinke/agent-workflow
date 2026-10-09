@@ -210,6 +210,40 @@ class MutateTest(unittest.TestCase):
         # provenance is the audit trail and is not cleared.
         self.assertEqual(data["provenance"], {"last_harness": "trae", "last_model": "claude"})
 
+    def test_set_review_partial_guard_names_cli_options(self):
+        """The half-supplied guarded publication refuses with passable names.
+
+        `set_review`'s parameters are `report_path`/`handoff_path`; the CLI spells
+        those options `--report`/`--handoff`. A message derived from the parameter
+        names sends the reader to an unknown-option error instead of to the
+        guarded publication, so the refusal names the options as `main.py` accepts
+        them — and it still fires before any candidate file is read, leaving State
+        untouched.
+        """
+        before = self._bytes()
+        cases = (({"review_context": "ctx"}, "got --review-context",
+                  "missing --report, --handoff"),
+                 ({"review_context": "ctx", "report_path": "absent-review.md"},
+                  "got --review-context, --report", "missing --handoff"),
+                 ({"report_path": "absent-review.md",
+                   "handoff_path": "absent-handoff.md"},
+                  "got --report, --handoff", "missing --review-context"))
+        for kwargs, got, missing in cases:
+            with self.subTest(kwargs=sorted(kwargs)):
+                with self.assertRaises(mutate.MutateError) as caught:
+                    mutate.set_review(self.root, "T1", "pass", **kwargs)
+                message = str(caught.exception)
+                self.assertIn("must be supplied together", message)
+                self.assertIn(got, message, message)
+                self.assertIn(missing, message, message)
+                for name in ("--report-path", "--handoff-path"):
+                    self.assertNotIn(name, message,
+                                     "%r is not an option the CLI accepts, and "
+                                     "following it is a second refusal: %s"
+                                     % (name, message))
+        self.assertEqual(self._bytes(), before,
+                         "the guard refused after touching State")
+
 
 if __name__ == "__main__":
     unittest.main()
