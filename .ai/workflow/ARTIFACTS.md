@@ -270,8 +270,9 @@ all re-assess through that same rule, so an `assume-unchanged` or
 `skip-worktree` hint cannot leave a recorded verdict current for one consumer
 while another sees the change, and a relevant path absent because sparse checkout
 excluded it is drift or a named blocker rather than silence. A refused
-`archive-artifacts` leaves no archive and no partial or temporary output at the
-requested path.
+`archive-artifacts` writes nothing at all: the binding is checked before any
+file is created, so neither the requested path nor the temporary file the writer
+would stage beside it appears in the output directory.
 
 Both recorded verdicts are re-assessed against their immutable bindings by
 `validate`, `resume`, and the mutation guards: a `pass` and a

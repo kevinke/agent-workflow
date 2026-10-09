@@ -452,46 +452,8 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(lock_path.stat().st_mtime_ns, before_lock_mtime)
 
     # -- index-flag-independent drift (HARDEN-010) ---------------------------
-
-    def _set_flag(self, path, flag):
-        """Set one or both index hints on `path` via separate Git commands."""
-        if flag in ("assume-unchanged", "both"):
-            proc = self._git("update-index", "--assume-unchanged", path)
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-        if flag in ("skip-worktree", "both"):
-            proc = self._git("update-index", "--skip-worktree", path)
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    def _clear_flag(self, path, flag):
-        """Clear one or both hints on `path` via separate Git commands."""
-        if flag in ("assume-unchanged", "both"):
-            proc = self._git("update-index", "--no-assume-unchanged", path)
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-        if flag in ("skip-worktree", "both"):
-            proc = self._git("update-index", "--no-skip-worktree", path)
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    def _flagged_edit(self, flag, rel="src/feature.py",
-                      old="return 1", new="return 9"):
-        """Set flag(s) on `rel`, then dirty-edit it at an unchanged byte size.
-
-        The equal-length rewrite keeps detection from relying on a size
-        change, so only a content comparison can report the edit.
-        """
-        self._set_flag(rel, flag)
-        full = os.path.join(self.root, rel)
-        with open(full, "r", encoding="utf-8", newline="") as fh:
-            original = fh.read()
-        dirty = original.replace(old, new)
-        self.assertEqual(len(dirty), len(original))
-        self.assertNotEqual(dirty, original)
-        with open(full, "w", encoding="utf-8", newline="") as fh:
-            fh.write(dirty)
-
-    def _flagged_delete(self, flag, rel):
-        """Set flag(s) on `rel`, then delete it from the worktree."""
-        self._set_flag(rel, flag)
-        os.remove(os.path.join(self.root, rel))
+    # `_set_flag`, `_clear_flag`, `_flagged_edit` and `_flagged_delete` are
+    # inherited from `IndexHintFixture` in `v2_support`.
 
     def _flagged_append(self, flag, rel, text):
         """Set flag(s) on `rel`, then append `text` to it."""
@@ -510,23 +472,32 @@ class ReviewV2Test(V2CLITestCase):
         the next subcase).
         """
         reviewed = self._seed_review(extra_files=extra_files)
-        for flag in ("assume-unchanged", "skip-worktree", "both"):
+        for flag in self.INDEX_HINTS:
             for verdict in ("pass", "changes_requested"):
                 with self.subTest(flag=flag, verdict=verdict):
-                    self.write_review(verdict, reviewed_commit=reviewed)
-                    mutate(rel, flag)
-                    drift = review.code_drift(self.root, self.TICKET, reviewed,
-                                              ".ai/work/T1/plan.md")
-                    self.assertTrue(any(rel in item for item in drift), drift)
-                    before = self.state_bytes()
-                    proc = self.cli("set-review", self.TICKET,
-                                    "--verdict", verdict)
-                    self.assertEqual(proc.returncode, 1,
-                                     proc.stdout + proc.stderr)
-                    self.assertNotIn("Traceback", proc.stderr)
-                    self.assertEqual(self.state_bytes(), before)
-                    self._clear_flag(rel, flag)
-                    self._restore(reviewed)
+                    # Cleanup in a `finally`: subTest continues after a failed
+                    # assertion, so end-of-body cleanup would leak this subcase's
+                    # hint and dirty path into the next one.
+                    try:
+                        self.write_review(verdict, reviewed_commit=reviewed)
+                        # Baseline before any probe, so a probe that wrote to the
+                        # real index could not be compared against its own output.
+                        before = self.state_bytes()
+                        mutate(rel, flag)
+                        drift = review.code_drift(self.root, self.TICKET,
+                                                  reviewed,
+                                                  ".ai/work/T1/plan.md")
+                        self.assertTrue(any(rel in item for item in drift),
+                                        drift)
+                        proc = self.cli("set-review", self.TICKET,
+                                        "--verdict", verdict)
+                        self.assertEqual(proc.returncode, 1,
+                                         proc.stdout + proc.stderr)
+                        self.assertNotIn("Traceback", proc.stderr)
+                        self.assertEqual(self.state_bytes(), before)
+                    finally:
+                        self._unhint_and_rewind(rel)
+                        self._restore(reviewed)
 
     def test_flagged_edit_blocks_both_verdicts(self):
         """A flagged equal-size source edit invalidates either verdict.
@@ -889,58 +860,86 @@ class ReviewV2Test(V2CLITestCase):
                 self.assertEqual(proc.returncode, 0, proc.stderr)
 
     # -- consumer agreement on flagged staleness (HARDEN-010 Task 2) ---------
+    # `_snapshot`, `_assert_unchanged` and the hint primitives are inherited
+    # from `IndexHintFixture` in `v2_support`.
 
-    def _assert_flagged_staleness(self, rel, verdict, named):
+    def _assert_binding_clean(self, rel):
+        """Pin the pre-mutation baseline so a later rejection is not vacuous.
+
+        Without this a subcase could inherit dirt from a failed predecessor and
+        its rejection would be true for the wrong reason. Attribution is checked
+        against the staleness lines rather than the whole output, because
+        `resume` names `rel` in its Evidence anchor notice even while the Review
+        binding is current.
+        """
+        snap = self._snapshot(rel)
+        proc = self.cli("validate", self.TICKET)
+        self.assertFalse(any(rel in line for line in
+                             self._stale_lines(proc.stdout)), proc.stdout)
+        self._assert_unchanged(rel, snap)
+
+    def _assert_flagged_staleness(self, rel, verdict):
         """Assert `validate`, `resume` and the done gate all reject the binding.
 
-        `named` is whether the shared assessment is expected to name `rel` in
-        its own message. The `review -> done` gate only reaches the drift check
-        for a recorded `pass`, because a `changes_requested` verdict blocks done
-        for its own reason regardless of drift, so the path assertion is skipped
-        there while the rejection itself is still required.
+        `validate` and `resume` must name `rel` for either verdict: the shared
+        assessment prefixes every drift problem with `review is stale: ...` plus
+        the path, regardless of which verdict was recorded. The `review -> done`
+        gate is the one exception — it requires a `pass` before it reaches any
+        drift check, so a recorded `changes_requested` fails there for its own
+        reason and legitimately names nothing.
         """
-        index_path = Path(self.root, ".git", "index")
-        review_path = os.path.join(self.work, "review.md")
-        before_state = self.state_bytes()
-        before_index = index_path.read_bytes()
-        before_index_mtime = index_path.stat().st_mtime_ns
-        before_flags = self._git("ls-files", "-v", "-z", "--", rel).stdout
-        with open(review_path, "rb") as fh:
-            before_review = fh.read()
-        before_review_mtime = os.stat(review_path).st_mtime_ns
+        snap = self._snapshot(rel)
 
         validate_proc = self.cli("validate", self.TICKET)
         self.assertEqual(validate_proc.returncode, 1,
                          validate_proc.stdout + validate_proc.stderr)
         self.assertNotIn("Traceback", validate_proc.stderr)
-        self.assertIn("stale", validate_proc.stdout)
-        if named:
-            self.assertIn(rel, validate_proc.stdout)
+        stale = self._stale_lines(validate_proc.stdout)
+        self.assertTrue(stale, validate_proc.stdout)
+        self.assertTrue(any(rel in line for line in stale), stale)
 
         resume_proc = self.cli("resume", self.TICKET)
         self.assertEqual(resume_proc.returncode, 1,
                          resume_proc.stdout + resume_proc.stderr)
         self.assertNotIn("Traceback", resume_proc.stderr)
-        if named:
-            self.assertIn(rel, resume_proc.stdout)
+        stale = self._stale_lines(resume_proc.stdout)
+        self.assertTrue(stale, resume_proc.stdout)
+        self.assertTrue(any(rel in line for line in stale), stale)
 
         done_proc = self.cli("advance", self.TICKET, "--to", "done")
         self.assertEqual(done_proc.returncode, 1,
                          done_proc.stdout + done_proc.stderr)
         self.assertNotIn("Traceback", done_proc.stderr)
-        if named:
-            self.assertIn(rel, done_proc.stderr)
+        if verdict == "pass":
+            stale = self._stale_lines(done_proc.stderr)
+            self.assertTrue(stale, done_proc.stderr)
+            self.assertTrue(any(rel in line for line in stale), stale)
 
         # A stale verdict stays stale: no consumer upgraded it to a fresh pass.
         self.assertEqual(self.read_state()["review"]["verdict"], verdict)
-        self.assertEqual(self.state_bytes(), before_state)
-        with open(review_path, "rb") as fh:
-            self.assertEqual(fh.read(), before_review)
-        self.assertEqual(os.stat(review_path).st_mtime_ns, before_review_mtime)
-        self.assertEqual(index_path.read_bytes(), before_index)
-        self.assertEqual(index_path.stat().st_mtime_ns, before_index_mtime)
-        self.assertEqual(
-            self._git("ls-files", "-v", "-z", "--", rel).stdout, before_flags)
+        self._assert_unchanged(rel, snap)
+
+    def _run_flagged_subcase(self, reviewed, rel, verdict, flag, kind):
+        """Bind, prove clean, hide a change, then prove every consumer rejects.
+
+        Cleanup runs in a `finally`: `subTest` swallows a failed assertion and
+        continues with the next subcase, so end-of-body cleanup never runs on the
+        path that matters and a leaked hint or deleted file would make every
+        later subcase's rejection vacuously true. `setUp` builds one repository
+        per method, so the leak that matters is between subcases, not tests.
+        """
+        try:
+            self.write_review(verdict, reviewed_commit=reviewed)
+            self._bind(verdict)
+            self._assert_binding_clean(rel)
+            if kind == "edit":
+                self._flagged_edit(flag, rel)
+            else:
+                self._flagged_delete(flag, rel)
+            self._assert_flagged_staleness(rel, verdict)
+        finally:
+            self._unhint_and_rewind(rel)
+            self._restore(reviewed)
 
     def test_flagged_binding_is_stale(self):
         """Hints cannot keep a bound Review current for the other consumers.
@@ -949,35 +948,16 @@ class ReviewV2Test(V2CLITestCase):
         Review is bound against a clean tree first, then an index hint hides an
         equal-size edit or a deletion. `validate`, `resume` and the
         `review -> done` gate must all reject, and none of them may write or
-        upgrade the recorded verdict. The clean baseline is pinned by asserting
-        `rel` is absent from `validate` before the mutation, so the rejection is
-        attributable to the flagged change rather than to fixture noise.
-
-        One fixture is seeded and rewound per subcase (`setUp` builds a single
-        repository per method): restoring to the reviewed commit returns
-        `state.yaml` to its unbound state, so each subcase binds exactly once
-        from pending rather than re-binding a recorded verdict.
+        upgrade the recorded verdict.
         """
         rel = "src/feature.py"
         reviewed = self._seed_review()
         for verdict in ("pass", "changes_requested"):
-            for flag in ("assume-unchanged", "skip-worktree", "both"):
+            for flag in self.INDEX_HINTS:
                 for kind in ("edit", "delete"):
                     with self.subTest(verdict=verdict, flag=flag, kind=kind):
-                        self.write_review(verdict, reviewed_commit=reviewed)
-                        self._bind(verdict)
-                        self.assertNotIn(rel, self.cli(
-                            "validate", self.TICKET).stdout)
-                        if kind == "edit":
-                            self._flagged_edit(flag, rel)
-                        else:
-                            self._flagged_delete(flag, rel)
-                        # Only a recorded `pass` reaches the drift check at the
-                        # done gate; a `changes_requested` blocks done anyway.
-                        self._assert_flagged_staleness(
-                            rel, verdict, named=(verdict == "pass"))
-                        self._clear_flag(rel, flag)
-                        self._restore(reviewed)
+                        self._run_flagged_subcase(reviewed, rel, verdict,
+                                                  flag, kind)
 
     def test_flagged_binding_stale_survives_metadata_commit(self):
         """A workflow-only commit does not launder a flagged dirty file current.
@@ -990,23 +970,67 @@ class ReviewV2Test(V2CLITestCase):
         """
         rel = "src/feature.py"
         reviewed = self._seed_review()
-        for flag in ("assume-unchanged", "skip-worktree", "both"):
+        for flag in self.INDEX_HINTS:
             with self.subTest(flag=flag):
-                self.write_review("pass", reviewed_commit=reviewed)
-                self._bind("pass")
-                self._flagged_edit(flag, rel)
-                self._append_file(os.path.join(self.work, "progress.md"),
-                                  "\n- flagged-cycle note\n")
-                # Stage the record alone, so the bound State stays a worktree
-                # change and this commit is genuinely workflow-only.
-                add = self._git("add", "--", ".ai/work/T1/progress.md")
-                self.assertEqual(add.returncode, 0, add.stderr)
-                commit = self._git("commit", "-q", "-m",
-                                   "fixture: workflow-only commit")
-                self.assertEqual(commit.returncode, 0, commit.stderr)
-                self._assert_flagged_staleness(rel, "pass", named=True)
-                self._clear_flag(rel, flag)
-                self._restore(reviewed)
+                try:
+                    self.write_review("pass", reviewed_commit=reviewed)
+                    self._bind("pass")
+                    self._flagged_edit(flag, rel)
+                    self._append_file(os.path.join(self.work, "progress.md"),
+                                      "\n- flagged-cycle note\n")
+                    # Stage the record alone, so the bound State stays a worktree
+                    # change and this commit is genuinely workflow-only.
+                    add = self._git("add", "--", ".ai/work/T1/progress.md")
+                    self.assertEqual(add.returncode, 0, add.stderr)
+                    commit = self._git("commit", "-q", "-m",
+                                       "fixture: workflow-only commit")
+                    self.assertEqual(commit.returncode, 0, commit.stderr)
+                    self._assert_flagged_staleness(rel, "pass")
+                finally:
+                    self._unhint_and_rewind(rel)
+                    self._restore(reviewed)
+
+    def test_clean_flagged_binding_still_accepted_by_consumers(self):
+        """A hint on an unchanged file must not make a consumer reject the Review.
+
+        Task 1 pins the no-false-positive rule at the assessment level; this pins
+        it where a future probe that rejected any hinted path would regress:
+        while both bits are set on a present, unmodified tracked file,
+        `validate` and `resume` stay silent and write nothing, and only then may
+        the `review -> done` gate succeed. The done call legitimately mutates
+        State, so the byte-preservation check runs before it.
+        """
+        rel = "src/feature.py"
+        reviewed = self._seed_review()
+        for flag in self.INDEX_HINTS:
+            with self.subTest(flag=flag):
+                try:
+                    self.write_review("pass", reviewed_commit=reviewed)
+                    self._bind("pass")
+                    self._set_flag(rel, flag)
+                    snap = self._snapshot(rel)
+
+                    validate_proc = self.cli("validate", self.TICKET)
+                    self.assertEqual(validate_proc.returncode, 0,
+                                     validate_proc.stdout + validate_proc.stderr)
+                    self.assertNotIn("stale", validate_proc.stdout)
+
+                    resume_proc = self.cli("resume", self.TICKET)
+                    self.assertEqual(resume_proc.returncode, 0,
+                                     resume_proc.stdout + resume_proc.stderr)
+                    self.assertNotIn("Traceback", resume_proc.stderr)
+
+                    # Read-only probes so far: nothing may have moved.
+                    self._assert_unchanged(rel, snap)
+
+                    done_proc = self.cli("advance", self.TICKET, "--to", "done")
+                    self.assertEqual(done_proc.returncode, 0,
+                                     done_proc.stdout + done_proc.stderr)
+                    self.assertEqual(self.read_state()["review"]["verdict"],
+                                     "pass")
+                finally:
+                    self._unhint_and_rewind(rel)
+                    self._restore(reviewed)
 
     # -- artifact / verdict rejections --------------------------------------
 

@@ -237,6 +237,10 @@ NUL-delimited output. Changing any path other than this Ticket's exact
 registered Plan) rejects the command. Missing Git, a Reviewed commit that does
 not resolve as a literal hexadecimal object ID, a non-commit or ambiguous
 match, or an unrelated history (not an ancestor of HEAD) also reject it.
+The assessment does not trust Git's cached stat information for the worktree: an
+entry whose recorded modification time is no older than the index's own is
+re-compared by content, so a change that leaves the file's byte length unchanged
+and collides with its cached time is still detected.
 Every rejection leaves the State bytes unchanged; Version 1 Tickets keep their
 existing semantics.
 

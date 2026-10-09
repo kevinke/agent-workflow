@@ -484,7 +484,132 @@ def valid_handoff(ticket_id, branch, head, **overrides):
     return HANDOFF_CONCRETE_TEMPLATE % fields
 
 
-class V2CLITestCase(unittest.TestCase):
+class IndexHintFixture:
+    """Git index-hint primitives shared by every v2 suite that pins drift.
+
+    `assume-unchanged` and `skip-worktree` are hints that make `git diff` skip an
+    entry entirely, so an equal-size edit or a deletion on a hinted path can hide
+    from the read-only drift assessment. These helpers set and clear them for any
+    regression pin, so no suite carries its own copy of index-mutating fixture
+    code.
+
+    Git pathspecs take forward slashes while file I/O needs the platform
+    separator, so targets are named repo-relative with `/`. Each bit needs its
+    own command — one `update-index` cannot express the combination — which is
+    also why the assessment under test clears them separately.
+    """
+
+    INDEX_HINTS = ("assume-unchanged", "skip-worktree", "both")
+
+    def _set_flag(self, path, flag):
+        """Set one or both index hints via separate Git commands."""
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _clear_flag(self, path, flag):
+        """Clear one or both index hints via separate Git commands."""
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--no-assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--no-skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _flagged_edit(self, flag, rel="src/feature.py",
+                      old="return 1", new="return 9"):
+        """Hint `rel`, then rewrite it at an unchanged byte size.
+
+        The equal-length rewrite keeps detection from relying on a size change,
+        so only a content comparison can report the edit.
+        """
+        self._set_flag(rel, flag)
+        full = os.path.join(self.root, rel)
+        with open(full, "r", encoding="utf-8", newline="") as fh:
+            original = fh.read()
+        dirty = original.replace(old, new)
+        self.assertEqual(len(dirty), len(original))
+        self.assertNotEqual(dirty, original)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(dirty)
+
+    def _flagged_delete(self, flag, rel="src/feature.py"):
+        """Hint `rel`, then delete it from the worktree."""
+        self._set_flag(rel, flag)
+        os.remove(os.path.join(self.root, rel))
+
+    def _unhint_and_rewind(self, rel):
+        """Clear both hints and rewind `rel`'s worktree bytes from the index.
+
+        Used from a `finally` in each `subTest` body: a failing assertion aborts
+        the rest of that body, so cleanup that only runs on the success path
+        would leak a hint and a dirty or deleted path into the next subcase —
+        where the leaked dirt alone would satisfy every later "this is stale"
+        assertion, letting a partial regression pass. `git checkout` skips a
+        `skip-worktree` path, so hints are cleared first.
+        """
+        self._clear_flag(rel, "both")
+        proc = self._git("checkout", "--", rel)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _snapshot(self, rel):
+        """Bytes, timestamps and hint flags a read-only probe must not move.
+
+        Captured *before* each probe rather than after: a baseline taken once a
+        probe has already run would compare that probe's own write against
+        itself, so the snapshot has to precede the first command being judged.
+        """
+        index_path = os.path.join(self.root, ".git", "index")
+        review_path = os.path.join(self.work, "review.md")
+        with open(index_path, "rb") as fh:
+            index_bytes = fh.read()
+        with open(review_path, "rb") as fh:
+            review_bytes = fh.read()
+        return {
+            "state": self.state_bytes(),
+            "index": index_bytes,
+            "index_mtime": os.stat(index_path).st_mtime_ns,
+            "flags": self._git("ls-files", "-v", "-z", "--", rel).stdout,
+            "review": review_bytes,
+            "review_mtime": os.stat(review_path).st_mtime_ns,
+        }
+
+    def _stale_lines(self, text):
+        """The lines reporting a stale binding, for path-attribution checks.
+
+        `resume` also prints an Evidence anchor notice listing every path changed
+        since the recorded observed commit, which names the very file these hint
+        pins mutate even while the Review binding is perfectly current.
+        Asserting the path appears somewhere in the output would therefore pass
+        with no drift blocker at all, so the pins match it against the staleness
+        lines specifically instead.
+        """
+        return [line for line in text.splitlines() if "stale" in line]
+
+    def _assert_unchanged(self, rel, snap):
+        """Assert nothing a read-only probe could touch actually moved."""
+        index_path = os.path.join(self.root, ".git", "index")
+        review_path = os.path.join(self.work, "review.md")
+        with open(index_path, "rb") as fh:
+            self.assertEqual(fh.read(), snap["index"],
+                             ".git/index bytes changed")
+        self.assertEqual(os.stat(index_path).st_mtime_ns, snap["index_mtime"],
+                         ".git/index mtime changed")
+        self.assertEqual(
+            self._git("ls-files", "-v", "-z", "--", rel).stdout, snap["flags"],
+            "index hints changed: the probe cleared the real index")
+        self.assertEqual(self.state_bytes(), snap["state"])
+        with open(review_path, "rb") as fh:
+            self.assertEqual(fh.read(), snap["review"],
+                             "review.md bytes changed")
+        self.assertEqual(os.stat(review_path).st_mtime_ns,
+                         snap["review_mtime"])
+
+
+class V2CLITestCase(IndexHintFixture, unittest.TestCase):
     """Temporary-repo fixture driving the real CLI (cwd is the target repo)."""
 
     TICKET = "T1"
