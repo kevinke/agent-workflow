@@ -20,17 +20,41 @@ The four required regressions:
 - `test_legacy_binding_has_no_invented_provenance`
 - `test_publication_drift_and_recovery`
 - `test_guarded_publication_preserves_author_and_phase`
+
+And the review-round pins that close the gaps an independent reviewer
+reproduced against real supervisor receipts on this host:
+
+- `test_publication_requires_every_receipt_and_the_snapshot_state` — a receipt
+  the report omits, a residual a later run's receipt owns, a run chain that does
+  not connect or is not rooted, a snapshot edited outside the recorded runs, and
+  unreadable evidence refused by name; a truthful three-run report still publishes.
+- `test_publication_commits_before_retiring_the_journal` — State is the commit
+  marker: a failed commit record or journal retirement reports
+  `publication-committed` and rolls nothing back, recovery of the surviving
+  journal keeps the landed verdict, and a post-commit conflict reaches its own
+  reason instead of being swallowed.
+- `test_publication_currentness_layers_each_refuse_their_own_drift` — each
+  currentness layer pinned with the others turned off, including a drifted
+  `progress.md` (a captured input that the code-drift report exempts) caught
+  inside the lock, and a real between-checks race.
+- `test_publication_refuses_a_head_only_commit` — `--allow-empty` moves HEAD and
+  refuses publication.
+- `test_two_live_publishers_on_one_context_serialise` — two publishers in flight
+  at once, ordered by events rather than by luck.
 """
 
 import contextlib
+import datetime
 import errno
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -40,6 +64,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import contracts  # noqa: E402
 import mutate  # noqa: E402
+import review  # noqa: E402
 import review_boundary  # noqa: E402
 import review_publication  # noqa: E402
 import review_snapshot  # noqa: E402
@@ -168,7 +193,8 @@ class ReviewPublicationTest(V2CLITestCase):
 
     # -- supervisor-owned evidence ------------------------------------------
 
-    def _fixture(self, verdict="pass", with_evidence=True, extension=False):
+    def _fixture(self, verdict="pass", with_evidence=True, extension=False,
+                 progress=False):
         """Reach `review`, prepare a context, then record supervisor evidence.
 
         Populates self.reviewed/output/context/receipts/evidence_source.
@@ -176,13 +202,19 @@ class ReviewPublicationTest(V2CLITestCase):
         snapshot-editing probe receipt, so `meta/preflight.json` and
         `meta/runs/*.json` hold evidence of both kinds. `extension` adds an unknown
         top-level State field before preparation, so publication can be shown to
-        preserve extension data.
+        preserve extension data. `progress` writes a concrete `progress.md` before
+        preparation: it is one of the four Ticket record files `review.code_drift`
+        exempts, and it becomes a captured verification input, which is what makes
+        it the record a drifted-copy check has to reach on its own.
         """
         self.reviewed = self.prepare_v2_review()
         if extension:
             data = self.read_state()
             data["extension_evidence"] = {"note": "preserve me", "count": 3}
             self.write_state(data)
+        if progress:
+            self._write_bytes(self._live("progress.md"),
+                              "# Progress\n\nTask 1 done; no blocker.\n")
         self.write_review(verdict, reviewed_commit=self.reviewed)
         self.output = self._new_output()
         self.context = review_snapshot.prepare(self.root, self.TICKET,
@@ -335,6 +367,22 @@ class ReviewPublicationTest(V2CLITestCase):
                 "finished_at": "2026-10-09T00:00:%02d+00:00" % (index + 1),
                 "blocker": None,
             })
+            if kind == "baseline":
+                # `review_boundary.run` pins the preparation baseline in
+                # meta/baseline.json for every accepted baseline run, and
+                # publication roots a run chain in that record. The stand-in
+                # writes the same record for the same reason: a fixture that
+                # omitted it would have to be refused, and refusing a truthful
+                # run proves nothing about a lying one.
+                self._write_json(self._meta("baseline.json"), {
+                    "format_version": review_boundary.FORMAT_VERSION,
+                    "kind": "baseline",
+                    "profile": review_boundary.PROFILE,
+                    "snapshot_identity": before,
+                    "run_id": run_id,
+                    "previous_run_id": None,
+                    "recorded_at": "2026-10-09T00:00:%02d+00:00" % (index + 1),
+                })
 
     def _tree(self, repo):
         """Repository-relative forward-slash paths present under the snapshot."""
@@ -365,13 +413,19 @@ class ReviewPublicationTest(V2CLITestCase):
 
     # -- candidate artifacts --------------------------------------------------
 
-    def _provenance(self, **overrides):
-        """A truthful provenance claim read from the supervisor's own records."""
+    def _provenance(self, cited=None, extra_probe_changes=(), **overrides):
+        """A truthful provenance claim read from the supervisor's own records.
+
+        `cited` defaults to every receipt the supervisor recorded, which is what a
+        complete claim set has to be: the residual declaration is the union of the
+        deltas of all of them, not the last one's. `extra_probe_changes` lets a
+        truthful leg declare a later run's edit as a probe change too.
+        """
         context_raw = self._read_bytes(self._meta("context.json"))
         manifest = json.loads(context_raw.decode("utf-8"))
         evidence_raw = self._read_bytes(self._meta("preflight.json"))
         evidence = json.loads(evidence_raw.decode("utf-8"))
-        probe = self.receipts[-1]
+        cited = list(self.receipts) if cited is None else list(cited)
         repo = os.path.join(self.output, "repo")
         feature_after = self._read_bytes(os.path.join(repo, "src", "feature.py"))
         added_after = self._read_bytes(os.path.join(repo, "probe_added.py"))
@@ -384,7 +438,13 @@ class ReviewPublicationTest(V2CLITestCase):
             "stderr_sha256": receipt["stderr_sha256"],
             "snapshot_before": receipt["snapshot_before"],
             "snapshot_after": receipt["snapshot_after"],
-        } for receipt in self.receipts]
+        } for receipt in cited]
+        residual = {"modified": set(), "added": set(), "removed": set()}
+        for receipt in cited:
+            for category, field in (("modified", "changed_paths"),
+                                    ("added", "added_paths"),
+                                    ("removed", "removed_paths")):
+                residual[category] |= set(receipt.get(field) or [])
         claim = {
             "format_version": 1,
             "reviewed_commit": manifest["reviewed_commit"],
@@ -412,12 +472,9 @@ class ReviewPublicationTest(V2CLITestCase):
                 {"path": "src/app.py",
                  "before_sha256": _sha(self.snapshot_before["src/app.py"]),
                  "after_sha256": None, "deleted": True},
-            ],
-            "residual_changes": {
-                "modified": list(probe["changed_paths"]),
-                "added": list(probe["added_paths"]),
-                "removed": list(probe["removed_paths"]),
-            },
+            ] + list(extra_probe_changes),
+            "residual_changes": {category: sorted(residual[category])
+                                 for category in residual},
             "limits": [
                 "The failing baseline command is the only verifier result that "
                 "speaks to the acceptance criteria; the probe edit is a scratch "
@@ -1050,6 +1107,22 @@ class ReviewPublicationTest(V2CLITestCase):
             self.assertTrue(review_publication.journals(self.output),
                             "an unrecoverable transaction discarded its journal")
 
+        with self.subTest("recovery never overwrites bytes it never owned"):
+            # The same unfinished journal, the foreign writer still in place:
+            # `_recover_journal` restores only records still holding this
+            # transaction's own bytes, so it must refuse here and leave those bytes
+            # alone. The leg below resolves the conflict by hand, which is the only
+            # way a coordinator may clear it.
+            foreign_now = self._read_bytes(review_path)
+            self.assertEqual(foreign_now, foreign)
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review_publication.recover_stray_journals(self.output)
+            self.assertIn("journal", str(ctx.exception))
+            self.assertEqual(self._read_bytes(review_path), foreign_now,
+                             "recovery overwrote a write it does not own")
+            self.assertTrue(review_publication.journals(self.output),
+                            "a blocked recovery discarded the journal")
+
         with self.subTest("an unfinished journal is recovered before reuse"):
             journals = review_publication.journals(self.output)
             self.assertEqual(len(journals), 1)
@@ -1278,6 +1351,713 @@ class ReviewPublicationTest(V2CLITestCase):
                                  "the refused second publication rewrote a "
                                  "record")
                 self.assertEqual(self._strays(), [])
+
+    # ========================================================================
+    # 7. Every supervisor receipt must be cited, and the snapshot must show it.
+    # ========================================================================
+
+    def _pinned(self, repo):
+        """(entries, pinned identity) over the supervisor's own pinned scope."""
+        scope = self.context["scope"]["paths"]
+        plan_rel = (self.context.get("plan") or {}).get("path")
+        pinned = sorted(set(scope) | set(self.context["inputs"])
+                        | ({plan_rel} if plan_rel else set()))
+        entries = review_snapshot._manifest(repo, pinned, scope)
+        return entries, review_snapshot._canonical_sha(entries)
+
+    def _record_extra_probe(self):
+        """Record a third, chronologically last probe run that really wrote a file.
+
+        This is Finding 1 as the reviewer reproduced it: `src/other.py` appears in
+        the snapshot *and* in the supervisor's receipt, while a report stays free to
+        describe only the runs that suit it. The receipt's run_id is `0`*32 —
+        lexically first, chronologically last by its recorded `finished_at` — so a
+        validator that ordered receipts by filename, or trusted a directory
+        listing, would call the older probe the last run and let the erasure
+        publish. Returns (receipt, written bytes).
+        """
+        repo = os.path.join(self.output, "repo")
+        ordered = review_publication._chronological(list(self.receipts))
+        last = ordered[-1]
+        before_entries, before = self._pinned(repo)
+        self.assertEqual(before, last["snapshot_after"],
+                         "the fixture snapshot is not the state its last receipt "
+                         "recorded, so the re-diff legs below would prove nothing")
+        before_tree = self._tree(repo)
+        content = b"src/other.py: written by a probe the report never cites\n"
+        self._write_bytes(os.path.join(repo, "src", "other.py"), content)
+        after_entries, after = self._pinned(repo)
+        after_tree = self._tree(repo)
+        run_id = "0" * 32
+        # Chronology comes from recorded fields, so the new run has to be recorded
+        # as *later* than every run that exists: the real supervisor stamps its
+        # receipts with the actual clock, which is not 2026-10-09.
+        clock = max([str(item.get("finished_at") or "") for item in ordered]
+                    + ["2026-10-09T00:00:00+00:00"])
+        later = datetime.datetime.fromisoformat(clock)
+        finished_at = (later + datetime.timedelta(minutes=1)).isoformat()
+        started_at = (later + datetime.timedelta(seconds=30)).isoformat()
+        out_path = self._meta("runs", "%s.stdout" % run_id)
+        err_path = self._meta("runs", "%s.stderr" % run_id)
+        self._write_bytes(out_path, b"wrote src/other.py\n")
+        self._write_bytes(err_path, b"")
+        script = "open('src/other.py', 'wb').write(%r)\n" % content
+        receipt = {
+            "run_id": run_id,
+            "kind": "probe",
+            "argv": [sys.executable, "-c", script],
+            "cwd": review_boundary.SANDBOX_CWD,
+            "exit_code": 0,
+            "stdout_path": "meta/runs/%s.stdout" % run_id,
+            "stdout_sha256": _sha(self._read_bytes(out_path)),
+            "stderr_path": "meta/runs/%s.stderr" % run_id,
+            "stderr_sha256": _sha(self._read_bytes(err_path)),
+            "snapshot_before": before,
+            "snapshot_after": after,
+            "changed_paths": sorted(
+                path for path in set(before_entries) & set(after_entries)
+                if before_entries[path] != after_entries[path]),
+            "added_paths": sorted(after_tree - before_tree),
+            "removed_paths": sorted(before_tree - after_tree),
+            "boundary": {
+                "profile": review_boundary.PROFILE,
+                "enforced": True,
+                "preflight": "meta/preflight.json",
+                "preflight_sha256": _sha(
+                    self._read_bytes(self._meta("preflight.json"))),
+            },
+            "profile": review_boundary.PROFILE,
+            "host": review_boundary.supervisor_host(),
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "blocker": None,
+        }
+        self._write_json(self._meta("runs", "%s.json" % run_id), receipt)
+        self.receipts = [item for item in self.receipts
+                         if item["run_id"] != run_id] + [receipt]
+        self._extra_receipt = receipt
+        return receipt, content
+
+    def _repatch_extra_receipt(self, **overrides):
+        """Rewrite the third receipt's recorded fields, honestly or otherwise.
+
+        Re-recording is not idempotent (the file it wrote already exists, so a
+        second pass would observe no delta), so the legs that need a damaged chain
+        edit the stored record instead of running the probe again.
+        """
+        receipt = dict(self._extra_receipt)
+        receipt.update(overrides)
+        self._write_json(self._meta("runs", "%s.json" % receipt["run_id"]), receipt)
+        self.receipts = [item if item["run_id"] != receipt["run_id"] else receipt
+                         for item in self.receipts]
+        return receipt
+
+    def _record_quiet_probe(self):
+        """Record a later probe run that observed no delta at all.
+
+        This is what makes the residual rule bite instead of merely look tidy: the
+        newest receipt carries nothing, so a validator deriving residual changes
+        from the last receipt alone would let a report erase every change the
+        earlier runs recorded — and the snapshot really does still hold them.
+        """
+        repo = os.path.join(self.output, "repo")
+        ordered = review_publication._chronological(list(self.receipts))
+        clock = max([str(item.get("finished_at") or "") for item in ordered]
+                    + ["2026-10-09T00:00:00+00:00"])
+        later = datetime.datetime.fromisoformat(clock)
+        run_id = "1" * 32
+        _entries, identity = self._pinned(repo)
+        out_path = self._meta("runs", "%s.stdout" % run_id)
+        err_path = self._meta("runs", "%s.stderr" % run_id)
+        self._write_bytes(out_path, b"re-ran the suite, changed nothing\n")
+        self._write_bytes(err_path, b"")
+        receipt = {
+            "run_id": run_id,
+            "kind": "probe",
+            "argv": [sys.executable, "-c", "print('re-ran, changed nothing')"],
+            "cwd": review_boundary.SANDBOX_CWD,
+            "exit_code": 0,
+            "stdout_path": "meta/runs/%s.stdout" % run_id,
+            "stdout_sha256": _sha(self._read_bytes(out_path)),
+            "stderr_path": "meta/runs/%s.stderr" % run_id,
+            "stderr_sha256": _sha(self._read_bytes(err_path)),
+            "snapshot_before": identity,
+            "snapshot_after": identity,
+            "changed_paths": [],
+            "added_paths": [],
+            "removed_paths": [],
+            "boundary": {
+                "profile": review_boundary.PROFILE,
+                "enforced": True,
+                "preflight": "meta/preflight.json",
+                "preflight_sha256": _sha(
+                    self._read_bytes(self._meta("preflight.json"))),
+            },
+            "profile": review_boundary.PROFILE,
+            "host": review_boundary.supervisor_host(),
+            "started_at": (later + datetime.timedelta(minutes=2)).isoformat(),
+            "finished_at": (later + datetime.timedelta(minutes=3)).isoformat(),
+            "blocker": None,
+        }
+        self._write_json(self._meta("runs", "%s.json" % run_id), receipt)
+        self.receipts.append(receipt)
+        return receipt
+
+    def test_publication_requires_every_receipt_and_the_snapshot_state(self):
+        self._fixture()
+        truthful = self._report_raw("pass")
+        feature = os.path.join(self.output, "repo", "src", "feature.py")
+
+        with self.subTest("an edit no receipt records is refused by re-diff"):
+            original = self._read_bytes(feature)
+            try:
+                self._write_bytes(feature, original + b"# silent edit\n")
+                self._reject(needle="snapshot-state-unexplained",
+                             report_raw=truthful)
+            finally:
+                self._write_bytes(feature, original)
+
+        _receipt, content = self._record_extra_probe()
+        self.assertEqual(
+            review_publication._chronological(self.receipts)[-1]["run_id"],
+            "0" * 32,
+            "the new receipt is not the chronologically last run by its recorded "
+            "fields, which is what makes the legs below bite")
+
+        with self.subTest("a supervisor receipt the report omits is refused"):
+            message = self._reject(needle="receipt-uncited", report_raw=truthful)
+            self.assertIn("0" * 32, message, "the refusal never names the run")
+            self.assertIn("probe", message, "the refusal never names its kind")
+
+        with self.subTest("citing it but erasing its residual is refused"):
+            claim = self._provenance(cited=self.receipts)
+            self.assertIn("src/other.py", claim["residual_changes"]["added"],
+                          "the complete claim does not declare the third run's "
+                          "own residual")
+            claim["residual_changes"]["added"] = [
+                path for path in claim["residual_changes"]["added"]
+                if path != "src/other.py"]
+            self._reject(needle="residual",
+                         report_raw=self._with_provenance(claim))
+
+        with self.subTest("a run chain that does not connect is refused"):
+            honest = self._extra_receipt["snapshot_before"]
+            broken = self._repatch_extra_receipt(
+                snapshot_before=_sha(b"an identity no run started from"))
+            claim = self._provenance(cited=self.receipts)
+            self.assertEqual(claim["runs"][-1]["snapshot_before"],
+                             broken["snapshot_before"],
+                             "the claim must quote the damaged chain faithfully, "
+                             "so only the broken link can be what refuses")
+            self._reject(needle="run-chain-broken",
+                         report_raw=self._with_provenance(claim))
+            self._repatch_extra_receipt(snapshot_before=honest)
+
+        with self.subTest("a chain the supervisor never rooted is refused"):
+            # The chain is honest again; take away the one record that it starts at
+            # the prepared snapshot.
+            self.assertEqual(self._extra_receipt["snapshot_before"], honest)
+            claim = self._provenance(cited=self.receipts)
+            with self._removed(self._meta("baseline.json")):
+                self._reject(needle="run-chain-unrooted",
+                             report_raw=self._with_provenance(claim))
+
+        with self.subTest("a quiet later run cannot erase the earlier residual"):
+            # The last receipt records nothing at all, so deriving the residual from
+            # "the newest run" would let this report publish over a snapshot that
+            # still holds four edits.
+            quiet = self._record_quiet_probe()
+            self.assertEqual(
+                review_publication._chronological(self.receipts)[-1]["run_id"],
+                quiet["run_id"], "the quiet run is not the newest recorded run")
+            claim = self._provenance(cited=self.receipts)
+            self.assertTrue(claim["residual_changes"]["modified"]
+                            and claim["residual_changes"]["added"],
+                            "the earlier receipts record no residual to erase")
+            claim["residual_changes"] = {"modified": [], "added": [],
+                                         "removed": []}
+            message = self._reject(needle="residual",
+                                   report_raw=self._with_provenance(claim))
+            self.assertIn("src/feature.py", message,
+                          "the refusal did not name the erased path")
+
+        with self.subTest("a truncated receipt is a named refusal, not a "
+                          "traceback"):
+            path = self._receipt_of(self.receipts[1]["run_id"])
+            raw = self._read_bytes(path)
+            with self._tampered(path, raw[:len(raw) // 2]):
+                message = self._reject(needle="JSON", report_raw=truthful)
+            self.assertNotIn("Traceback", message)
+
+        with self.subTest("truncated boundary evidence is named too"):
+            path = self._meta("preflight.json")
+            raw = self._read_bytes(path)
+            truncated = raw[:len(raw) // 2]
+            claim = self._provenance(cited=self.receipts)
+            # Re-pin the claim's own pointer, so only the parse failure can refuse
+            # and a hash mismatch cannot mask it.
+            claim["boundary"]["preflight_sha256"] = _sha(truncated)
+            with self._tampered(path, truncated):
+                message = self._reject(needle="JSON",
+                                       report_raw=self._with_provenance(claim))
+            self.assertNotIn("Traceback", message)
+
+        with self.subTest("a truthful report over three runs still publishes"):
+            claim = self._provenance(
+                cited=self.receipts,
+                extra_probe_changes=[{"path": "src/other.py",
+                                      "before_sha256": None,
+                                      "after_sha256": _sha(content),
+                                      "deleted": False}])
+            message = self._guarded(report_raw=self._with_provenance(claim))
+            self.assertIn("published", message)
+            self.assertEqual(self._read_bytes(self._live("review.md")),
+                             self._with_provenance(claim))
+
+    # ========================================================================
+    # 8. State is the commit marker: a landed verdict is never rolled back.
+    # ========================================================================
+
+    def _rewind(self, records):
+        """Put the live records back exactly as captured, byte for byte.
+
+        A publication consumes its context (State and Handoff are captured
+        inputs), so a leg that publishes re-arms the fixture this way: what is
+        reset is the fixture's own state and its own supervisor scratch, never a
+        rule under test. Clearing `meta/publication/` is what keeps each leg's
+        record and journal counts exact instead of cumulative.
+        """
+        for rel, payload in records.items():
+            full = os.path.join(self.root, *rel.split("/"))
+            if payload is None:
+                if os.path.exists(full):
+                    os.remove(full)
+            else:
+                self._write_bytes(full, payload)
+        self.assertEqual(self._record_bytes(), records)
+        base = self._meta("publication")
+        if os.path.isdir(base):
+            for name in os.listdir(base):
+                path = os.path.join(base, name)
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+        self.assertEqual(review_publication.journals(self.output), [])
+        self.assertEqual(review_publication.publication_records(self.output), [])
+
+    @contextlib.contextmanager
+    def _failing_after_commit(self, where):
+        """Fail one post-commit seam, the way a stuck unlink or a full disk would.
+
+        `_remove_file` and `_write_bytes` are the seams the module advertises for
+        injection; these are the legs that claim was written for.
+        """
+        if where == "retire-journal":
+            original_remove = review_publication._remove_file
+
+            def fail_journal(path):
+                if os.path.basename(path) == "journal.json":
+                    raise ReviewPublicationTest._Injected(
+                        5, "injected journal retirement failure")
+                return original_remove(path)
+
+            with mock.patch.object(review_publication, "_remove_file",
+                                   side_effect=fail_journal):
+                yield
+            return
+        if where == "commit-record":
+            original_write = review_publication._write_bytes
+
+            def fail_record(path, payload):
+                if os.path.basename(path) == "record.json":
+                    raise ReviewPublicationTest._Injected(
+                        5, "injected commit record failure")
+                return original_write(path, payload)
+
+            with mock.patch.object(review_publication, "_write_bytes",
+                                   side_effect=fail_record):
+                yield
+            return
+        raise ValueError("unknown post-commit seam %r" % (where,))
+
+    def _foreign_writer_after_commit(self, report_raw):
+        """Let the transaction land, then have another writer reach Review.
+
+        State's replace is the last one, so this is a foreign write inside the
+        post-commit window: the recheck has to see it, the commit record has to
+        carry it, the journal has to be retired and the reason has to reach the
+        caller — without rolling a single record back.
+        """
+        real_replace = review_publication._replace
+
+        def side_effect(src, dst):
+            real_replace(src, dst)
+            if os.path.basename(dst).startswith("state"):
+                self._write_bytes(self._live("review.md"),
+                                  b"written by another writer after the commit\n")
+
+        with mock.patch.object(review_publication, "_replace",
+                               side_effect=side_effect):
+            return self._guarded(report_raw=report_raw)
+
+    def test_publication_commits_before_retiring_the_journal(self):
+        self._fixture()
+        candidate = self._report_raw("pass")
+        captured = self._record_bytes()
+
+        def verdict_now():
+            return (self.read_state().get("review") or {}).get("verdict")
+
+        for where, seam in (("retire-journal", "journal retirement"),
+                            ("commit-record", "commit record")):
+            with self.subTest("a failed %s step reports the commit" % seam):
+                with self.assertRaises(mutate.MutateError) as ctx:
+                    with self._failing_after_commit(where):
+                        self._guarded(report_raw=candidate)
+                message = str(ctx.exception)
+                self.assertIn("publication-committed", message)
+                self.assertNotIn("Traceback", message)
+                self.assertEqual(verdict_now(), "pass",
+                                 "%s failed after State landed and the publisher "
+                                 "rolled the landed verdict back" % seam)
+                self.assertEqual(self._read_bytes(self._live("review.md")),
+                                 candidate,
+                                 "%s rolled back the published Report" % seam)
+                journals = review_publication.journals(self.output)
+                self.assertEqual(len(journals), 1,
+                                 "the failed %s destroyed the evidence that the "
+                                 "transaction had landed" % seam)
+                recovered = review_publication.recover_stray_journals(self.output)
+                self.assertEqual(recovered, [os.path.realpath(journals[0])],
+                                 "recovery did not clear a committed journal")
+                self.assertEqual(review_publication.journals(self.output), [])
+                self.assertFalse(os.path.isdir(
+                    os.path.join(os.path.dirname(recovered[0]), "backup")),
+                    "recovery left a committed transaction's backups behind")
+                self.assertEqual(verdict_now(), "pass",
+                                 "recovering a committed journal unpublished the "
+                                 "verdict that had landed")
+                self.assertEqual(self._read_bytes(self._live("review.md")),
+                                 candidate)
+                self._rewind(captured)
+
+        with self.subTest("the commit record is written before the retirement"):
+            # The order is what makes the first loop meaningful: a record written
+            # after the journal is gone can root nothing.
+            with self._failing_after_commit("retire-journal"):
+                with self.assertRaises(mutate.MutateError):
+                    self._guarded(report_raw=candidate)
+            records = review_publication.publication_records(self.output)
+            self.assertEqual(len(records), 1,
+                             "the commit record did not survive the failure it "
+                             "was written to record")
+            record = json.loads(self._read_bytes(records[0]).decode("utf-8"))
+            self.assertEqual(record["conflict"], [])
+            self.assertEqual(sorted(entry["record"] for entry in record["records"]),
+                             ["handoff", "review", "state"])
+            self.assertEqual(len(review_publication.journals(self.output)), 1)
+            review_publication.recover_stray_journals(self.output)
+            self.assertEqual(len(review_publication.publication_records(
+                self.output)), 1,
+                "retiring a committed journal discarded its commit record")
+            self._rewind(captured)
+
+        with self.subTest("a post-commit conflict reaches its own reason"):
+            # It used to be swallowed by the transaction's own handler and surface
+            # as `publication-journal-incomplete ... resolve it by hand`, so the
+            # documented conflict reason never arrived and the committed branch of
+            # `_retire_journal` stayed unreachable.
+            with self.assertRaises(mutate.MutateError) as ctx:
+                self._foreign_writer_after_commit(candidate)
+            message = str(ctx.exception)
+            self.assertIn("publication-conflict", message)
+            self.assertIn("review", message)
+            self.assertNotIn("journal-incomplete", message)
+            self.assertEqual(review_publication.journals(self.output), [],
+                             "a reported conflict left an unfinished journal")
+            self.assertEqual(verdict_now(), "pass",
+                             "a conflict report rolled a committed verdict back")
+            self.assertEqual(self._read_bytes(self._live("review.md")),
+                             b"written by another writer after the commit\n",
+                             "the conflict path overwrote a foreign writer")
+            records = review_publication.publication_records(self.output)
+            record = json.loads(self._read_bytes(records[0]).decode("utf-8"))
+            self.assertEqual(record["conflict"], ["review"],
+                             "the commit record does not carry the conflict it saw")
+            self._rewind(captured)
+
+        with self.subTest("a pre-commit failure still recovers byte-exactly"):
+            records = self._record_bytes()
+            with self._failing("replace-review"):
+                with self.assertRaises(mutate.MutateError):
+                    self._guarded(report_raw=candidate)
+            self.assertEqual(self._record_bytes(), records,
+                             "an uncommitted transaction did not roll back")
+            self.assertEqual(review_publication.journals(self.output), [])
+            self.assertEqual(review_publication.publication_records(self.output),
+                             [],
+                             "an uncommitted transaction wrote a commit record")
+
+    # ========================================================================
+    # 9. Each currentness layer refuses what only it can see.
+    # ========================================================================
+
+    def _context_manifest(self):
+        return json.loads(self._read_bytes(self._meta("context.json")).decode("utf-8"))
+
+    @contextlib.contextmanager
+    def _neutered(self, *layers):
+        """Turn individual currentness layers off, per leg, so another stands alone.
+
+        `outer` substitutes an unchecked copy of the persisted manifest for
+        `review_snapshot.assert_current`, which is how the reviewer neutered it;
+        `drift` is `review.code_drift`; `in-lock` is this module's own
+        `_require_current_records`.
+        """
+        patches = []
+        if "outer" in layers:
+            patches.append(mock.patch.object(
+                review_snapshot, "assert_current",
+                side_effect=lambda *args, **kwargs: self._context_manifest()))
+        if "drift" in layers:
+            patches.append(mock.patch.object(review, "code_drift",
+                                             side_effect=lambda *a, **k: []))
+        if "in-lock" in layers:
+            patches.append(mock.patch.object(
+                review_publication, "_require_current_records",
+                side_effect=lambda *args, **kwargs: None))
+        self.assertTrue(patches, "no layer was named to neuter")
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            yield
+
+    def test_publication_currentness_layers_each_refuse_their_own_drift(self):
+        self._fixture(progress=True)
+        captured = self._record_bytes()
+        progress_rel = ".ai/work/%s/progress.md" % self.TICKET
+        self.assertIn(progress_rel, self.context["inputs"],
+                      "progress.md was never a captured input of this context, so "
+                      "the legs below would test nothing")
+        progress_path = self._live("progress.md")
+        feature = os.path.join(self.root, "src", "feature.py")
+        code = self._read_bytes(feature)
+
+        with self.subTest("the in-lock recheck alone refuses a drifted input"):
+            drifted = self._read_bytes(progress_path) + b"\n- drifted\n"
+            with self._tampered(progress_path, drifted):
+                with self._neutered("outer", "drift"):
+                    message = self._reject(needle="publication-stale",
+                                           records=captured)
+            self.assertIn(progress_rel, message)
+
+        with self.subTest("the outer layer's copy refuses the same drift"):
+            drifted = self._read_bytes(progress_path) + b"\n- drifted\n"
+            with self._tampered(progress_path, drifted):
+                with self._neutered("in-lock"):
+                    # `assert_current` is not a publication refusal: it names the
+                    # input it checked, and the reason prefix is layer three's.
+                    message = self._reject(
+                        needle="changed since the review context was prepared",
+                        records=captured)
+
+        with self.subTest("the drift layer alone refuses changed live code"):
+            with self._tampered(feature, code + b"\n# drifted\n"):
+                with self._neutered("outer", "in-lock"):
+                    message = self._reject(needle="changed since the reviewed "
+                                                  "commit", records=captured)
+                self.assertIn("src/feature.py", message)
+
+        with self.subTest("the manifest layer alone refuses changed live code"):
+            with self._tampered(feature, code + b"\n# drifted\n"):
+                with self._neutered("drift", "in-lock"):
+                    self._reject(needle="live manifest changed", records=captured)
+
+        with self.subTest("the publisher's own drift refusal holds when it is "
+                          "addressed directly"):
+            # `mutate._review_candidate` refuses drifted code before the publisher
+            # is ever reached, so every CLI/in-process leg would pass without this
+            # check. Only a direct `publish` call pins the publisher's own refusal.
+            report_raw = self._report_raw("pass")
+            data = self.read_state()
+            proposed = mutate._review_candidate(
+                self.root, self.TICKET, data,
+                contracts.parse_artifact(report_raw, "review"), report_raw, "pass")
+            with self._tampered(feature, code + b"\n# drifted\n"):
+                with self._neutered("outer", "in-lock"):
+                    with self.assertRaises(contracts.ContractError) as ctx:
+                        review_publication.publish(self.root, self.TICKET,
+                                                   self.output, report_raw,
+                                                   self._handoff_raw(), proposed)
+            self.assertIn("changed since the reviewed commit",
+                          str(ctx.exception))
+            self.assertEqual(self._record_bytes(), captured,
+                             "the refusal reached the publisher before any write")
+
+        with self.subTest("only the outer layer proves the context is this "
+                          "Ticket's"):
+            # `ticket_id` is in no claim field and no identity hash: a context
+            # re-labelled for another Ticket stays consistent with its own report,
+            # so skipping the revalidation would publish on somebody else's run.
+            manifest = self._context_manifest()
+            manifest["ticket_id"] = "T9"
+            with self._tampered(self._meta("context.json"),
+                                json.dumps(manifest, indent=2,
+                                           sort_keys=True).encode("utf-8")):
+                claim = self._provenance()
+                message = self._reject(needle="belongs to ticket",
+                                       report_raw=self._with_provenance(claim))
+            self.assertIn("T9", message)
+
+        with self.subTest("a captured input that moved after the outer check is "
+                          "caught inside the lock"):
+            # A real race, not a mocked layer: the write lands between the pre-lock
+            # currentness checks and the in-lock recheck, with the context lock
+            # already held.
+            progress_before = self._read_bytes(progress_path)
+            drifted = progress_before + b"\n- raced\n"
+
+            real_recovery = review_publication._recover_stray_journals_locked
+
+            def racing(*args, **kwargs):
+                cleared = real_recovery(*args, **kwargs)
+                self._write_bytes(progress_path, drifted)
+                return cleared
+
+            try:
+                with mock.patch.object(
+                        review_publication, "_recover_stray_journals_locked",
+                        side_effect=racing):
+                    message = self._reject(needle="publication-stale",
+                                           records=captured)
+                self.assertIn(progress_rel, message)
+                self.assertIn("in-lock", message,
+                              "the refusal did not say which layer caught it")
+            finally:
+                self._write_bytes(progress_path, progress_before)
+                self._rewind(captured)
+            self.assertEqual(self._read_bytes(progress_path), progress_before)
+            self.assertEqual(self._record_bytes(), captured)
+
+    # ========================================================================
+    # 10. A HEAD-only commit is not a current baseline.
+    # ========================================================================
+
+    def test_publication_refuses_a_head_only_commit(self):
+        self._fixture()
+        prepared = self._head()
+        records = self._record_bytes()
+        self.assertEqual(prepared, self.context["reviewed_commit"],
+                         "the fixture's reviewed commit is not live HEAD")
+
+        with self.subTest("an --allow-empty commit after preparation refuses"):
+            empty = self._git("commit", "-q", "--allow-empty", "-m",
+                              "fixture: a HEAD-only commit")
+            self.assertEqual(empty.returncode, 0, empty.stderr)
+            self.assertNotEqual(self._head(), prepared,
+                                "the empty commit did not move HEAD")
+            proc = self._cli_guarded()
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+            self.assertIn("live-head-mismatch", proc.stderr)
+            self.assertIn(prepared, proc.stderr,
+                          "the refusal never names the reviewed commit")
+            self.assertIn(self._head(), proc.stderr,
+                          "the refusal never names the live HEAD")
+            self.assertEqual(self._record_bytes(), records,
+                             "a refused publication wrote a live record")
+            self.assertNotEqual((self.read_state().get("review") or {}).get(
+                "verdict"), "pass", "the refusal recorded a verdict anyway")
+            self.assertEqual(self._strays(), [])
+            self.assertEqual(review_publication.journals(self.output), [],
+                             "the refusal opened a journal")
+
+        with self.subTest("resetting HEAD publishes the same candidate"):
+            self.assertEqual(self._git("reset", "--mixed", prepared).returncode, 0)
+            self.assertEqual(self._head(), prepared)
+            message = self._guarded()
+            self.assertIn("published", message)
+            self.assertEqual((self.read_state().get("review") or {}).get(
+                "verdict"), "pass")
+
+    # ========================================================================
+    # 11. Two live publishers on one context: ordered by events, never by luck.
+    # ========================================================================
+
+    def test_two_live_publishers_on_one_context_serialise(self):
+        """Real threads holding the real context lock, sequenced by events.
+
+        The single-threaded lock test proves a waiting publisher refuses a lock
+        file it never created. This proves the other half: two publishers genuinely
+        in flight at once, one inside the transaction and one trying to enter, with
+        `threading.Event` handshakes instead of sleeps, so it cannot pass by losing
+        a race. What it still cannot prove is said plainly: the lock is per review
+        context, so two contexts prepared for one Ticket are not serialized against
+        each other, and only the in-lock identity recheck narrows that.
+        """
+        self._fixture()
+        captured = self._record_bytes()
+        results = {}
+        held = threading.Event()
+        proceed = threading.Event()
+        real_publish = review_publication._publish
+
+        def gated(*args, **kwargs):
+            held.set()
+            self.assertTrue(proceed.wait(60),
+                            "the contending publisher never made its attempt")
+            return real_publish(*args, **kwargs)
+
+        def publisher(name, report_raw):
+            report_path = os.path.join(self._out_tmp.name, "%s-review.md" % name)
+            handoff_path = os.path.join(self._out_tmp.name,
+                                        "%s-handoff.md" % name)
+            self._write_bytes(report_path, report_raw)
+            self._write_bytes(handoff_path, self._handoff_raw())
+            try:
+                results[name] = mutate.set_review(
+                    self.root, self.TICKET, "pass", review_context=self.output,
+                    report_path=report_path, handoff_path=handoff_path)
+            except mutate.MutateError as exc:
+                results[name] = "refused: %s" % exc
+
+        # Distinct Report bytes per publisher: one context publishes one verdict,
+        # so an identical second candidate would be refused for having nothing left
+        # to publish rather than for the lock.
+        first = self._with_provenance(dict(self._provenance(),
+                                           limits=["first publisher's report"]))
+        second = self._with_provenance(dict(self._provenance(),
+                                            limits=["second publisher's report"]))
+        self.assertNotEqual(first, second)
+        with mock.patch.object(review_publication, "_publish", side_effect=gated):
+            holder = threading.Thread(target=publisher, args=("holder", first))
+            holder.start()
+            self.assertTrue(held.wait(60),
+                            "the first publisher never reached the transaction")
+            with mock.patch.object(review_publication, "_LOCK_TIMEOUT", 0.5):
+                contender = threading.Thread(target=publisher,
+                                             args=("contender", second))
+                contender.start()
+                contender.join(60)
+                proceed.set()
+            holder.join(60)
+        self.assertFalse(holder.is_alive(), "the holding publisher never finished")
+        self.assertFalse(contender.is_alive(),
+                         "the waiting publisher hung instead of refusing")
+        self.assertIn("published", results.get("holder", ""),
+                      "the publisher that held the context did not publish: %r"
+                      % (results.get("holder"), ))
+        self.assertIn("publication-busy", results.get("contender", ""),
+                      "a second live publisher was not refused the context: %r"
+                      % (results.get("contender"), ))
+        self.assertEqual((self.read_state().get("review") or {}).get("verdict"),
+                         "pass")
+        self.assertEqual(self._read_bytes(self._live("review.md")), first,
+                         "the refused publisher overwrote the published Report")
+        self.assertEqual(review_publication.journals(self.output), [])
+        self.assertFalse(os.path.exists(self._meta("publication", "lock")),
+                         "a publisher left its own lock behind")
+        self.assertEqual(self._strays(), [])
+        self.assertNotEqual(self._record_bytes(), captured)
 
     def _index_record(self):
         index_path = os.path.join(self.root, ".git", "index")

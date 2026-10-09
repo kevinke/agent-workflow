@@ -32,10 +32,27 @@ Specifically rejected: an enforced-boundary claim with no matching supervisor
 evidence; a report that does not distinguish a baseline run from a probe run; an
 absent or mismatched receipt; a probe path that is not repository-relative inside
 the snapshot or that no receipt names; a claim of success for a command whose
-receipt records a nonzero exit; and residual snapshot changes the receipt says are
-still there but the report says are not. **A truthful failed run stays valid
+receipt records a nonzero exit; a supervisor receipt the report never cites; a run
+chain whose recorded snapshot identities do not connect to each other or to the
+snapshot as it stands now; residual snapshot changes the receipts say are still
+there but the report says are not. **A truthful failed run stays valid
 evidence** — whether that failure blocks acceptance is the human technical
-verdict's decision, not this validator's.
+verdict's decision, not this validator's. Completeness checking is never a
+requirement that runs succeed: it is a requirement that every run the supervisor
+recorded is cited and every path any receipt observed is declared.
+
+Currentness is content *and* HEAD
+--------------------------------
+`review_snapshot.assert_current` and `review.binding_problems` are content-based
+by design, and so is the HARDEN-010 drift check: a commit that changes nothing in
+scope leaves the content current. Guarded publication is deliberately stricter
+than both, because the plan binds a verdict to the commit that was reviewed: it
+requires `live HEAD == reviewed_commit`, so an `--allow-empty` commit after
+preparation is refused under its own reason rather than rationalised as "content
+still matches". A moved HEAD is a moved baseline even when its tree is identical.
+Publication also re-reads every captured input, the live Review bytes and the
+record identities *inside* the context lock, because the pre-lock checks can be
+true at check time and false at write time.
 
 Publication is recoverable, not atomic
 -------------------------------------
@@ -44,17 +61,29 @@ The transaction stages the proposed State privately through the kit's own
 exactly), serializes publishers per context with a lock inside the supervisor's
 `meta/`, rechecks the old record identities, then replaces Handoff and Review
 first and State **last** as the binding commit marker, using adjacent unique
-temporary files, and finally rechecks the live identities.
+temporary files.
 
-Say the limit plainly: this is *recoverable* publication. It is not a promise that
-the three records become visible atomically, and it does not serialize against
-arbitrary external writers. On a failure only a file still holding this
-transaction's own bytes is restored — a foreign or intervening writer's file is
-never overwritten — and a transaction that could not fully recover leaves its
-journal, which the next publisher must recover or be blocked by. A concurrent
-external writer therefore yields a conflict or a stale review, never an
-automatically refreshed pass. A preflight or currentness mismatch performs zero
-live record writes.
+What happens after State lands is reporting only, never rollback: the commit
+record `record.json` is written first, and only then are the journal and the
+backups retired. A failure anywhere in that post-commit tail is named as
+`publication-committed` and re-raised without touching a single live record,
+because the verdict the Reviewer authored is already in State and silently
+undoing it — and destroying the journal and backups that prove it — is worse than
+a messy meta directory. Recovery of a surviving journal reads the commit marker
+the same way: a journal whose State entry holds this transaction's own bytes
+committed, so it is retired, not rolled back.
+
+Say the rest of the limit plainly: this is *recoverable* publication. It is not a
+promise that the three records become visible atomically, and it does not
+serialize against arbitrary external writers. On a pre-commit failure only a file
+still holding this transaction's own bytes is restored — a foreign or intervening
+writer's file is never overwritten — and a transaction that could not fully
+recover leaves its journal, which the next publisher must recover or be blocked
+by. The lock is per review context, so two contexts prepared for the same Ticket
+are not serialized against each other; what narrows that window is the in-lock
+identity recheck, and a foreign writer that wins it yields a conflict or a stale
+review, never an automatically refreshed pass. A preflight or currentness
+mismatch performs zero live record writes.
 
 Python 3 stdlib only; Git and every command run through argument lists, never a
 shell.
@@ -91,7 +120,9 @@ RECORD_FORMAT_VERSION = 1
 _META_DIR = "meta"
 _CONTEXT_FILE = "context.json"
 _PREFLIGHT_FILE = "preflight.json"
+_BASELINE_FILE = "baseline.json"
 _RUNS_DIR = "runs"
+_REPO_DIR_NAME = "repo"
 _PUBLICATION_DIR = "publication"
 _JOURNAL_FILE = "journal.json"
 _RECORD_FILE = "record.json"
@@ -122,6 +153,10 @@ REASON_BOUNDARY = "unenforced-boundary-claim"
 REASON_PROFILE = "boundary-profile-mismatch"
 REASON_RECEIPT_ABSENT = "receipt-absent"
 REASON_RECEIPT_MISMATCH = "receipt-mismatch"
+REASON_RECEIPT_UNCITED = "receipt-uncited"
+REASON_RECEIPT_UNROOTED = "run-chain-unrooted"
+REASON_RECEIPT_UNORDERED = "run-chain-broken"
+REASON_SNAPSHOT_STATE = "snapshot-state-unexplained"
 REASON_FALSE_SUCCESS = "receipt-claimed-success"
 REASON_RUNS = "run-kinds-indistinct"
 REASON_PROBE_UNNAMED = "probe-change-unnamed"
@@ -130,12 +165,18 @@ REASON_HANDOFF = "candidate-handoff-not-ready"
 REASON_JOURNAL = "publication-journal-incomplete"
 REASON_LOCK = "publication-busy"
 REASON_CONFLICT = "publication-conflict"
+REASON_COMMITTED = "publication-committed"
 REASON_WRITE = "publication-write-failed"
+REASON_HEAD = "live-head-mismatch"
 
 
 # ---------------------------------------------------------------------------
-# Small IO seams. The focused tests inject failures here, which is how an
-# interrupted replace is exercised without damaging a real disk.
+# Small IO seams. The focused tests inject failures into `_stage_state`,
+# `_write_bytes`, `_replace` and `_remove_file` — the last two around the commit
+# and around retiring the journal — which is how an interrupted replace and a
+# post-commit retirement failure are exercised without damaging a real disk.
+# `_read_bytes` and `_read_bytes_or_none` are not injected: every read failure
+# they can raise is already a named refusal.
 # ---------------------------------------------------------------------------
 
 def _read_bytes(path):
@@ -223,14 +264,17 @@ def _load_json(path, what):
 
 
 def live_head(root):
-    """The live repository's current HEAD, reported alongside reviewed_commit.
+    """The live repository's current HEAD, which publication must equal.
 
     `review_snapshot.assert_current` and `review.binding_problems` are
-    deliberately content-based and never compare HEAD to the reviewed commit —
-    a later commit that changes nothing in scope is still current. Currentness
-    reporting still has to say which HEAD it spoke about, so publication records
-    and reports name `live_head` next to `reviewed_commit` instead of implying
-    they are the same thing.
+    content-based and never compare HEAD to the reviewed commit; that is their
+    documented behaviour and this module does not change it. Guarded publication
+    adds the stricter binding the plan requires: `live_head(root)` must equal the
+    context's `reviewed_commit`, so a commit that changes nothing — including an
+    `--allow-empty` one — still refuses publication instead of publishing a
+    verdict against a baseline the review never spoke about. The value is also
+    what gets recorded in the publication record, because "current" has to say
+    *which* HEAD it meant.
     """
     try:
         proc = subprocess.run(["git", "--no-optional-locks", "-C", root,
@@ -253,6 +297,12 @@ def _publication_dir(context_path):
 
 
 def _journal_entries(path):
+    """Every surviving transaction journal: one unique directory per transaction.
+
+    `_publish` creates `publication/<txn>/journal.json` and nothing else, so a
+    flat `publication/<something>.journal.json` is not a shape this module ever
+    produces and is never read as one.
+    """
     found = []
     base = _publication_dir(path)
     if not os.path.isdir(base):
@@ -263,8 +313,6 @@ def _journal_entries(path):
             candidate = os.path.join(entry, _JOURNAL_FILE)
             if os.path.isfile(candidate):
                 found.append(candidate)
-        elif name.endswith(".journal.json"):
-            found.append(entry)
     return sorted(found)
 
 
@@ -549,12 +597,17 @@ def _validate_boundary(context_path, claim, receipts):
     _require(raw is not None, REASON_BOUNDARY,
              "the report claims an enforced boundary but the supervisor persisted "
              "no meta/preflight.json evidence for this context")
-    evidence = json.loads(raw.decode("utf-8", "replace"))
-    _require(isinstance(evidence, dict), REASON_BOUNDARY,
-             "meta/preflight.json is not a supervisor evidence record")
     _require(_sha(raw) == boundary["preflight_sha256"], REASON_BOUNDARY,
              "the boundary claim's preflight_sha256 does not cover the bytes of "
              "the persisted meta/preflight.json")
+    # Parsed only once the bytes are the claimed ones. A truncated or corrupt
+    # record is a named refusal through the module's own loader: a bare
+    # `json.loads` here would raise JSONDecodeError, which neither
+    # `mutate.set_review` nor the CLI converts, so it would reach a person as a
+    # traceback where every other refusal is a reason.
+    evidence = _load_json(evidence_path, "the supervisor boundary evidence")
+    _require(isinstance(evidence, dict), REASON_BOUNDARY,
+             "meta/preflight.json is not a supervisor evidence record")
     _require(evidence.get("enforced") is True, REASON_BOUNDARY,
              "the persisted boundary evidence does not claim enforcement "
              "(blocker=%r); an unavailable boundary produces a blocker, never a "
@@ -626,8 +679,52 @@ def _validate_boundary(context_path, claim, receipts):
                  "the one the report claims" % receipt.get("run_id"))
 
 
-def _validate_runs(context_path, claim):
-    """Every claimed run must match its supervisor receipt field for field."""
+def _receipt_files(context_path):
+    """{run_id: (path, receipt)} for every receipt the supervisor recorded here.
+
+    The listing is only ever a source of names: chronology comes from recorded
+    fields (`_chronological`), never from the order a directory came back in or
+    from a run_id, which is a random hex string.
+    """
+    runs = os.path.join(context_path, _META_DIR, _RUNS_DIR)
+    found = {}
+    if not os.path.isdir(runs):
+        return found
+    for name in sorted(os.listdir(runs)):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(runs, name)
+        receipt = _load_json(path, "a supervisor run receipt")
+        run_id = name[:-len(".json")]
+        _require(isinstance(receipt, dict), REASON_RECEIPT_ABSENT,
+                 "receipt %s is not a supervisor run record" % path)
+        _require(receipt.get("run_id") == run_id, REASON_RECEIPT_ABSENT,
+                 "receipt %s describes run %r: a record stored under one run's "
+                 "name that names another is not evidence"
+                 % (path, receipt.get("run_id")))
+        found[run_id] = (path, receipt)
+    return found
+
+
+def _chronological(receipts):
+    """Receipts oldest-first by *recorded* completion fields, never by name."""
+    return sorted(receipts, key=lambda item: (str(item.get("finished_at") or ""),
+                                              str(item.get("started_at") or ""),
+                                              str(item.get("run_id") or "")))
+
+
+def _validate_runs(context_path, claim, manifest):
+    """Every claimed run must match its receipt, and every receipt claimed.
+
+    A report chooses which runs to describe; it does not choose which runs the
+    supervisor recorded. Enumerating `meta/runs/` is what stops a report from
+    publishing a claim set that quietly omits the run whose probe wrote a file
+    the report never mentions — restored and under-reported writes are exactly
+    what a final live diff cannot reveal, so the receipts, not a diff, are the
+    complete record here. Nothing in this function requires a run to have
+    succeeded: a truthful failing run is publishable evidence.
+    """
+    recorded = _receipt_files(context_path)
     kinds = set()
     receipts = []
     for entry in claim["runs"]:
@@ -637,11 +734,11 @@ def _validate_runs(context_path, claim):
                  "meta/runs/" % (entry["run_id"],))
         path = os.path.join(context_path, _META_DIR, _RUNS_DIR,
                             "%s.json" % entry["run_id"])
-        raw = _read_bytes_or_none(path)
-        _require(raw is not None, REASON_RECEIPT_ABSENT,
+        pair = recorded.get(entry["run_id"])
+        _require(pair is not None, REASON_RECEIPT_ABSENT,
                  "the report claims run %s but the supervisor has no receipt %s"
                  % (entry["run_id"], path))
-        receipt = json.loads(raw.decode("utf-8", "replace"))
+        receipt = pair[1]
         _require(isinstance(receipt, dict)
                  and receipt.get("run_id") == entry["run_id"],
                  REASON_RECEIPT_ABSENT,
@@ -654,26 +751,157 @@ def _validate_runs(context_path, claim):
                     claim["boundary"]["profile"]))
         for field in ("kind", "argv", "exit_code", "stdout_sha256",
                       "stderr_sha256", "snapshot_before", "snapshot_after"):
-            claimed, recorded = entry[field], receipt.get(field)
-            if claimed == recorded:
+            claimed, recorded_value = entry[field], receipt.get(field)
+            if claimed == recorded_value:
                 continue
             if field == "exit_code" and claimed == 0:
                 raise contracts.ContractError(
                     "%s: run %s claims success (exit code 0) while the receipt "
                     "records exit code %s. A truthful failed run stays valid "
                     "evidence; a rewritten status does not"
-                    % (REASON_FALSE_SUCCESS, entry["run_id"], recorded))
+                    % (REASON_FALSE_SUCCESS, entry["run_id"], recorded_value))
             raise contracts.ContractError(
                 "%s: run %s claims %s=%r while the receipt records %s=%r"
                 % (REASON_RECEIPT_MISMATCH, entry["run_id"], field, claimed,
-                   field, recorded))
+                   field, recorded_value))
         kinds.add(entry["kind"])
         receipts.append(receipt)
     _require(set(kinds) == set(review_boundary.KINDS), REASON_RUNS,
              "the runs must distinguish a baseline from a probe: claimed %s, "
              "and a guarded publication needs both a baseline acceptance run "
              "and a probe run to be named" % (", ".join(sorted(kinds)) or "none",))
+    uncited = sorted(set(recorded) - {item["run_id"] for item in receipts})
+    _require(not uncited, REASON_RECEIPT_UNCITED,
+             "the report cites %d of the %d runs recorded under meta/runs/ for "
+             "this review context; uncited run(s): %s. Every supervisor receipt "
+             "is part of the evidence set a verdict is published on, so omitting "
+             "the run that wrote a path is not a shorter report, it is an "
+             "incomplete one"
+             % (len(receipts), len(recorded),
+                ", ".join("%s (%s)" % (run_id, recorded[run_id][1].get("kind"))
+                          for run_id in uncited)))
+    _require(receipts, REASON_RECEIPT_ABSENT,
+             "no supervisor receipt under meta/runs/ describes any run this "
+             "report cites")
+    receipts = _chronological(receipts)
+    _validate_run_chain(context_path, manifest, receipts)
     return receipts
+
+
+def _validate_run_chain(context_path, manifest, receipts):
+    """Root the recorded run chain and prove it is unbroken and current.
+
+    Three separate claims, none of them a report's: the chain starts at a
+    baseline run the supervisor itself pinned to the prepared snapshot, each run
+    starts where the previous one ended, and (checked by
+    `_validate_snapshot_state`) the last run ended where the snapshot now stands.
+    """
+    earliest = receipts[0]
+    _require(earliest.get("kind") == "baseline", REASON_RECEIPT_UNROOTED,
+             "the earliest recorded run is the %s run %s, not a baseline: a run "
+             "chain rooted in a probe cannot show it started from the reviewed "
+             "snapshot, because only the first baseline is pinned against Task "
+             "1's captured identity at run time"
+             % (earliest.get("kind"), earliest.get("run_id")))
+    _require(earliest.get("snapshot_before") is not None,
+             REASON_RECEIPT_UNROOTED,
+             "run %s records no snapshot_before identity, so the chain it starts "
+             "is not checkable" % earliest.get("run_id"))
+    rooted = _rooted_in_baseline_record(context_path, earliest)
+    if not rooted:
+        rooted = _rooted_in_prepared_snapshot(context_path, manifest, earliest)
+    _require(rooted, REASON_RECEIPT_UNROOTED,
+             "run %s starts at snapshot identity %r, which neither the "
+             "supervisor's meta/baseline.json pin nor the prepared snapshot "
+             "itself accounts for; a report may not be published on a run chain "
+             "that does not start from the reviewed content"
+             % (earliest.get("run_id"), earliest.get("snapshot_before")))
+    for previous, following in zip(receipts, receipts[1:]):
+        _require(previous.get("snapshot_after") == following.get("snapshot_before"),
+                 REASON_RECEIPT_UNORDERED,
+                 "the recorded runs do not form one chain: run %s ended at "
+                 "snapshot identity %r but run %s started at %r, so the snapshot "
+                 "changed between them with no receipt to record it"
+                 % (previous.get("run_id"), previous.get("snapshot_after"),
+                    following.get("run_id"), following.get("snapshot_before")))
+
+
+def _rooted_in_baseline_record(context_path, earliest):
+    """True when the supervisor's own baseline record pins this chain start."""
+    record = _read_bytes_or_none(os.path.join(context_path, _META_DIR,
+                                              _BASELINE_FILE))
+    if record is None:
+        return False
+    try:
+        pinned = json.loads(record.decode("utf-8"))
+    except ValueError:
+        return False
+    return (isinstance(pinned, dict)
+            and pinned.get("run_id") == earliest.get("run_id")
+            and pinned.get("snapshot_identity") == earliest.get("snapshot_before"))
+
+
+def _rooted_in_prepared_snapshot(context_path, manifest, earliest):
+    """True when the snapshot still *is* the prepared capture at chain start.
+
+    The other way to root a chain: a restored snapshot returned to the prepared
+    bytes may be re-baselined by an explicitly recorded run, in which case the
+    baseline record names the later run. Then the chain start is only sound if
+    the code scope still hashes to Task 1's `snapshot_manifest` and the recorded
+    start identity is the snapshot as it stands. A predicate: when the snapshot
+    cannot be read at all it is not rooted, and `_validate_snapshot_state` names
+    the missing repository on its own pass.
+    """
+    try:
+        entries, identity = _snapshot_identity(context_path, manifest)
+    except contracts.ContractError:
+        return False
+    return (identity == earliest.get("snapshot_before")
+            and review_boundary._scope_identity(entries, manifest)
+            == manifest.get("snapshot_manifest"))
+
+
+def _snapshot_identity(context_path, manifest):
+    """(entries, pinned identity) of the live snapshot, by the supervisor's own
+    identity function — recomputing it here with a second implementation would
+    be how a re-diff and a receipt hash started to disagree."""
+    repo = os.path.join(context_path, _REPO_DIR_NAME)
+    if not os.path.isdir(repo):
+        raise contracts.ContractError(
+            "%s: the review context holds no snapshot repository at %r, so the "
+            "state the report describes cannot be re-diffed against the prepared "
+            "capture" % (REASON_SNAPSHOT_STATE, repo))
+    return review_boundary._pinned_identity(repo, manifest)
+
+
+def _validate_snapshot_state(context_path, manifest, claim, receipts):
+    """Re-diff the live snapshot: what the receipts say ended there must be there.
+
+    Two independent refusals. The last recorded run's end identity must equal the
+    snapshot as it now stands, or an edit no receipt records reached the snapshot
+    after the reviewer's last command. And if the snapshot's code scope still
+    differs from the prepared capture, a report that declares no residual change
+    at all is erasing a difference publication itself can see.
+    """
+    entries, identity = _snapshot_identity(context_path, manifest)
+    last = receipts[-1]
+    _require(identity == last.get("snapshot_after"), REASON_SNAPSHOT_STATE,
+             "the snapshot no longer holds the state run %s recorded as its end "
+             "(recorded %s, live %s): something changed the snapshot outside the "
+             "supervisor's runs, so no report over it is publishable, complete or "
+             "not" % (last.get("run_id"), last.get("snapshot_after"), identity))
+    if review_boundary._scope_identity(entries, manifest) \
+            == manifest.get("snapshot_manifest"):
+        return  # still the prepared capture: nothing can be erased from it
+    declared = [category for category in ("modified", "added", "removed")
+                if claim["residual_changes"][category]]
+    _require(declared, REASON_RESIDUAL,
+             "the snapshot's in-scope content still differs from the prepared "
+             "capture this review context captured (%s vs %s), but the report's "
+             "residual_changes declares nothing at all: a final live diff cannot "
+             "see a restored write, so the declaration may not be emptied out "
+             "here" % (review_boundary._scope_identity(entries, manifest),
+                       manifest.get("snapshot_manifest")))
 
 
 def _named_by_receipts(receipts):
@@ -704,26 +932,31 @@ def _validate_probe_changes(claim, named):
                      % (path,))
 
 
-def _last_receipt(receipts):
-    return max(receipts, key=lambda item: (str(item.get("finished_at")),
-                                           str(item.get("run_id"))))
-
-
 def _validate_residual(claim, receipts):
-    """A receipt that says the snapshot still differs may not be erased."""
-    last = _last_receipt(receipts)
+    """Every path any receipt observed stays declared; none may be erased.
+
+    Derived from every receipt, in recorded chronological order, not from the
+    receipt the report happened to describe last: a path a probe wrote in run one
+    and nobody re-touched in run two is still a residual change, and "the last
+    cited receipt" was exactly how a report could drop one. A path an earlier
+    receipt observed that a later run returned to its prepared bytes still has to
+    be named too, because nothing in the receipts proves a restoration — the
+    report's own `probe_changes` hashes are the only claim that could, and a path
+    mentioned nowhere is unclaimed either way.
+    """
     categories = (("modified", "changed_paths"), ("added", "added_paths"),
                   ("removed", "removed_paths"))
-    for category, field in categories:
-        reported = set(claim["residual_changes"][category])
-        observed = set(last.get(field) or [])
-        missing = sorted(observed - reported)
-        _require(not missing, REASON_RESIDUAL,
-                 "the report erases the snapshot still differing after run %s: "
-                 "residual_changes.%s omits %s (the receipt records %s)"
-                 % (last.get("run_id"), category, ", ".join(repr(item)
-                                                            for item in missing),
-                    ", ".join(repr(item) for item in sorted(observed))))
+    for receipt in _chronological(receipts):
+        for category, field in categories:
+            reported = set(claim["residual_changes"][category])
+            observed = set(receipt.get(field) or [])
+            missing = sorted(observed - reported)
+            _require(not missing, REASON_RESIDUAL,
+                     "the report erases what run %s (%s run) observed in the "
+                     "snapshot: residual_changes.%s omits %s (the receipt records %s)"
+                     % (receipt.get("run_id"), receipt.get("kind"), category,
+                        ", ".join(repr(item) for item in missing),
+                        ", ".join(repr(item) for item in sorted(observed))))
 
 
 def _validate_provenance(context_path, manifest, claim, metadata, root):
@@ -735,10 +968,11 @@ def _validate_provenance(context_path, manifest, claim, metadata, root):
              "supervisor's meta/context.json for this review context")
     _validate_identities(manifest, claim)
     _validate_against_metadata(metadata, claim, root)
-    receipts = _validate_runs(context_path, claim)
+    receipts = _validate_runs(context_path, claim, manifest)
     _validate_boundary(context_path, claim, receipts)
     _validate_probe_changes(claim, _named_by_receipts(receipts))
     _validate_residual(claim, receipts)
+    _validate_snapshot_state(context_path, manifest, claim, receipts)
 
 
 # ---------------------------------------------------------------------------
@@ -795,6 +1029,14 @@ def _recover_journal(path, manifest, live_root):
              "%s belongs to ticket %r at %s, not to this review context; a "
              "journal from another context or publisher is never rewritten here"
              % (path, payload.get("ticket_id"), payload.get("reviewed_commit")))
+    if _journal_committed(path, payload, live_root):
+        # This transaction landed: State holds its own bytes, or its commit
+        # record is there to say so. Retire the bookkeeping, restore nothing, and
+        # leave any foreign record exactly as its writer left it — rolling a
+        # landed verdict back because a tail step failed is the failure this
+        # ordering exists to prevent.
+        _retire_journal(path)
+        return os.path.realpath(path)
     blocked = []
     for entry in payload.get("records") or []:
         target = _journal_target(live_root, entry)
@@ -822,12 +1064,44 @@ def _recover_journal(path, manifest, live_root):
     return os.path.realpath(path)
 
 
+def _journal_committed(path, payload, live_root):
+    """True when a surviving journal's transaction already landed in State.
+
+    State is the commit marker, so the marker is read from the records
+    themselves: `os.replace` lands a file whole or not at all, so a live State
+    holding this transaction's own bytes means its replace succeeded — the commit
+    happened, whatever failed afterwards. The publisher's own `record.json` says
+    the same thing and roots the same decision when it survived.
+    """
+    if os.path.isfile(os.path.join(os.path.dirname(path), _RECORD_FILE)):
+        return True
+    for entry in payload.get("records") or []:
+        if entry.get("record") != "state":
+            continue
+        owned = entry.get("owned_sha256")
+        if owned is None:
+            return False
+        current = _sha_or_none(_read_bytes_or_none(
+            _journal_target(live_root, entry)))
+        return current == owned
+    return False
+
+
 def _retire_journal(path):
+    """Clear an ended transaction's private meta records; never a live record.
+
+    A committed transaction loses its journal and the original bytes it guarded
+    but keeps `record.json`, the durable evidence that it published; an
+    uncommitted one that recovery has already rolled back leaves nothing worth
+    keeping.
+    """
     directory = os.path.dirname(path)
     try:
         if os.path.isfile(os.path.join(directory, _RECORD_FILE)):
-            # The transaction committed; only the journal goes.
+            # The transaction committed; only the journal and the backups go.
             os.remove(path)
+            shutil.rmtree(os.path.join(directory, _BACKUP_DIR),
+                          ignore_errors=True)
             return
         shutil.rmtree(directory)
     except OSError as exc:
@@ -847,10 +1121,13 @@ def recover_stray_journals(context_path):
     """Recover every unfinished publication journal for this context.
 
     Called before any new publication, and safe to call from a coordinator
-    directly: a file still holding the interrupted transaction's own bytes is
-    restored byte-exactly, and anything a foreign writer touched is left alone —
-    in which case the journal survives and publication stays blocked. Returns the
-    paths of the journals that were cleared.
+    directly. A journal whose State entry holds this transaction's own bytes, or
+    which carries its commit record, committed: it is retired and nothing is
+    restored, because a landed verdict is never rolled back by recovery. Anything
+    else is an unfinished transaction — a file still holding the interrupted
+    transaction's own bytes is restored byte-exactly, and anything a foreign writer
+    touched is left alone — in which case the journal survives and publication stays
+    blocked. Returns the paths of the journals that were cleared.
     """
     manifest, _root = _journal_context(context_path)
     with _Lock(context_path, manifest.get("ticket_id")):
@@ -917,13 +1194,26 @@ def _publish(root, ticket_id, context_path, manifest, payloads, records,
 
     Handoff and Review go first and State last: State is the binding commit
     marker, so a transaction that never reached State provably published nothing,
-    and its journal can be rolled back. A surviving journal therefore always means
-    an uncommitted transaction — the journal is retired the moment State lands.
+    and its journal can be rolled back. Immediately after State lands the
+    transaction writes its own commit record `record.json`, and only then are the
+    journal and the backups retired.
+
+    That order is the whole point. A surviving journal used to be deleted the
+    moment State landed, before the identities were rechecked and before the
+    record existed — so any failure in that tail (a stuck `os.remove`, a full
+    disk) fell into the recovery path and restored all three live records, quietly
+    unpublishing a verdict that had already landed and destroying the evidence
+    that it had; and the conflict raise it performed was swallowed by its own
+    handler, so the documented `publication-conflict` reason never reached anyone.
+    After the commit marker exists nothing rolls back: a post-commit failure is
+    named `publication-committed` and re-raised, the records stay as published,
+    and recovery of whatever journal survived reads the marker instead.
     """
     txn = uuid.uuid4().hex
     directory = os.path.join(_publication_dir(context_path), txn)
     backup_dir = os.path.join(directory, _BACKUP_DIR)
     journal_path = os.path.join(directory, _JOURNAL_FILE)
+    record_path = os.path.join(directory, _RECORD_FILE)
     try:
         os.makedirs(backup_dir)
     except OSError as exc:
@@ -932,6 +1222,9 @@ def _publish(root, ticket_id, context_path, manifest, payloads, records,
     entries = []
     temps = []
     replaced = []
+    committed = False
+    stage = "recording the commit"
+    conflict = []
     staged = os.path.join(directory, "state.staged.yaml")
     try:
         _stage_state(staged, copy.deepcopy(payloads["state"]))
@@ -961,28 +1254,26 @@ def _publish(root, ticket_id, context_path, manifest, payloads, records,
                      records[record][1])
             replaced.append(record)
 
-        # State landed: this transaction is committed, so it is no longer an
-        # unfinished journal. Nothing after this point may roll it back.
-        os.remove(journal_path)
-        shutil.rmtree(backup_dir)
-
-        # Recheck the live identities: a conflict is reported, never repaired.
+        # State landed: this transaction is committed from here on.
+        committed = True
+        # Recheck the live identities before recording them, so the commit record
+        # carries the conflict it observed: a conflict is reported, never repaired.
         conflict = [entry["record"] for entry in entries
                     if _sha_or_none(_read_bytes_or_none(
                         records[entry["record"]][1])) != owned[entry["record"]]]
-        _write_bytes(os.path.join(directory, _RECORD_FILE),
+        stage = "writing the commit record %r" % record_path
+        _write_bytes(record_path,
                      json.dumps(_record_payload(ticket_id, manifest, verdict,
-                                                 live_head, entries, claim,
-                                                 conflict),
+                                                live_head, entries, claim,
+                                                conflict),
                                 indent=2, sort_keys=True).encode("utf-8"))
-        if conflict:
-            raise contracts.ContractError(
-                "%s: the publication completed but %s no longer holds this "
-                "transaction's bytes — another writer reached the same records. "
-                "The verdict is recorded and the binding is now stale; the review "
-                "must be re-taken, not silently refreshed"
-                % (REASON_CONFLICT, ", ".join(repr(name) for name in conflict)))
+        stage = "retiring the journal %r" % journal_path
+        _remove_file(journal_path)
+        stage = "retiring the backups %r" % backup_dir
+        shutil.rmtree(backup_dir, ignore_errors=False)
     except contracts.ContractError as exc:
+        if committed:
+            raise _post_commit(stage, exc, record_path) from exc
         if not replaced:
             _discard_temps(temps)
             shutil.rmtree(directory, ignore_errors=True)
@@ -1000,6 +1291,8 @@ def _publish(root, ticket_id, context_path, manifest, payloads, records,
         shutil.rmtree(directory, ignore_errors=True)
         raise
     except OSError as exc:
+        if committed:
+            raise _post_commit(stage, exc, record_path) from exc
         if not replaced:
             _discard_temps(temps)
             shutil.rmtree(directory, ignore_errors=True)
@@ -1018,7 +1311,30 @@ def _publish(root, ticket_id, context_path, manifest, payloads, records,
             ) from exc
         shutil.rmtree(directory, ignore_errors=True)
         raise contracts.ContractError("%s: %s" % (REASON_WRITE, exc)) from exc
+    if conflict:
+        # Raised outside the transaction, because the commit record exists and the
+        # journal is retired: this is a report about records that stayed published,
+        # not a failure to undo.
+        raise contracts.ContractError(
+            "%s: the publication completed but %s no longer holds this "
+            "transaction's bytes — another writer reached the same records. "
+            "The verdict is recorded and the binding is now stale; the review "
+            "must be re-taken, not silently refreshed. The commit record at %s "
+            "names this conflict; nothing here was rolled back"
+            % (REASON_CONFLICT, ", ".join(repr(name) for name in conflict),
+               record_path))
     return owned
+
+
+def _post_commit(stage, exc, record_path):
+    """Name a failure that happened after State landed. Never a rollback."""
+    return contracts.ContractError(
+        "%s: the Reviewer's verdict landed in State and stays there; %s failed "
+        "(%s). A committed transaction is never rolled back by a reporting step, "
+        "and the journal and backups it left are evidence, not damage: the next "
+        "publisher retires them by reading the commit marker (record %r, and a "
+        "live State still holding this transaction's own bytes)"
+        % (REASON_COMMITTED, stage, exc, record_path))
 
 
 def _record_payload(ticket_id, manifest, verdict, live_head, entries, claim,
@@ -1059,10 +1375,11 @@ def publish(root, ticket_id, context_path, report_raw, handoff_raw,
 
     Every check — the candidate's own consistency, the reserved provenance
     section against the supervisor's receipts, the review context's currentness,
-    the HARDEN-010 code drift and each captured input hash — runs before a single
-    live record is touched, and a mismatch performs zero live writes. The caller
-    supplies the Reviewer's verdict inside `proposed_state`; this function never
-    synthesizes one, never repairs source and never transitions a phase.
+    the HARDEN-010 code drift, each captured input hash and the live HEAD against
+    the reviewed commit — runs before a single live record is touched, and a
+    mismatch performs zero live writes. The caller supplies the Reviewer's verdict
+    inside `proposed_state`; this function never synthesizes one, never repairs
+    source and never transitions a phase.
 
     Raises `contracts.ContractError` for every refusal, naming what was missing.
     """
@@ -1116,7 +1433,6 @@ def publish(root, ticket_id, context_path, report_raw, handoff_raw,
              "the reviewed code changed since %s, so this candidate may not be "
              "published over it: %s" % (manifest["reviewed_commit"],
                                         "; ".join(drift)))
-    live_head_value = live_head(root)
     records = _record_paths(root, ticket_id, proposed_state)
     # The State payload starts as the proposed map; the transaction stages it
     # privately through `state.save_file` and publishes exactly those bytes.
@@ -1127,26 +1443,63 @@ def publish(root, ticket_id, context_path, report_raw, handoff_raw,
         _recover_stray_journals_locked(context_path)
         # Coordinator-exclusive publication: the live records must still be the
         # ones this context captured, with nothing half-written by anybody else.
-        _require_current_records(state_path, records, manifest, report_raw)
+        live_head_value = live_head(root)
+        _require(live_head_value == manifest["reviewed_commit"], REASON_HEAD,
+                 "live HEAD %s is not the reviewed commit %s this review context "
+                 "captured and this report describes. A commit after preparation "
+                 "moves the baseline the verdict speaks about even when it "
+                 "changes no file — `--allow-empty` is the plain case — so "
+                 "publication binds HEAD, not content alone: re-prepare the "
+                 "context and review the commit that is actually current"
+                 % (live_head_value, manifest["reviewed_commit"]))
+        _require_current_records(root, records, manifest, report_raw)
         _publish(root, ticket_id, context_path, manifest, payloads, records,
                  verdict, live_head_value, claim)
 
 
-def _require_current_records(state_path, records, manifest, report_raw):
-    """Re-read the old record identities inside the lock."""
-    state_raw = _read_bytes_or_none(state_path)
-    _require(state_raw is not None, REASON_STALE,
-             "the live State disappeared before publication")
+def _require_current_records(root, records, manifest, report_raw):
+    """Re-read every captured identity inside the lock, record files included.
+
+    Three layers guard currentness and each has to hold on its own:
+    `review_snapshot.assert_current` compares the live content manifest and every
+    captured input before the lock; `review.code_drift` compares the working tree
+    against the reviewed commit; and this function re-reads inside the lock,
+    because the two earlier layers can be true at the moment they check and false
+    by the moment publication writes. The loop deliberately covers *every* entry of
+    `manifest["inputs"]`, including the Ticket record files `code_drift` exempts
+    (state.yaml, progress.md, handoff.md) and the Plan: an exemption from a *code*
+    drift report is not an exemption from currentness, and a drifted `progress.md`
+    that only the outermost layer notices is a drifted input that published.
+    """
     captured = manifest.get("inputs") or {}
+    _require(captured, REASON_STALE,
+             "the review context captured no verification inputs, so publication "
+             "has no live identity to recheck and refuses to guess one")
     state_rel = records["state"][0]
-    _require(_sha(state_raw) == captured.get(state_rel), REASON_STALE,
-             "the live State no longer matches the identity captured with this "
-             "review context, so another context or writer reached it")
-    handoff_raw = _read_bytes_or_none(records["handoff"][1])
-    _require(_sha_or_none(handoff_raw)
+    _require(state_rel in captured, REASON_STALE,
+             "the live State %r was never a captured input of this review context"
+             % state_rel)
+    for rel, expected in sorted(captured.items()):
+        full = os.path.join(root, *rel.split("/"))
+        current = _sha_or_none(_read_bytes_or_none(full))
+        _require(current == expected, REASON_STALE,
+                 "the live %r no longer matches the identity captured with this "
+                 "review context (%s, now %s): this is the in-lock recheck of the "
+                 "captured inputs, so another context or writer reached it after "
+                 "the pre-lock currentness check passed"
+                 % (rel, expected[:12], "absent" if current is None
+                    else current[:12]))
+    handoff_raw_now = _read_bytes_or_none(records["handoff"][1])
+    # Not redundant with the loop above: an artifact configured under `artifacts`
+    # but absent when the context was prepared is in no captured set, so this is
+    # the only place that notices it appeared.
+    _require(_sha_or_none(handoff_raw_now)
              == captured.get(records["handoff"][0]), REASON_STALE,
-             "the live Handoff no longer matches the identity captured with this "
-             "review context, so another context or writer reached it")
+             "the live Handoff is not the file this review context captured "
+             "(captured %s, now %s), so another context or writer reached it"
+             % (str(captured.get(records["handoff"][0]))[:12],
+                "absent" if _sha_or_none(handoff_raw_now) is None
+                else _sha_or_none(handoff_raw_now)[:12]))
     review_raw = _read_bytes_or_none(records["review"][1])
     _require(review_raw is None or _sha(review_raw) != _sha(report_raw),
              REASON_STALE,
