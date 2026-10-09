@@ -12,6 +12,7 @@ Usage:
     ai-workflow complete-task <ticket-id> [--total N]
     ai-workflow register-plan <ticket-id> --path <plan> --total N
     ai-workflow set-gate <ticket-id> --gate <g> [--round N]
+    ai-workflow prepare-review <ticket-id> --commit <oid> --output <dir>
     ai-workflow escalate <ticket-id> [opts]
     ai-workflow set-status <ticket-id> --status <s>
     ai-workflow resume <ticket-id>
@@ -31,9 +32,11 @@ import sys
 
 import adopt
 import artifact_archive
+import contracts
 import init
 import mutate
 import resume
+import review_snapshot
 import skills
 import start
 import status
@@ -42,7 +45,8 @@ import validate
 
 COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
             "release", "complete-task", "register-plan", "set-gate", "escalate",
-            "set-status", "set-review", "resume", "archive-artifacts",
+            "set-status", "set-review", "prepare-review", "resume",
+            "archive-artifacts",
             "install-skills", "upgrade", "upgrade-ticket"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
@@ -67,6 +71,10 @@ commands:
   register-plan <ticket-id> --path P --total N  register a referenced Plan (v2)
   set-gate <ticket-id> --gate G [--round N]  record evidence verdict (G: sufficient|insufficient)
   set-review <ticket-id> --verdict V  record a Review verdict (V: pass|changes_requested)
+  prepare-review <ticket-id> --commit <literal-oid> --output <new-directory>
+                      prepare an identified independent review snapshot
+                      (independent clone + raw-byte Plan/input copies +
+                      supervisor manifest) for isolated reviewer verification
   escalate <ticket-id> --scope S --reason "..." | --clear [--resolution TEXT]  set/clear escalation
   set-status <ticket-id> --status S  set lateral status (active|blocked|paused|escalation_required|abandoned)
   resume <ticket-id>  print a read-only continuation brief (exit 1 on ERROR blockers)
@@ -422,6 +430,33 @@ def cmd_set_review(args, root):
         args, root, {"--verdict"}, apply)
 
 
+def cmd_prepare_review(args, root):
+    """Snapshot preparation: usage -> 2, contract refusal -> 1, success -> 0."""
+    rest = args[1:]
+    if not rest or rest[0].startswith("--"):
+        sys.stderr.write("usage: ai-workflow prepare-review <ticket-id> "
+                         "--commit <literal-oid> --output <new-directory>\n")
+        return 2
+    ticket_id = rest[0]
+    opts, err = _parse_options(rest[1:], {"--commit", "--output"})
+    if err:
+        sys.stderr.write("prepare-review: %s\n" % err)
+        return 2
+    if not opts.get("commit") or not opts.get("output"):
+        sys.stderr.write("usage: ai-workflow prepare-review <ticket-id> "
+                         "--commit <literal-oid> --output <new-directory>\n")
+        return 2
+    try:
+        review_snapshot.prepare(root, ticket_id, opts["commit"],
+                                opts["output"])
+    except contracts.ContractError as exc:
+        sys.stderr.write("prepare-review: %s\n" % exc)
+        return 1
+    print("prepared review snapshot for %s in %s"
+          % (ticket_id, opts["output"]))
+    return 0
+
+
 def cmd_set_status(args, root):
     def apply(ticket_id, opts):
         st = opts.get("status")
@@ -514,6 +549,8 @@ def main(argv=None):
         return cmd_set_gate(argv, root)
     if cmd == "set-review":
         return cmd_set_review(argv, root)
+    if cmd == "prepare-review":
+        return cmd_prepare_review(argv, root)
     if cmd == "escalate":
         return cmd_escalate(argv, root)
     if cmd == "set-status":
