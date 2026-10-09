@@ -10,6 +10,13 @@ the mutation. `resolve_commit` turns a literal hexadecimal object ID into the
 full ancestral commit it names; `binding_problems` reports every way a recorded
 verdict has stopped matching its immutable bindings (never raising, so
 validators can surface stale State without a traceback).
+
+`assume-unchanged` and `skip-worktree` are Git index hints, not Workflow
+Protocol exemptions (HARDEN-010): the drift assessment neutralizes them in the
+disposable index copy so a flagged dirty or deleted relevant file still
+invalidates either recorded verdict, and a repository shape whose currentness
+cannot be established (a split index that cannot be safely expanded in the
+copy) yields a named blocker problem instead of an empty result.
 """
 
 import os
@@ -36,18 +43,21 @@ _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _MIN_ABBREV_LEN = 7
 
 
-def _run_git(root, args, env=None):
+def _run_git(root, args, env=None, input_bytes=None):
     """Run `git --no-optional-locks -C root <args>`; bytes out, no shell.
 
     `--no-optional-locks` stops `git status` from refreshing the stat cache, but
     on git 2.45 a worktree `git diff` rewrites `.git/index` anyway, so callers
     that run `diff` also pass a throwaway `GIT_INDEX_FILE` (see
     `_changed_paths`). Callers that only read (rev-parse, merge-base) need no
-    redirect.
+    redirect. `input_bytes` is fed verbatim to the child's standard input (the
+    NUL-delimited path payload of `update-index -z --stdin`); the
+    completed-process result and the `OSError -> ContractError` behavior are
+    unchanged.
     """
     try:
         return subprocess.run(["git", "--no-optional-locks", "-C", root] + list(args),
-                              capture_output=True, env=env)
+                              capture_output=True, env=env, input=input_bytes)
     except OSError as exc:  # git binary missing
         raise contracts.ContractError("git is not available: %s" % exc)
 
@@ -305,34 +315,157 @@ def _git_index_path(root):
     return path
 
 
-def _changed_paths(root, reviewed_commit):
-    """Union of committed, staged, unstaged, and untracked paths (forward /).
+def _git_common_dir(root):
+    """Absolute path of this repository's common Git directory."""
+    proc = _run_git(root, ["rev-parse", "--git-common-dir"])
+    if proc.returncode != 0:
+        raise contracts.ContractError(
+            "cannot resolve the Git common directory: %s"
+            % proc.stderr.decode("utf-8", "replace").strip())
+    path = proc.stdout.decode("utf-8", "surrogateescape").strip()
+    if not path:
+        raise contracts.ContractError(
+            "cannot resolve the Git common directory")
+    if not os.path.isabs(path):
+        path = os.path.join(root, path)
+    return path
 
-    A worktree `git diff` rewrites `.git/index` even under `--no-optional-locks`
-    (git 2.45), so the diff/ls-files probes run against a copy of the index via
-    `GIT_INDEX_FILE`; any refresh lands in the copy, never the real index. The
-    copy is stat-preserving (`shutil.copy2`): git re-checks by content every
-    entry whose cached mtime is not older than the index file's own (racy-stat),
-    so preserving the original mtime keeps that re-check engaged on the copy and
-    an equal-size dirty edit whose file mtime collides with the cached stat is
-    re-compared instead of being trusted clean. The copy has the same tree, so
-    the reported paths are unchanged.
+
+def _split_index_oid(root, copy_path):
+    """The shared-index object ID when the copied index is split; else None.
+
+    A split index carries a `link` extension whose data begins with the raw
+    object ID of the repository's `sharedindex.<oid>` file. Both halves must
+    agree, so a tracked path that merely contains the bytes `link` never
+    produces a false positive, and a stale `sharedindex.*` file left over from
+    a disabled split index never matches a unified index. Reading either side
+    is a preparation error (`contracts.ContractError`); detection never writes.
     """
-    env = None
+    common = _git_common_dir(root)
+    try:
+        names = os.listdir(common)
+        with open(copy_path, "rb") as fh:
+            data = fh.read()
+    except OSError as exc:
+        raise contracts.ContractError(
+            "cannot inspect the disposable index copy for a split index: %s"
+            % exc)
+    for name in names:
+        if not name.startswith("sharedindex."):
+            continue
+        try:
+            raw = bytes.fromhex(name[len("sharedindex."):])
+        except ValueError:
+            continue
+        pos = data.find(b"link")
+        while pos != -1:
+            if data[pos + 8:pos + 8 + len(raw)] == raw:
+                return name[len("sharedindex."):]
+            pos = data.find(b"link", pos + 1)
+    return None
+
+
+def _clear_index_hints(root, env):
+    """Clear assume-unchanged and skip-worktree bits in the disposable copy.
+
+    `env["GIT_INDEX_FILE"]` must designate the copy; this never runs against
+    the real index (a missing redirect is refused outright). The tracked paths
+    are read from the copy with `ls-files -z` and fed as raw NUL-delimited
+    bytes to two separate `update-index` invocations (`--no-assume-unchanged`,
+    then `--no-skip-worktree`), so paths containing spaces, newlines or
+    non-ASCII bytes survive intact. Every Git failure raises
+    `contracts.ContractError`; there is no fallback to the hinted index.
+    """
+    if not env or not env.get("GIT_INDEX_FILE"):
+        raise contracts.ContractError(
+            "refusing to clear index hints without a disposable index copy")
+    proc = _run_git(root, ["ls-files", "-z"], env)
+    if proc.returncode != 0:
+        raise contracts.ContractError(
+            "git ls-files -z failed on the disposable index copy: %s"
+            % proc.stderr.decode("utf-8", "replace").strip())
+    payload = proc.stdout
+    for flag in ("--no-assume-unchanged", "--no-skip-worktree"):
+        proc = _run_git(root, ["update-index", flag, "-z", "--stdin"], env,
+                        input_bytes=payload)
+        if proc.returncode != 0:
+            raise contracts.ContractError(
+                "git update-index %s failed on the disposable index copy: %s"
+                % (flag, proc.stderr.decode("utf-8", "replace").strip()))
+
+
+def _changed_paths(root, reviewed_commit):
+    """`(paths, blockers)`: the changed-path union plus assessment blockers.
+
+    `paths` is the union of committed, staged, unstaged and untracked paths
+    (forward slashes); `blockers` carries problem strings for repository
+    shapes whose currentness cannot be established even though every command
+    succeeded. A worktree `git diff` rewrites `.git/index` even under
+    `--no-optional-locks` (git 2.45), and `assume-unchanged`/`skip-worktree`
+    hints make `git diff` skip flagged entries entirely (HARDEN-010), so the
+    probes run against a disposable copy of the index via `GIT_INDEX_FILE`
+    whose hint bits are cleared first; any refresh or flag rewrite lands in
+    the copy, never the real index.
+
+    The copy is stat-preserving (`shutil.copy2`), but the hint-clearing
+    `update-index` rewrites bump the copy's own mtime: were it left newer than
+    the entries' cached mtimes, git would trust the stat cache and an
+    equal-size dirty edit whose mtime collides with the cached stat would be
+    believed clean. The real index's nanosecond timestamps are therefore
+    captured once, before the copy, and restored onto the copy with
+    `os.utime(ns=...)` after both rewrites and before any diff; nothing
+    refreshes afterward. Git re-checks by content every entry whose cached
+    mtime is not older than the index file's own (racy-stat), so the
+    HARDEN-002 guarantee survives the hint clearing. The copy has the same
+    tree, so the reported paths are unchanged.
+
+    Fail-closed: an unresolvable, missing or unreadable index and any Git or
+    timestamp error raise `contracts.ContractError`; a split index whose
+    shared part cannot be safely expanded in the copy returns a named blocker
+    instead of paths. Neither outcome ever falls back to the real index nor
+    yields an empty result. The temporary directory is always removed.
+    """
     tmpdir = None
     try:
         index = _git_index_path(root)
-        if index is not None:
-            tmpdir = tempfile.mkdtemp(prefix="ai-workflow-index-")
-            env = dict(os.environ)
-            env["GIT_INDEX_FILE"] = os.path.join(tmpdir, "index")
-            if os.path.exists(index):
-                try:
-                    shutil.copy2(index, env["GIT_INDEX_FILE"])
-                except OSError as exc:
-                    raise contracts.ContractError(
-                        "cannot read the Git index for a read-only drift "
-                        "check: %s" % exc)
+        if index is None:
+            raise contracts.ContractError(
+                "cannot read the Git index for a read-only drift check: "
+                "its path is unresolvable")
+        try:
+            stat_before = os.stat(index)
+        except OSError as exc:
+            raise contracts.ContractError(
+                "cannot read the Git index for a read-only drift check: %s"
+                % exc)
+        tmpdir = tempfile.mkdtemp(prefix="ai-workflow-index-")
+        env = dict(os.environ)
+        copy_path = os.path.join(tmpdir, "index")
+        env["GIT_INDEX_FILE"] = copy_path
+        try:
+            shutil.copy2(index, copy_path)
+        except OSError as exc:
+            raise contracts.ContractError(
+                "cannot read the Git index for a read-only drift check: %s"
+                % exc)
+
+        shared_oid = _split_index_oid(root, copy_path)
+        if shared_oid is not None:
+            return [], [
+                "cannot establish currentness: the Git index is a split "
+                "index (sharedindex.%s) whose shared entries cannot be "
+                "safely expanded in the disposable index copy; disable it "
+                "with `git update-index --no-split-index` and re-run"
+                % shared_oid]
+
+        _clear_index_hints(root, env)
+        try:
+            os.utime(copy_path,
+                     ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns))
+        except OSError as exc:
+            raise contracts.ContractError(
+                "cannot restore the disposable index copy's timestamps "
+                "for the racy-stat re-check: %s" % exc)
 
         paths = []
         for args in (
@@ -346,7 +479,7 @@ def _changed_paths(root, reviewed_commit):
                 path = path.replace("\\", "/")
                 if path not in paths:
                     paths.append(path)
-        return paths
+        return paths, []
     finally:
         if tmpdir is not None:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -356,8 +489,12 @@ def code_drift(root, ticket_id, reviewed_commit, plan_path):
     """Repository-relative paths changed since the reviewed commit.
 
     Returns a list of problem strings; `[]` means the reviewed code is current.
-    Raises `contracts.ContractError` when Git is missing, `root` is not a work
-    tree, the reviewed commit does not resolve, or it is unrelated history.
+    A repository shape whose currentness cannot be established (a split index
+    that cannot be safely expanded in the disposable copy) returns a named
+    blocker problem instead — never an empty list and never a fallback to the
+    hinted real index. Raises `contracts.ContractError` when Git is missing,
+    `root` is not a work tree, the reviewed commit does not resolve, it is
+    unrelated history, or the index assessment could not be prepared.
     Read-only: it never writes.
     """
     _require_work_tree(root)
@@ -367,8 +504,9 @@ def code_drift(root, ticket_id, reviewed_commit, plan_path):
               for name in TICKET_EXEMPT_FILES}
     plan_path = (plan_path or "").replace("\\", "/")
 
-    problems = []
-    for path in _changed_paths(root, reviewed_commit):
+    changed, blockers = _changed_paths(root, reviewed_commit)
+    problems = list(blockers)
+    for path in changed:
         if path in exempt:
             continue
         if path == plan_path:

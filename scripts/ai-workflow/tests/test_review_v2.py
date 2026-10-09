@@ -47,7 +47,8 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return plan
 
-    def _seed_review(self, total=1, verdict="pass", reviewed_commit=None):
+    def _seed_review(self, total=1, verdict="pass", reviewed_commit=None,
+                     extra_files=None):
         """Drive the public-command lifecycle into a bind-ready review phase.
 
         Returns the reviewed commit (the committed, tree-clean HEAD that the
@@ -55,11 +56,17 @@ class ReviewV2Test(V2CLITestCase):
         and committed before that reviewed commit: implementation -> review now
         requires it on a v2 Ticket, and the same boundary requires a concrete
         handoff, so the fixture writes one through `write_handoff`.
+
+        `extra_files` commits additional {repo-relative path: text} files into
+        the reviewed tree (HARDEN-010 flag-matrix targets such as a tracked
+        test fixture or a foreign Ticket record).
         """
         self._seed_implementation(total)
         self.write_decision()
         # The code under review, committed while in implementation.
         self.commit_code("src/feature.py", "def feature():\n    return 1\n")
+        for rel, text in (extra_files or {}).items():
+            self.commit_code(rel, text)
         for _ in range(total):
             proc = self.cli("complete-task", self.TICKET,
                             "--total", str(total))
@@ -443,6 +450,443 @@ class ReviewV2Test(V2CLITestCase):
         self.assertEqual(index_path.stat().st_mtime_ns, before_index_mtime)
         self.assertEqual(lock_path.read_bytes(), before_lock)
         self.assertEqual(lock_path.stat().st_mtime_ns, before_lock_mtime)
+
+    # -- index-flag-independent drift (HARDEN-010) ---------------------------
+
+    def _set_flag(self, path, flag):
+        """Set one or both index hints on `path` via separate Git commands."""
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _clear_flag(self, path, flag):
+        """Clear one or both hints on `path` via separate Git commands."""
+        if flag in ("assume-unchanged", "both"):
+            proc = self._git("update-index", "--no-assume-unchanged", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        if flag in ("skip-worktree", "both"):
+            proc = self._git("update-index", "--no-skip-worktree", path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _flagged_edit(self, flag, rel="src/feature.py",
+                      old="return 1", new="return 9"):
+        """Set flag(s) on `rel`, then dirty-edit it at an unchanged byte size.
+
+        The equal-length rewrite keeps detection from relying on a size
+        change, so only a content comparison can report the edit.
+        """
+        self._set_flag(rel, flag)
+        full = os.path.join(self.root, rel)
+        with open(full, "r", encoding="utf-8", newline="") as fh:
+            original = fh.read()
+        dirty = original.replace(old, new)
+        self.assertEqual(len(dirty), len(original))
+        self.assertNotEqual(dirty, original)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(dirty)
+
+    def _flagged_delete(self, flag, rel):
+        """Set flag(s) on `rel`, then delete it from the worktree."""
+        self._set_flag(rel, flag)
+        os.remove(os.path.join(self.root, rel))
+
+    def _flagged_append(self, flag, rel, text):
+        """Set flag(s) on `rel`, then append `text` to it."""
+        self._set_flag(rel, flag)
+        self._append_file(os.path.join(self.root, rel), text)
+
+    def _flagged_rejection_matrix(self, rel, mutate, extra_files=None):
+        """Pin rejection of `rel` under every hint combination and verdict.
+
+        Seeds once, then per (flag, verdict) subcase: rewrites the Review
+        artifact for the verdict, applies `mutate(rel, flag)`, asserts the
+        shared assessment names `rel`, asserts `set-review` rejects with the
+        State bytes preserved, and finally clears the hints before restoring
+        the reviewed tree (`git reset --hard` does not rewrite skip-worktree
+        paths, so hints must be cleared first or leftover dirt would poison
+        the next subcase).
+        """
+        reviewed = self._seed_review(extra_files=extra_files)
+        for flag in ("assume-unchanged", "skip-worktree", "both"):
+            for verdict in ("pass", "changes_requested"):
+                with self.subTest(flag=flag, verdict=verdict):
+                    self.write_review(verdict, reviewed_commit=reviewed)
+                    mutate(rel, flag)
+                    drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                              ".ai/work/T1/plan.md")
+                    self.assertTrue(any(rel in item for item in drift), drift)
+                    before = self.state_bytes()
+                    proc = self.cli("set-review", self.TICKET,
+                                    "--verdict", verdict)
+                    self.assertEqual(proc.returncode, 1,
+                                     proc.stdout + proc.stderr)
+                    self.assertNotIn("Traceback", proc.stderr)
+                    self.assertEqual(self.state_bytes(), before)
+                    self._clear_flag(rel, flag)
+                    self._restore(reviewed)
+
+    def test_flagged_edit_blocks_both_verdicts(self):
+        """A flagged equal-size source edit invalidates either verdict.
+
+        Parameterized over `--assume-unchanged`, `--skip-worktree` and both,
+        for `pass` and `changes_requested`: index hints are Git performance
+        hints, not Workflow Protocol exemptions, so the dirty edit must still
+        be reported as drift and `set-review` must reject.
+        """
+        self._flagged_rejection_matrix(
+            "src/feature.py", lambda rel, flag: self._flagged_edit(flag, rel))
+
+    def test_flagged_delete_blocks_both_verdicts(self):
+        """A flagged source deletion invalidates either recorded verdict."""
+        self._flagged_rejection_matrix(
+            "src/feature.py",
+            lambda rel, flag: self._flagged_delete(flag, rel))
+
+    def test_flagged_fixture_edit_blocks_both_verdicts(self):
+        """A flagged fixture edit invalidates either recorded verdict."""
+        self._flagged_rejection_matrix(
+            "tests/fixtures/sample.json",
+            lambda rel, flag: self._flagged_edit(flag, rel,
+                                                 old='"a": 1', new='"a": 2'),
+            extra_files={"tests/fixtures/sample.json": '{"a": 1}\n'})
+
+    def test_flagged_fixture_delete_blocks_both_verdicts(self):
+        """A flagged fixture deletion invalidates either recorded verdict."""
+        self._flagged_rejection_matrix(
+            "tests/fixtures/sample.json",
+            lambda rel, flag: self._flagged_delete(flag, rel),
+            extra_files={"tests/fixtures/sample.json": '{"a": 1}\n'})
+
+    def test_flagged_plan_edit_blocks_both_verdicts(self):
+        """A flagged edit to the registered Plan invalidates either verdict."""
+        self._flagged_rejection_matrix(
+            ".ai/work/T1/plan.md",
+            lambda rel, flag: self._flagged_append(
+                flag, rel, "\n<!-- flagged plan drift -->\n"))
+
+    def test_flagged_plan_delete_blocks_both_verdicts(self):
+        """A flagged Plan deletion invalidates either recorded verdict."""
+        self._flagged_rejection_matrix(
+            ".ai/work/T1/plan.md",
+            lambda rel, flag: self._flagged_delete(flag, rel))
+
+    def test_clean_flags_and_exact_exemptions(self):
+        """Unchanged flagged paths are accepted; exemptions stay exact.
+
+        A flag on a present, unchanged relevant file must not create drift or
+        block the verdict; each of the four exact Ticket records stays exempt
+        even when flagged and modified, while another Ticket's record,
+        untracked source and the registered Plan stay relevant under both
+        hints.
+        """
+        other = ".ai/work/T2/state.yaml"
+        reviewed = self._seed_review(
+            extra_files={other: "placeholder: true\n"})
+        plan_rel = ".ai/work/T1/plan.md"
+
+        # A flagged, unchanged relevant file: no drift, and the verdict binds.
+        self._set_flag("src/feature.py", "both")
+        drift = review.code_drift(self.root, self.TICKET, reviewed, plan_rel)
+        self.assertEqual(drift, [])
+        proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self._clear_flag("src/feature.py", "both")
+
+        # Each exact Ticket record stays exempt even when flagged and edited.
+        for name in review.TICKET_EXEMPT_FILES:
+            with self.subTest(record=name):
+                rel = ".ai/work/T1/%s" % name
+                if name == "review.md":
+                    # The Review artifact is written after the reviewed
+                    # commit (untracked until committed), so commit it here
+                    # to make the hint applicable; an exempt path stays
+                    # exempt whether committed, staged or dirty.
+                    self.write_review("pass", reviewed_commit=reviewed)
+                    self._commit_all("fixture: commit review artifact")
+                self._flagged_append("both", rel, "\nflagged note\n")
+                drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                          plan_rel)
+                self.assertEqual(drift, [])
+                self._clear_flag(rel, "both")
+                self._restore(reviewed)
+
+        # Another Ticket's record, untracked source and the registered Plan
+        # stay relevant even under both hints.
+        self._flagged_append("both", other, "# edited\n")
+        self._write_file("src/untracked_new.py", "def new():\n    return 0\n")
+        self._flagged_append("both", plan_rel,
+                             "\n<!-- flagged plan drift -->\n")
+        drift = review.code_drift(self.root, self.TICKET, reviewed, plan_rel)
+        self.assertTrue(any(other in item for item in drift), drift)
+        self.assertTrue(any("src/untracked_new.py" in item for item in drift),
+                        drift)
+        self.assertTrue(any(plan_rel in item for item in drift), drift)
+
+    def test_flagged_unusual_paths(self):
+        """Space and non-ASCII path names appear as intact drift paths.
+
+        The hint-clearing payload is the raw NUL-delimited `ls-files -z` byte
+        stream and every probe is NUL-delimited, so tracked paths containing
+        spaces or non-ASCII bytes survive `update-index -z --stdin` and the
+        diff probes without quoting or truncation. (A literal newline in a
+        path cannot be fixtured on this host: both NTFS and git's path
+        verification reject control characters, so no tracked entry can carry
+        one here; the byte-transparent NUL framing covers it structurally.)
+        """
+        self._seed_review()
+        spaced = "src/my file.py"
+        unicode_spaced = "src/ünïcodé file.py"
+        head = self.commit_code(spaced, "def spaced():\n    return 1\n")
+        head = self.commit_code(unicode_spaced,
+                                "def unicode():\n    return 1\n")
+        self._flagged_edit("both", spaced, old="return 1", new="return 2")
+        self._flagged_edit("both", unicode_spaced,
+                           old="return 1", new="return 2")
+        drift = review.code_drift(self.root, self.TICKET, head,
+                                  ".ai/work/T1/plan.md")
+        self.assertTrue(any(spaced in item for item in drift), drift)
+        self.assertTrue(any(unicode_spaced in item for item in drift), drift)
+
+    def test_sparse_absence_is_not_current(self):
+        """A sparse-absent tracked path is drift or a named blocker.
+
+        A real non-cone sparse checkout removes a tracked relevant path from
+        the worktree and sets skip-worktree on it; the assessment must not
+        report currentness — it names the path as deletion drift (or an
+        explicit blocker). The verification is read-only: the real index keeps
+        its bytes and nanosecond mtime, and the sparse path is still absent
+        afterward (never materialized as a side effect).
+        """
+        reviewed = self._seed_review()
+        self.assertEqual(
+            self._git("config", "core.sparseCheckout", "true").returncode, 0)
+        self.assertEqual(
+            self._git("config", "core.sparseCheckoutCone", "false").returncode,
+            0)
+        sparse_dir = os.path.join(self.root, ".git", "info")
+        os.makedirs(sparse_dir, exist_ok=True)
+        with open(os.path.join(sparse_dir, "sparse-checkout"), "w",
+                  encoding="utf-8", newline="") as fh:
+            fh.write("/*\n!src/feature.py\n")
+        self.assertEqual(self._git("read-tree", "-mu", "HEAD").returncode, 0)
+        feature = os.path.join(self.root, "src", "feature.py")
+        self.assertFalse(os.path.exists(feature))
+        index_path = Path(self.root, ".git", "index")
+        before_index = index_path.read_bytes()
+        before_mtime = index_path.stat().st_mtime_ns
+
+        drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                  ".ai/work/T1/plan.md")
+        self.assertTrue(drift, "a sparse-absent relevant path is not current")
+        self.assertTrue(any("src/feature.py" in item for item in drift), drift)
+        self.assertEqual(index_path.read_bytes(), before_index)
+        self.assertEqual(index_path.stat().st_mtime_ns, before_mtime)
+        self.assertFalse(os.path.exists(feature))
+
+    def test_flagged_racy_edit_preserves_real_index(self):
+        """Hint clearing in the copy keeps racy-stat detection engaged.
+
+        Extends the HARDEN-002 collision with index hints on the entry.
+        `git add` refuses skip-worktree paths and does not re-stat
+        assume-unchanged ones, so the hints are set after the cached-stat
+        capture; marking them rewrites the real index, so the captured
+        nanosecond collision (entry cached mtime == file mtime == index
+        mtime, byte size unchanged, content dirty) is re-forced with
+        `os.utime(ns=...)` afterwards -- never sleeps. The disposable copy's
+        hint-clearing `update-index` rewrites bump its own mtime; only
+        restoring the captured timestamps before the diffs keeps git's
+        racy-stat re-check engaged so the equal-size edit stays detected. The
+        real index bytes, hint flags and nanosecond mtime, State, the Review
+        artifact and a pre-existing real index.lock must all survive.
+        """
+        reviewed = self._seed_review()
+        rel = "src/feature.py"
+        index_path = Path(self.root, ".git", "index")
+        lock_path = Path(self.root, ".git", "index.lock")
+        review_path = os.path.join(self.work, "review.md")
+        for flag in ("assume-unchanged", "skip-worktree", "both"):
+            with self.subTest(flag=flag):
+                self.write_review("pass", reviewed_commit=reviewed)
+                self._racy_edit(rel)
+                self._set_flag(rel, flag)
+                # Marking the hints rewrote the real index; the cached stat is
+                # unchanged, so re-force the captured collision onto the file
+                # and the real index before any probe runs.
+                cached_ns = self._cached_mtime_ns(rel)
+                full = os.path.join(self.root, rel)
+                os.utime(full, ns=(cached_ns, cached_ns))
+                os.utime(index_path, ns=(cached_ns, cached_ns))
+                if not lock_path.exists():
+                    with open(lock_path, "wb") as fh:
+                        fh.write(b"stale lock from a crashed git\n")
+
+                before_state = self.state_bytes()
+                before_index = index_path.read_bytes()
+                before_index_mtime = index_path.stat().st_mtime_ns
+                before_flags = self._git("ls-files", "-v", "-z",
+                                         "--", rel).stdout
+                with open(review_path, "rb") as fh:
+                    before_review = fh.read()
+                before_lock = lock_path.read_bytes()
+                before_lock_mtime = lock_path.stat().st_mtime_ns
+
+                drift = review.code_drift(self.root, self.TICKET, reviewed,
+                                          ".ai/work/T1/plan.md")
+                self.assertTrue(any(rel in item for item in drift), drift)
+                proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+                self.assertEqual(proc.returncode, 1,
+                                 proc.stdout + proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+
+                self.assertEqual(self.state_bytes(), before_state)
+                self.assertEqual(index_path.read_bytes(), before_index)
+                self.assertEqual(index_path.stat().st_mtime_ns,
+                                 before_index_mtime)
+                after_flags = self._git("ls-files", "-v", "-z",
+                                        "--", rel).stdout
+                self.assertEqual(after_flags, before_flags)
+                with open(review_path, "rb") as fh:
+                    self.assertEqual(fh.read(), before_review)
+                self.assertEqual(lock_path.read_bytes(), before_lock)
+                self.assertEqual(lock_path.stat().st_mtime_ns,
+                                 before_lock_mtime)
+
+                # The planted real index.lock blocks index-writing children,
+                # so remove it before the flag cleanup and the restore (the
+                # assessment itself never touches it, as just asserted).
+                os.remove(lock_path)
+                self._clear_flag(rel, flag)
+                self._restore(reviewed)
+
+    def test_index_preparation_failure_is_closed(self):
+        """Every preparation failure closes the assessment; none falls back.
+
+        Five failure modes -- the index copy, the `--no-assume-unchanged`
+        update-index, the `--no-skip-worktree` update-index, the `os.utime`
+        timestamp restore and a missing real index -- must each raise a named
+        `ContractError`; a split index whose shared part cannot be safely
+        expanded in the disposable copy returns a named blocker problem
+        instead (never an empty result). The flagged file is dirty throughout,
+        so any silent fallback to the real hinted index would wrongly report
+        currentness. No mode leaks a temporary directory, and the real index
+        bytes, hint flags, nanosecond mtime and shared-index parts survive.
+        """
+        reviewed = self._seed_review()
+        rel = "src/feature.py"
+        self._flagged_edit("both", rel)
+        index_path = Path(self.root, ".git", "index")
+
+        def drift_call():
+            return review.code_drift(self.root, self.TICKET, reviewed,
+                                     ".ai/work/T1/plan.md")
+
+        def assert_closed(expect):
+            before_dirs = self._index_tmpdirs()
+            before_bytes = index_path.read_bytes()
+            before_mtime = index_path.stat().st_mtime_ns
+            before_flags = self._git("ls-files", "-v", "-z", "--", rel).stdout
+            with self.assertRaises(contracts.ContractError) as ctx:
+                drift_call()
+            self.assertIn(expect, str(ctx.exception))
+            self.assertEqual(self._index_tmpdirs(), before_dirs)
+            self.assertEqual(index_path.read_bytes(), before_bytes)
+            self.assertEqual(index_path.stat().st_mtime_ns, before_mtime)
+            self.assertEqual(
+                self._git("ls-files", "-v", "-z", "--", rel).stdout,
+                before_flags)
+
+        with self.subTest(mode="index-copy"):
+            real_copy2 = review.shutil.copy2
+
+            def failing_copy2(src, dst, **kwargs):
+                if "ai-workflow-index-" in str(dst):
+                    raise OSError("simulated index copy failure")
+                return real_copy2(src, dst, **kwargs)
+
+            with mock.patch("review.shutil.copy2", failing_copy2):
+                assert_closed("cannot read the Git index")
+
+        for mode, flag in (
+                ("assume-unchanged-command", "--no-assume-unchanged"),
+                ("skip-worktree-command", "--no-skip-worktree")):
+            with self.subTest(mode=mode):
+                real_run_git = review._run_git
+
+                def failing_run_git(root, args, env=None, input_bytes=None,
+                                    _flag=flag, _real=real_run_git):
+                    if _flag in args:
+                        return subprocess.CompletedProcess(
+                            list(args), 1, b"", b"simulated git failure")
+                    return _real(root, args, env, input_bytes)
+
+                with mock.patch.object(review, "_run_git", failing_run_git):
+                    assert_closed(flag)
+
+        with self.subTest(mode="utime"):
+            real_utime = os.utime
+
+            def failing_utime(path, *args, **kwargs):
+                if "ai-workflow-index-" in str(path):
+                    raise OSError("simulated timestamp failure")
+                return real_utime(path, *args, **kwargs)
+
+            with mock.patch("review.os.utime", failing_utime):
+                assert_closed("timestamp")
+
+        with self.subTest(mode="missing-index"):
+            saved = str(index_path) + ".saved"
+            os.rename(index_path, saved)
+            try:
+                before_dirs = self._index_tmpdirs()
+                with self.assertRaises(contracts.ContractError) as ctx:
+                    drift_call()
+                self.assertIn("cannot read the Git index", str(ctx.exception))
+                self.assertEqual(self._index_tmpdirs(), before_dirs)
+            finally:
+                os.replace(saved, index_path)
+
+        with self.subTest(mode="split-index"):
+            proc = self._git("update-index", "--split-index")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            try:
+                git_dir = Path(self.root, ".git")
+                before_dirs = self._index_tmpdirs()
+                before_shared = {p.name: p.read_bytes()
+                                 for p in git_dir.glob("sharedindex.*")}
+                self.assertTrue(before_shared)
+                before_bytes = index_path.read_bytes()
+                before_mtime = index_path.stat().st_mtime_ns
+                before_flags = self._git("ls-files", "-v", "-z",
+                                         "--", rel).stdout
+                before_state = self.state_bytes()
+
+                problems = drift_call()
+                self.assertTrue(problems,
+                                "a split index must never assess as current")
+                self.assertTrue(any("split index" in item
+                                    for item in problems), problems)
+                proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+                self.assertEqual(proc.returncode, 1,
+                                 proc.stdout + proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+
+                self.assertEqual(self.state_bytes(), before_state)
+                self.assertEqual(index_path.read_bytes(), before_bytes)
+                self.assertEqual(index_path.stat().st_mtime_ns, before_mtime)
+                self.assertEqual(
+                    self._git("ls-files", "-v", "-z", "--", rel).stdout,
+                    before_flags)
+                self.assertEqual(
+                    {p.name: p.read_bytes()
+                     for p in git_dir.glob("sharedindex.*")},
+                    before_shared)
+                self.assertEqual(self._index_tmpdirs(), before_dirs)
+            finally:
+                proc = self._git("update-index", "--no-split-index")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
 
     # -- artifact / verdict rejections --------------------------------------
 
