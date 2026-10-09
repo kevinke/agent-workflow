@@ -139,4 +139,4 @@ ai-workflow escalate TICKET-001 --clear --resolution "当前阶段契约已重�
 - **领域术语**：[CONTEXT.md](CONTEXT.md)
 - **开发约定**：[docs/agents/](docs/agents/)（domain / issue-tracker）
 - **票据**：`.scratch/<feature>/issues/`
-- **测试**：`scripts/ai-workflow/tests/`（473 个用例，含端到端 dogfood、完整安装生命周期与隔离 review 安装生命周期）
+- **测试**：`scripts/ai-workflow/tests/`（482 个用例，含端到端 dogfood、完整安装生命周期与隔离 review 安装生命周期）
