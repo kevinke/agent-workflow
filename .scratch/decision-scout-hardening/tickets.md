@@ -1,6 +1,6 @@
 # Decision Scout hardening: Ticket index
 
-Status: all automated slices complete (green run of record 2026-10-09); HARDEN-009 pending its live run
+Status: historical 01–08 complete; 12 published and fresh-checkout verified; 10–11 ready for planning; 09 pending safety prerequisites and budget
 Parent: [spec](spec.md)
 Disposition: [review mapping](review-disposition.md)
 Plan: [development plan and shared interfaces](../../docs/superpowers/plans/2026-10-08-scout-hardening.md)
@@ -23,11 +23,33 @@ independently reviewable; the index does not replace its file.
 | [06 — Durable v2 artifact transport and archives](issues/06-durable-artifact-transport.md) | 01 | Complete (automated) | Another checkout or an explicit archive preserves the exact v2 bound bytes, including mixed line endings and external Plans. |
 | [07 — Phase-aware Handoff readiness](issues/07-phase-aware-handoff.md) | 03 | Complete (automated) | A model taking over review or completion gets a concrete handoff while early workflow drafts remain usable. |
 | [08 — Thin role entries and Windows launch diagnostics](issues/08-thin-roles-windows-runbook.md) | None | Complete (automated) | Each Harness follows one authoritative rule set, and a Windows policy failure has a bounded documented diagnostic path. |
-| [09 — Distinct Scout-to-senior model and Harness pilot](issues/09-paired-model-pilot.md) | 01, 02, 03, 04, 05, 06, 07, 08 | Pending live run (budget prerequisite) | A documented real experiment shows a cheap Scout handing structured facts to a different senior decision model across Harnesses on a bounded nontrivial task. |
+| [09 — Distinct Scout-to-senior model and Harness pilot](issues/09-paired-model-pilot.md) | 01, 02, 03, 04, 05, 06, 07, 08, 10, 11 | Pending fixes and live budget | A documented real experiment shows a cheap Scout handing structured facts to a different senior decision model across Harnesses on a bounded nontrivial task. |
+| [10 — Review drift independent of index hints](issues/10-index-flag-independent-review.md) | None | Planned; review/execution pending | Flagged dirty/deleted code cannot obtain or retain either Review verdict; real index and racy-stat detection are preserved. |
+| [11 — Isolated reviewer verification and publication](issues/11-isolated-reviewer-publication.md) | 10 | Planned; review/execution pending | Verifier writes stay inside a restricted snapshot; only a current, identified review is published to live workflow records. |
+| [12 — LF-stable installer template](issues/12-lf-stable-installer-template.md) | None | Published (86a823c); fresh-checkout verified | The protection template and installed output remain LF across six checkout scenarios; 400 tests pass. |
 
-## Frontier and suggested order
+## Current follow-up frontier (2026-10-09)
 
-01, 02, 04, 05 and 08 have no behavioral blockers. Prioritize 01 and 02 because they protect completion. Then 03/04/06, 05/07/08, and finally the live 09 run. 06 consumes 01's shared current-Review checks; 07 consumes 03's shared retained-phase checks. 09 verifies the corrected workflow and therefore consumes all eight predecessors.
+Review the [follow-up master plan](../../docs/superpowers/plans/2026-10-09-review-safety-followup.md)
+and per-ticket [10](../../docs/superpowers/plans/2026-10-09-harden-10.md),
+[11](../../docs/superpowers/plans/2026-10-09-harden-11.md),
+[12](../../docs/superpowers/plans/2026-10-09-harden-12.md) plans; select execution
+method before implementing 10, then 11 with actual host-boundary evidence.
+These planned Tickets are not registered execution contracts.
+Shared Review/protocol files require serial writes. 12 is published at 86a823c
+with its six-case matrix and fresh-checkout verification recorded; it needs no
+further implementation round and now supplies the LF attribute rule that a
+HARDEN-010 checkout requires before its integration run.
+
+09 waits for 10 and 11 as well as its separately authorized available budget.
+Their prerequisites are now in the original pilot plan; do not reuse the
+original exhausted allocation. The original 01–08 acceptance stays historical
+and does not claim these new follow-ups were tested. The earlier frontier below
+records the original delivery order rather than today's outstanding work.
+
+## Original frontier and suggested order
+
+01, 02, 04, 05 and 08 have no behavioral blockers. Prioritize 01 and 02 because they protect completion. Then 03/04/06, 05/07/08, and finally the live 09 run (now also gated by 10/11 above). 06 consumes 01's shared current-Review checks; 07 consumes 03's shared retained-phase checks. 09 verifies the corrected workflow and originally consumed all eight predecessors; its new safety prerequisites are recorded above.
 
 Shared files require serial writes or explicit coordination; independence in the table does not authorize parallel writers. No Work Packet workflow is enabled by this index. Each plan can be executed in a fresh context with the parent spec and shared-interface plan.
 
@@ -38,3 +60,24 @@ Shared files require serial writes or explicit coordination; independence in the
 - 2026-10-08 — Nine outcome slices prepared from the review. Statuses describe the new work only; no production fixes or live sessions occurred while producing these documents.
 - 2026-10-09 — Integration: 01–08 implemented on `decision-scout-hardening` (01: 0f1f2b5, 477e65c; 02: 8a0b92b; 03: 235bc88, 256b312, fba580a, bf9b016; 04: d822833, b76f51f; 05: 46d50c0; 06: 793ac20, 3014423, 9ee8a4f, cebc72; 07: 924a580; 08: 3cef3db), each slice independently reviewed. Full-suite integration run at 3cef3db (`PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s scripts/ai-workflow/tests -p 'test_*.py' -v`): 399 tests, 397 passed, 2 pre-existing symlink skips, 1 failure — HARDEN-002's `test_racy_edit_blocks_done_and_resume` failed in fixture setup (Windows cross-process mtime-visibility race in the test fixture; production drift detection passed every other racy case). Diagnosed, not retried. 09 has no live run: it requires available models/Harnesses and a newly authorized session budget, so it stays pending.
 - 2026-10-09 — Green run of record: after fixture hardening 483a423 (`test_review_v2.py` only; scoped re-review passed), the same full-suite command at 483a423 finished `Ran 399 tests in 372.617s` — `OK (skipped=2)`, exit 0; the only skips remain the two pre-existing symlink-privilege cases. `ReviewV2Test.test_racy_edit_blocks_done_and_resume` passed, closing 02's caveat; all eight automated slices are complete with checked acceptance evidence. 09 is unchanged: no live run and no authorized session budget.
+
+- 2026-10-09 — Created 10/11 for newly identified index hints and verifier isolation;
+  both await planning, with 11 depending on 10. Recorded locally verified LF fix
+  as 12 (not yet committed). 09 now waits for 10/11 and its existing live budget;
+  completed 01–08 and their historical plans/evidence were not reopened.
+
+- 2026-10-09 — Added development plans for 10/11 and delivery closure for 12,
+  plus a follow-up sequence. Planned status does not claim implementation.
+  009 launch prerequisites are updated; no new model budget is allocated.
+
+- 2026-10-09 — Published 12 as 86a823c (`fix: keep installer protection template
+  LF across checkouts`), staging only root `.gitattributes`; the template already
+  matched HEAD so it produced no diff. Six-case LF/CRLF × autocrlf matrix rerun
+  against that committed revision passed 6/6 (template, committed blob and real
+  `init.init` output all `b"** -text\n"`, custom target attributes preserved),
+  with a negative control at pre-fix 3a4a980 showing `b"** -text\r\n"` under
+  `autocrlf=true`. Fresh `--no-local` checkout of 86a823c ran
+  `test_init test_transport`: 17 tests, OK, exit 0. 12's publication acceptance
+  is closed. 10 remains unimplemented: `review.py` is untouched and its new
+  tests exist only in the `harden-010` worktree, where the added block is
+  duplicated and the fix is absent.

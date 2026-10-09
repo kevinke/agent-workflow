@@ -2,8 +2,8 @@
 
 Ticket ID: HARDEN-009
 Type: task
-Status: ready-for-agent
-Blocked by: 01, 02, 03, 04, 05, 06, 07, 08
+Status: pending safety fixes and live budget
+Blocked by: 01, 02, 03, 04, 05, 06, 07, 08, 10, 11
 Parent: [supplemental spec](../spec.md#c9--distinct-model-paired-pilot-harden-009)
 Source findings: O1: actual model pairing gap; [disposition](../review-disposition.md)
 Plan: [development plan](../../../docs/superpowers/plans/2026-10-08-harden-09.md)
@@ -15,6 +15,14 @@ A documented real experiment shows a cheap Scout handing structured facts to a d
 ## Scope and ownership
 
 Own the complete C9 outcome from contract/documentation through public-command behavior and its regression or manual evidence. Exact files and interfaces are frozen in the linked plan. Honor its write set; other work may share mutation/validation files, so do not revert unrelated changes and schedule one writer for overlapping files. This issue is pending implementation; original SCOUT tickets stay historical.
+
+## Additional launch prerequisites (2026-10-09)
+
+Close [10](10-index-flag-independent-review.md) and
+[11](11-isolated-reviewer-publication.md) before launching the pilot. The original
+plan retains its experimental scope; add the corrected currentness/isolation
+prerequisites before execution. This is a launch dependency update, not a new
+session authorization, budget increase or change to historical pilot acceptance.
 
 ## Acceptance criteria
 
@@ -36,3 +44,6 @@ If implementation requires changing v2 digest semantics, completed task history,
 ## Comments
 
 - 2026-10-08 — Created from the post-implementation review at the user's request; ready for development planning/execution, not a resolved finding.
+
+- 2026-10-09 — Added 10/11 as safety prerequisites for the actual live run.
+  No sessions launched and no budget inferred from this documentation request.
