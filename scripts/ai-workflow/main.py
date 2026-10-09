@@ -435,10 +435,18 @@ def cmd_set_review(args, root):
         verdict = opts.get("verdict")
         if not verdict:
             raise _UsageError("--verdict <pass|changes_requested> is required")
-        return mutate.set_review(root, ticket_id, verdict)
+        return mutate.set_review(
+            root, ticket_id, verdict,
+            review_context=opts.get("review-context"),
+            report_path=opts.get("report"),
+            handoff_path=opts.get("handoff"))
     return _cmd_mutate(
-        "set-review", "set-review <ticket-id> --verdict pass|changes_requested",
-        args, root, {"--verdict"}, apply)
+        "set-review",
+        "set-review <ticket-id> --verdict pass|changes_requested "
+        "[--review-context <dir> --report <candidate-review.md> --handoff "
+        "<candidate-handoff.md>]",
+        args, root,
+        {"--verdict", "--review-context", "--report", "--handoff"}, apply)
 
 
 def cmd_prepare_review(args, root):

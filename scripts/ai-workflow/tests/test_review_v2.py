@@ -8,6 +8,7 @@ every rejection asserts the State bytes are unchanged.
 """
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -23,6 +24,44 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import contracts  # noqa: E402
 import review  # noqa: E402
 from v2_support import V2CLITestCase, valid_plan  # noqa: E402
+
+_ID = hashlib.sha256(b"guarded-publication fixture identity").hexdigest()
+
+
+def _well_formed_provenance(reviewed_commit, plan_sha):
+    """A shape-valid reserved declaration — fabricated, since nothing ran.
+
+    `read_review_provenance` judges shape only, so this passes the parser and
+    still must be refused by an unguarded `set-review`: a report may not carry
+    isolation evidence that no supervisor receipt was compared against.
+    """
+    return json.dumps({
+        "format_version": 1,
+        "reviewed_commit": reviewed_commit,
+        "context_sha256": _ID,
+        "live_manifest_sha256": _ID,
+        "snapshot_manifest_sha256": _ID,
+        "plan_sha256": plan_sha,
+        "input_hashes": {".ai/work/T1/decision.md": _ID},
+        "boundary": {"profile": "linux-bwrap-v1", "enforced": True,
+                     "preflight": "meta/preflight.json",
+                     "preflight_sha256": _ID},
+        "runs": [{"run_id": "a" * 32, "kind": "baseline",
+                  "argv": ["python3", "-m", "pytest"], "exit_code": 0,
+                  "stdout_sha256": _ID, "stderr_sha256": _ID,
+                  "snapshot_before": _ID, "snapshot_after": _ID},
+                 {"run_id": "b" * 32, "kind": "probe",
+                  "argv": ["python3", "-c", "print('probe')"], "exit_code": 0,
+                  "stdout_sha256": _ID, "stderr_sha256": _ID,
+                  "snapshot_before": _ID, "snapshot_after": _ID}],
+        "probe_changes": [],
+        "residual_changes": {"modified": [], "added": [], "removed": []},
+        "limits": ["Only the quoted commands were executed."],
+    }, indent=2, sort_keys=True)
+
+
+def _provenance_block(body):
+    return "\n## Isolation provenance\n\n```json\n%s\n```\n" % body
 
 
 class ReviewV2Test(V2CLITestCase):
@@ -1710,6 +1749,97 @@ class ReviewV2Test(V2CLITestCase):
             with self.assertRaises(contracts.ContractError) as ctx:
                 review.resolve_commit("ignored", prefix)
         self.assertIn("ambiguous", str(ctx.exception))
+
+    # -- guarded publication surface (HARDEN-011 Task 3) ---------------------
+
+    def test_set_review_rejects_reserved_provenance_without_a_review_context(self):
+        """A marked report needs guarded publication; ordinary set-review refuses it.
+
+        The reserved section is a claim about an isolated review run, so an
+        unguarded record would attach isolation evidence to a verdict nothing
+        ever validated against supervisor receipts. Both a well-formed claim and
+        a damaged one are refused, before any truth check, and neither writes
+        State.
+        """
+        reviewed = self._seed_review()
+        path = os.path.join(self.work, "review.md")
+        base = self._read_text(path)
+        for label, section in (("well-formed", _well_formed_provenance(
+                reviewed, self._plan_sha())),
+                ("unreadable", "{}")):
+            with self.subTest(label):
+                self._write_text(path, base + _provenance_block(section))
+                before = self.state_bytes()
+                proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+                self.assertIn("--review-context", proc.stderr)
+                self.assertEqual(self.state_bytes(), before)
+
+    def test_set_review_guarded_options_must_be_supplied_together(self):
+        """Partial guarded options are a usage refusal, before any file access.
+
+        The refusal must not depend on the candidate paths existing: publishing
+        is a single decision, and a half-supplied one is rejected outright.
+        """
+        self._seed_review()
+        before = self.state_bytes()
+        missing = os.path.join(self.root, "definitely-absent.md")
+        for args in (["--verdict", "pass", "--review-context", self.root],
+                    ["--verdict", "pass", "--review-context", self.root,
+                     "--report", missing],
+                    ["--verdict", "pass", "--report", missing,
+                     "--handoff", missing]):
+            with self.subTest(args=args):
+                proc = self.cli("set-review", self.TICKET, *args)
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertIn("together", proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+                self.assertEqual(self.state_bytes(), before)
+
+        proc = self.cli("set-review")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
+    def test_review_grammar_still_accepts_an_unrelated_extra_h2_section(self):
+        """Only the reserved section is special: an ordinary extra H2 is fine.
+
+        Narrowing the whole Review grammar would break every existing report, so
+        the guard is scoped to `## Isolation provenance` and nothing else.
+        """
+        self._seed_review()
+        path = os.path.join(self.work, "review.md")
+        self._write_text(path, self._read_text(path)
+                         + "\n## Reviewer notes\n\nExtra section, no provenance.\n")
+        proc = self.cli("set-review", self.TICKET, "--verdict", "pass")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.read_state()["review"]["verdict"], "pass")
+
+    def test_binding_still_invalidates_a_marked_report_by_bytes(self):
+        """Existing consumers judge the recorded binding by raw bytes only.
+
+        Editing a published Review afterwards — even by appending the reserved
+        section — is ordinary artifact drift: `binding_problems` must report it,
+        and no code may read the new section as a reprieve or as extra proof.
+        """
+        self._seed_review()
+        self._bind("pass")
+        path = os.path.join(self.work, "review.md")
+        self._append_file(path, "\n## Isolation provenance\n\n```json\n{}\n```\n")
+        proc = self.cli("validate", self.TICKET)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("Review artifact changed", proc.stdout)
+
+    def _read_text(self, path):
+        with open(path, encoding="utf-8", newline="") as fh:
+            return fh.read()
+
+    def _write_text(self, path, text):
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+
+    def _plan_sha(self):
+        return ((self.read_state().get("source_artifacts") or {}).get("plan")
+                or {}).get("sha256")
 
 
 if __name__ == "__main__":

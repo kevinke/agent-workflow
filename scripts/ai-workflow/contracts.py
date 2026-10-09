@@ -11,6 +11,10 @@ Implements the frozen artifact grammar in `.ai/workflow/ARTIFACTS.md`:
 - Named fields use `**Label:** value`; multiline lists continue below the
   label. Records are normalised to {id, kind, fields, tag?} dicts and H2
   bodies to plain strings.
+- One H2 name is reserved (HARDEN-011): `## Isolation provenance` in a Review
+  holds exactly one fenced JSON map, read by `read_review_provenance`. Absence
+  is a legacy report and is never inferred; a duplicate, an unreadable fence or
+  a partial declaration is a ContractError.
 
 Structural validation reports problems as a list of strings; it judges
 shapes (IDs, labels, anchors, placeholders), never claim truth or designs.
@@ -18,12 +22,14 @@ shapes (IDs, labels, anchors, placeholders), never claim truth or designs.
 
 import datetime
 import hashlib
+import json
 import os
 import re
 
 import parser
 
-__all__ = ["ContractError", "read_artifact", "read_plan", "sha256_file",
+__all__ = ["ContractError", "parse_artifact", "read_artifact",
+           "read_review_provenance", "read_plan", "sha256_file",
            "source_problems", "validate_evidence", "validate_audit",
            "validate_review", "validate_handoff"]
 
@@ -215,21 +221,31 @@ def _metadata_from_lines(block):
     return data
 
 
-def read_artifact(path, kind):
-    """Read a bounded Markdown artifact into {metadata, sections, records}.
+def _decode_artifact_bytes(raw):
+    """Decode artifact bytes as UTF-8; a non-UTF-8 buffer is a ContractError."""
+    if isinstance(raw, str):
+        raise ContractError("artifact bytes must be bytes, got str")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError("artifact is not UTF-8: %s" % exc)
+    except AttributeError:
+        raise ContractError("artifact bytes must be bytes, got %s"
+                            % type(raw).__name__)
 
-    `kind` is "evidence", "evidence-audit", or "review". Evidence records carry
+
+def parse_artifact(raw, kind):
+    """Parse bounded Markdown artifact bytes into {metadata, sections, records}.
+
+    This is `read_artifact`'s body, kept byte-for-byte identical in behaviour:
+    `read_artifact` reads the file and delegates here, so a caller that already
+    holds the bytes (a candidate Report that has not been published yet) is
+    judged by exactly the same grammar as a published artifact. `kind` is
+    "evidence", "evidence-audit" or "review". Evidence records carry
     kind=question (Decision Questions) or kind=finding (Findings) with an
     optional tag for findings; the audit and the review have H2 sections only.
     """
-    try:
-        with open(path, "rb") as fh:
-            text = fh.read().decode("utf-8")
-    except OSError as exc:
-        raise ContractError("cannot read %s: %s" % (path, exc))
-    except UnicodeDecodeError as exc:
-        raise ContractError("artifact is not UTF-8: %s" % exc)
-
+    text = _decode_artifact_bytes(raw)
     sections, records, fenced = _scan(text)
     metadata = _parse_metadata(sections, fenced)
     if kind == "evidence":
@@ -247,6 +263,271 @@ def read_artifact(path, kind):
     else:
         raise ContractError("unknown artifact kind %r" % kind)
     return {"metadata": metadata, "sections": sections, "records": records}
+
+
+def read_artifact(path, kind):
+    """Read a bounded Markdown artifact into {metadata, sections, records}.
+
+    Bytes are read once and handed to `parse_artifact`, so the file and the
+    in-memory forms of a Report can never be judged by two grammars.
+    """
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError as exc:
+        raise ContractError("cannot read %s: %s" % (path, exc))
+    return parse_artifact(raw, kind)
+
+
+# ---------------------------------------------------------------------------
+# Reserved isolation-provenance section (HARDEN-011 Task 3)
+# ---------------------------------------------------------------------------
+
+PROVENANCE_HEADING = "Isolation provenance"
+PROVENANCE_KEYS = (
+    "format_version", "reviewed_commit", "context_sha256",
+    "live_manifest_sha256", "snapshot_manifest_sha256", "plan_sha256",
+    "input_hashes", "boundary", "runs", "probe_changes", "residual_changes",
+    "limits",
+)
+PROVENANCE_RUN_KEYS = ("run_id", "kind", "argv", "exit_code", "stdout_sha256",
+                       "stderr_sha256", "snapshot_before", "snapshot_after")
+PROVENANCE_RUN_KINDS = ("baseline", "probe")
+PROVENANCE_BOUNDARY_KEYS = ("profile", "enforced", "preflight",
+                            "preflight_sha256")
+PROVENANCE_PROBE_KEYS = ("path", "before_sha256", "after_sha256", "deleted")
+PROVENANCE_RESIDUAL_KEYS = ("modified", "added", "removed")
+# A full Git object ID: 40 hex digits for sha1, 64 for sha256. An abbreviation
+# is never acceptable here, because the provenance block binds one immutable
+# commit that the supervisor's own manifest names in full.
+_FULL_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def _is_sha256(value):
+    return isinstance(value, str) and bool(_SHA256_RE.match(value))
+
+
+def _provenance_relative(value):
+    """True for a repository-relative forward-slash path inside the snapshot.
+
+    Absolute paths, drive or UNC prefixes, backslashes and any `..` component
+    are refused: a probe change that cannot be named inside the snapshot has no
+    execution scope, and rewriting its meaning is not this validator's job.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    if "\\" in value or value.startswith("/"):
+        return False
+    if re.match(r"^[A-Za-z]:", value):
+        return False
+    parts = value.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return False
+    return not _is_placeholder(value)
+
+
+def _provenance_error(detail):
+    return ContractError("provenance: %s" % detail)
+
+
+def _reserved_section_blocks(text):
+    """(occurrences, fenced blocks) of the reserved H2, fence-aware.
+
+    A heading inside a code fence is never a section boundary, so a report that
+    merely quotes the reserved heading stays a legacy report.
+    """
+    occurrences = 0
+    blocks = []
+    in_reserved = False
+    fence = None
+    block = None
+    for line in text.splitlines():
+        match = _FENCE_RE.match(line)
+        if fence is not None:
+            if match and match.group(1).startswith(fence):
+                fence = None
+                if in_reserved and block is not None:
+                    blocks.append(block)
+                block = None
+            elif block is not None:
+                block.append(line)
+            continue
+        if match:
+            fence = match.group(1)[0] * 3
+            block = []
+            continue
+        heading = _H2_RE.match(line)
+        if heading:
+            in_reserved = heading.group(1).strip() == PROVENANCE_HEADING
+            if in_reserved:
+                occurrences += 1
+    return occurrences, blocks
+
+
+def _require(condition, detail):
+    if not condition:
+        raise _provenance_error(detail)
+
+
+def _check_provenance_map(mapping, keys, owner):
+    _require(isinstance(mapping, dict),
+             "field %r must be a map, got %s" % (owner, type(mapping).__name__))
+    missing = [key for key in keys if key not in mapping]
+    _require(not missing,
+             "field %r is a partial declaration missing %s"
+             % (owner, ", ".join(repr(key) for key in missing)))
+
+
+def _validate_provenance(claim):
+    """Shape and type conformance of one reserved provenance declaration.
+
+    Only structure is established here: field names, types and path shapes.
+    Whether the identities it quotes are the ones the supervisor actually
+    recorded is `review_publication`'s question, and whether the commands it
+    describes really ran is nobody's to decide from bytes alone.
+    """
+    _require(isinstance(claim, dict),
+             "the reserved section must hold one JSON map, got %s"
+             % type(claim).__name__)
+    missing = [key for key in PROVENANCE_KEYS if key not in claim]
+    _require(not missing,
+             "partial declaration: missing required field(s) %s"
+             % ", ".join(repr(key) for key in missing))
+    extra = sorted(set(claim) - set(PROVENANCE_KEYS))
+    _require(not extra,
+             "undeclared field(s) %s are not part of format_version 1"
+             % ", ".join(repr(key) for key in extra))
+
+    _require(_is_int(claim["format_version"]) and claim["format_version"] == 1,
+             "field 'format_version' must be the integer 1, got %r"
+             % (claim["format_version"],))
+    _require(isinstance(claim["reviewed_commit"], str)
+             and bool(_FULL_OID_RE.match(claim["reviewed_commit"])),
+             "field 'reviewed_commit' must be a full lowercase object ID, "
+             "not an abbreviation: %r" % (claim["reviewed_commit"],))
+    for key in ("context_sha256", "live_manifest_sha256",
+                "snapshot_manifest_sha256", "plan_sha256"):
+        _require(_is_sha256(claim[key]),
+                 "field %r must be a 64-digit lowercase SHA-256, got %r"
+                 % (key, claim[key]))
+
+    inputs = claim["input_hashes"]
+    _require(isinstance(inputs, dict) and inputs,
+             "field 'input_hashes' must be a non-empty map, got %r" % (inputs,))
+    for path, digest in inputs.items():
+        _require(_provenance_relative(path),
+                 "field 'input_hashes' key %r is not a repository-relative "
+                 "path" % (path,))
+        _require(_is_sha256(digest),
+                 "field 'input_hashes' entry %r must be a SHA-256, got %r"
+                 % (path, digest))
+
+    boundary = claim["boundary"]
+    _check_provenance_map(boundary, PROVENANCE_BOUNDARY_KEYS, "boundary")
+    _require(isinstance(boundary["profile"], str) and boundary["profile"],
+             "field 'boundary.profile' must name the host profile")
+    _require(isinstance(boundary["enforced"], bool),
+             "field 'boundary.enforced' must be a boolean, got %r"
+             % (boundary["enforced"],))
+    _require(_provenance_relative(boundary["preflight"]),
+             "field 'boundary.preflight' must be a context-relative record "
+             "path, got %r" % (boundary["preflight"],))
+    _require(_is_sha256(boundary["preflight_sha256"]),
+             "field 'boundary.preflight_sha256' must be a SHA-256")
+
+    runs = claim["runs"]
+    _require(isinstance(runs, list) and runs,
+             "field 'runs' must be a non-empty list of executed commands, "
+             "got %r" % (runs,))
+    for index, run in enumerate(runs):
+        owner = "runs[%d]" % index
+        _check_provenance_map(run, PROVENANCE_RUN_KEYS, owner)
+        _require(isinstance(run["run_id"], str) and run["run_id"],
+                 "field %r must declare a non-empty run_id" % owner)
+        _require(run["kind"] in PROVENANCE_RUN_KINDS,
+                 "field %r must be a %s run, got %r"
+                 % (owner, " or ".join(PROVENANCE_RUN_KINDS), run["kind"]))
+        argv = run["argv"]
+        _require(isinstance(argv, list) and argv
+                 and all(isinstance(item, str) and item for item in argv),
+                 "field %r.argv must be a non-empty list of arguments" % owner)
+        _require(_is_int(run["exit_code"]),
+                 "field %r.exit_code must be an integer, got %r"
+                 % (owner, run["exit_code"]))
+        for key in ("stdout_sha256", "stderr_sha256", "snapshot_before",
+                    "snapshot_after"):
+            _require(_is_sha256(run[key]),
+                     "field %r.%s must be a SHA-256, got %r"
+                     % (owner, key, run[key]))
+
+    changes = claim["probe_changes"]
+    _require(isinstance(changes, list),
+             "field 'probe_changes' must be a list, got %r" % (changes,))
+    for index, change in enumerate(changes):
+        owner = "probe_changes[%d]" % index
+        _check_provenance_map(change, PROVENANCE_PROBE_KEYS, owner)
+        _require(_provenance_relative(change["path"]),
+                 "field %r.path %r is not a repository-relative path inside "
+                 "the snapshot" % (owner, change["path"]))
+        for key in ("before_sha256", "after_sha256"):
+            _require(change[key] is None or _is_sha256(change[key]),
+                     "field %r.%s must be a SHA-256 or null" % (owner, key))
+        _require(isinstance(change["deleted"], bool),
+                 "field %r.deleted must be a boolean" % owner)
+        _require(change["deleted"] == (change["after_sha256"] is None),
+                 "field %r is a deletion only when after_sha256 is null"
+                 % owner)
+
+    residual = claim["residual_changes"]
+    _check_provenance_map(residual, PROVENANCE_RESIDUAL_KEYS,
+                          "residual_changes")
+    for key in PROVENANCE_RESIDUAL_KEYS:
+        value = residual[key]
+        _require(isinstance(value, list)
+                 and all(_provenance_relative(item) for item in value),
+                 "field 'residual_changes.%s' must be a list of "
+                 "repository-relative paths, got %r" % (key, value))
+
+    limits = claim["limits"]
+    _require(isinstance(limits, list) and limits
+             and all(_concrete_text(item) for item in limits),
+             "field 'limits' must be a non-empty list of concrete statements, "
+             "got %r" % (limits,))
+
+
+def read_review_provenance(raw):
+    """The reserved `## Isolation provenance` declaration of a Review, or None.
+
+    Absence is a legacy report: no isolation was claimed, so nothing is claimed
+    on its behalf either — this reader never synthesizes a declaration. Exactly
+    one reserved H2 containing exactly one fenced JSON map is required; a
+    duplicate section, a missing or second fence, malformed JSON, a non-map
+    payload, a partial declaration or a wrongly typed field raises
+    `ContractError`.
+
+    Shape only: the identities are checked against the supervisor's records by
+    `review_publication`, and the commands inside a run claim stay
+    reviewer-authored statements that structure can never prove true.
+    """
+    text = _decode_artifact_bytes(raw)
+    occurrences, blocks = _reserved_section_blocks(text)
+    if occurrences == 0:
+        return None
+    _require(occurrences == 1,
+             "duplicate reserved H2 section %r (%d occurrences)"
+             % (PROVENANCE_HEADING, occurrences))
+    _require(len(blocks) == 1,
+             "the reserved section %r must contain exactly one fenced JSON "
+             "block, found %d" % (PROVENANCE_HEADING, len(blocks)))
+    body = "\n".join(blocks[0])
+    try:
+        claim = json.loads(body)
+    except ValueError as exc:
+        raise _provenance_error(
+            "the reserved section %r holds malformed JSON: %s"
+            % (PROVENANCE_HEADING, exc))
+    _validate_provenance(claim)
+    return claim
 
 
 # ---------------------------------------------------------------------------

@@ -9,12 +9,14 @@ violations at write time instead of relying on a later `validate` pass.
 
 import copy
 import datetime
+import hashlib
 import os
 import re
 
 import contracts
 import phase_checks
 import review
+import review_publication
 import state
 import validate
 import workflow_v2
@@ -607,25 +609,23 @@ def register_plan(root, ticket_id, path, total):
         ticket_id, path, len(tasks), current)
 
 
-def set_review(root, ticket_id, verdict):
-    """Record the Reviewer's verdict on a v2 Ticket (SCOUT-005).
+def _review_candidate(root, ticket_id, data, report, raw, verdict):
+    """Assess one Review candidate and return the proposed State; write nothing.
 
-    Requires the review phase, no unresolved escalation, a ready execution state
-    (current registered Plan, coherent counters, active Status), every registered
-    task complete, a structurally valid Review artifact whose Metadata `verdict`
-    equals the CLI value and whose `plan_sha256` equals the registered Plan hash,
-    and clean reviewed code (no drift since the reviewed commit). The Metadata
-    `reviewed_commit` must be a literal hexadecimal object ID (full or
-    unambiguous abbreviation) resolving to an ancestor of HEAD; HEAD, branch and
-    tag names are rejected. On success it binds the verdict to the Review
-    artifact's raw-byte hash, the full resolved commit ID and the Plan hash in a
-    single save. Every rejection leaves State unchanged.
+    This is all of `set_review`'s judgement in one place, shared by the legacy
+    and the guarded paths so neither can end up more permissive than the other.
+    Every existing check runs in its existing order: the review phase, no
+    unresolved escalation, a ready execution state (current registered Plan,
+    coherent counters, active Status), every registered task complete, a
+    structurally valid Review whose Metadata `verdict` equals the CLI verdict and
+    whose `plan_sha256` equals the registered Plan hash, and clean reviewed code
+    (no drift since the reviewed commit).
+
+    The result is a copy of `data` carrying the ordinary v2 binding — `{verdict,
+    artifact_sha256, reviewed_commit, plan_sha256}` — where `artifact_sha256`
+    covers the raw bytes the caller supplied. `data` is never mutated and nothing
+    is saved.
     """
-    data = _load(root, ticket_id)
-    if workflow_v2.version(data) != 2:
-        raise MutateError(
-            "set-review requires workflow_version 2 (this Ticket is v1; "
-            "upgrade it explicitly first)")
     if verdict not in ("pass", "changes_requested"):
         raise MutateError(
             "unknown verdict %r (must be pass or changes_requested)" % verdict)
@@ -652,12 +652,6 @@ def set_review(root, ticket_id, verdict):
             "(implementation.current_task=%r of total_tasks=%r)"
             % (impl.get("current_task"), total_tasks))
 
-    artifact_path = _artifact_path(root, ticket_id, data, "review", "review.md")
-    try:
-        report = contracts.read_artifact(artifact_path, "review")
-    except contracts.ContractError as exc:
-        raise MutateError("cannot record a review: the Review artifact is not a "
-                          "structured report (%s)" % exc)
     review_problems = contracts.validate_review(report, ticket_id, verdict)
     if review_problems:
         raise MutateError("cannot record a review: the Review artifact is "
@@ -687,25 +681,127 @@ def set_review(root, ticket_id, verdict):
             "cannot record a review: the reviewed code changed since %s: %s"
             % (full_oid, "; ".join(drift)))
 
-    try:
-        artifact_sha = contracts.sha256_file(artifact_path)
-    except OSError as exc:
-        raise MutateError("cannot read the Review artifact: %s" % exc)
-
-    data["review"] = {
+    proposed = copy.deepcopy(data)
+    proposed["review"] = {
         "verdict": verdict,
-        "artifact_sha256": artifact_sha,
+        "artifact_sha256": hashlib.sha256(raw).hexdigest(),
         "reviewed_commit": full_oid,
         "plan_sha256": md.get("plan_sha256"),
     }
-    artifacts = dict(data.get("artifacts") or {})
+    artifacts = dict(proposed.get("artifacts") or {})
     if "review" not in artifacts:
         artifacts["review"] = "review.md"
-    data["artifacts"] = artifacts
+    proposed["artifacts"] = artifacts
+    return proposed
 
-    _save(root, ticket_id, data)
-    return "%s: review verdict=%s (commit %s)" % (
-        ticket_id, verdict, full_oid)
+
+def _read_review_candidate(path):
+    """Read and parse one candidate Review's bytes, keeping the known messages."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError as exc:
+        raise MutateError("cannot record a review: the Review artifact is not a "
+                          "structured report (cannot read %s: %s)" % (path, exc))
+    try:
+        report = contracts.parse_artifact(raw, "review")
+    except contracts.ContractError as exc:
+        raise MutateError("cannot record a review: the Review artifact is not a "
+                          "structured report (%s)" % exc)
+    return raw, report
+
+
+def _require_unguarded_is_legacy(ticket_id, raw):
+    """A report that declares isolation provenance may not be recorded plainly.
+
+    The reserved section is a claim that a supervisor compared the run against its
+    own receipts, so an unguarded record would attach that claim to a verdict
+    nothing had checked. Historical reports keep today's exact behaviour: they
+    declare nothing, and nothing is invented on their behalf.
+    """
+    try:
+        provenance = contracts.read_review_provenance(raw)
+    except contracts.ContractError as exc:
+        raise MutateError(
+            "cannot record a review: the reserved `## Isolation provenance` "
+            "section is invalid (%s); a report that declares isolation "
+            "provenance may only be published through the guarded path: "
+            "set-review %s --verdict <pass|changes_requested> --review-context "
+            "<directory> --report <candidate-review> --handoff "
+            "<candidate-handoff>" % (exc, ticket_id))
+    if provenance is not None:
+        raise MutateError(
+            "cannot record a review: this report declares the reserved `## "
+            "Isolation provenance` section, so it must be published through the "
+            "guarded path against the supervisor's review context: set-review %s "
+            "--verdict <pass|changes_requested> --review-context <directory> "
+            "--report <candidate-review> --handoff <candidate-handoff>"
+            % ticket_id)
+
+
+def set_review(root, ticket_id, verdict, *, review_context=None,
+               report_path=None, handoff_path=None):
+    """Record the Reviewer's verdict on a v2 Ticket (SCOUT-005, HARDEN-011).
+
+    Two paths, one judgement. Without the guarded options this is exactly the
+    existing command: the configured Review artifact is read, assessed by
+    `_review_candidate` and bound in a single save — and a report carrying the
+    reserved isolation-provenance section is refused, because nothing checked the
+    claims it makes. With all three of `review_context`, `report_path` and
+    `handoff_path`, the candidate is published through `review_publication`, which
+    proves the report's provenance against the supervisor's receipts, re-checks
+    that the live code, Plan and captured inputs still match the prepared review
+    context, and then writes only the configured Review, State and Handoff.
+
+    In both paths the verdict is the Reviewer's own and the recorded binding keeps
+    its existing shape. Partial guarded options are refused before any candidate
+    file is read. Every rejection leaves State unchanged.
+    """
+    guarded = (("review_context", review_context),
+               ("report_path", report_path), ("handoff_path", handoff_path))
+    supplied = [name for name, value in guarded if value]
+    if supplied and len(supplied) != len(guarded):
+        missing = [name for name, value in guarded if not value]
+        raise MutateError(
+            "the guarded publication options must be supplied together: got %s, "
+            "missing %s"
+            % (", ".join("--%s" % name.replace("_", "-") for name in supplied),
+               ", ".join("--%s" % name.replace("_", "-") for name in missing)))
+    data = _load(root, ticket_id)
+    if workflow_v2.version(data) != 2:
+        raise MutateError(
+            "set-review requires workflow_version 2 (this Ticket is v1; "
+            "upgrade it explicitly first)")
+
+    if not supplied:
+        artifact_path = _artifact_path(root, ticket_id, data, "review",
+                                       "review.md")
+        raw, report = _read_review_candidate(artifact_path)
+        proposed = _review_candidate(root, ticket_id, data, report, raw, verdict)
+        # The reserved section is checked last but before the only write: every
+        # existing refusal keeps its existing precedence, and a report that claims
+        # an isolated run is still never recorded plainly.
+        _require_unguarded_is_legacy(ticket_id, raw)
+        _save(root, ticket_id, proposed)
+        return "%s: review verdict=%s (commit %s)" % (
+            ticket_id, verdict, proposed["review"]["reviewed_commit"])
+
+    raw, report = _read_review_candidate(report_path)
+    try:
+        with open(handoff_path, "rb") as fh:
+            handoff_raw = fh.read()
+    except OSError as exc:
+        raise MutateError("cannot publish a review: cannot read the candidate "
+                          "Handoff %s: %s" % (handoff_path, exc))
+    proposed = _review_candidate(root, ticket_id, data, report, raw, verdict)
+    try:
+        review_publication.publish(root, ticket_id, review_context, raw,
+                                   handoff_raw, proposed)
+    except contracts.ContractError as exc:
+        raise MutateError(str(exc))
+    return "%s: published review verdict=%s (reviewed commit %s, live HEAD %s)" % (
+        ticket_id, verdict, proposed["review"]["reviewed_commit"],
+        review_publication.live_head(root))
 
 
 def set_gate(root, ticket_id, gate, round_no=None):

@@ -8,6 +8,7 @@ on rejected mutation).
 """
 
 import hashlib
+import json
 import os
 import sys
 import tempfile
@@ -19,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import contracts  # noqa: E402
 import workflow_v2  # noqa: E402
 from v2_support import (  # noqa: E402
-    V2CLITestCase, valid_evidence, valid_audit, CODE_FIXTURE)
+    V2CLITestCase, valid_evidence, valid_audit, valid_review, CODE_FIXTURE)
 
 
 class ContractReadTest(unittest.TestCase):
@@ -570,6 +571,242 @@ class ValidateV2IntegrationTest(V2CLITestCase):
                                   "evidence_audit").returncode, 0)
         proc = self.cli("validate")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+
+PROVENANCE_KEYS = ("format_version", "reviewed_commit", "context_sha256",
+                   "live_manifest_sha256", "snapshot_manifest_sha256",
+                   "plan_sha256", "input_hashes", "boundary", "runs",
+                   "probe_changes", "residual_changes", "limits")
+
+_HEX = hashlib.sha256(b"identity").hexdigest()
+_OID = "d" * 40
+
+
+def _valid_provenance():
+    """A shape-valid reserved provenance declaration (values are not checked
+    here: `read_review_provenance` establishes conformance, never truth)."""
+    return {
+        "format_version": 1,
+        "reviewed_commit": _OID,
+        "context_sha256": _HEX,
+        "live_manifest_sha256": _HEX,
+        "snapshot_manifest_sha256": _HEX,
+        "plan_sha256": _HEX,
+        "input_hashes": {".ai/work/T1/decision.md": _HEX},
+        "boundary": {
+            "profile": "linux-bwrap-v1",
+            "enforced": True,
+            "preflight": "meta/preflight.json",
+            "preflight_sha256": _HEX,
+        },
+        "runs": [{
+            "run_id": "a" * 32,
+            "kind": "baseline",
+            "argv": ["python3", "-m", "pytest"],
+            "exit_code": 0,
+            "stdout_sha256": _HEX,
+            "stderr_sha256": _HEX,
+            "snapshot_before": _HEX,
+            "snapshot_after": _HEX,
+        }],
+        "probe_changes": [{
+            "path": "src/app.py",
+            "before_sha256": _HEX,
+            "after_sha256": None,
+            "deleted": True,
+        }],
+        "residual_changes": {"modified": [], "added": [],
+                             "removed": ["src/app.py"]},
+        "limits": ["Only the quoted command was executed."],
+    }
+
+
+def _provenance_section(claim=None):
+    claim = _valid_provenance() if claim is None else claim
+    return ("\n## Isolation provenance\n\n```json\n%s\n```\n"
+            % json.dumps(claim, indent=2, sort_keys=True))
+
+
+class ParseArtifactTest(unittest.TestCase):
+    """`parse_artifact` is `read_artifact`'s body: same shape, same results."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.artifacts = {
+            "evidence": valid_evidence("T1", 1, "abc1234"),
+            "evidence-audit": valid_audit("T1", "sufficient", 1, _HEX),
+            "review": valid_review("T1", "pass", "abc1234", _HEX),
+        }
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _path(self, kind, text):
+        path = os.path.join(self.root, "%s.md" % kind)
+        with open(path, "wb") as fh:
+            fh.write(text.encode("utf-8"))
+        return path
+
+    def test_parse_matches_read_for_every_kind(self):
+        for kind, text in self.artifacts.items():
+            with self.subTest(kind=kind):
+                raw = text.encode("utf-8")
+                parsed = contracts.parse_artifact(raw, kind)
+                self.assertEqual(parsed, contracts.read_artifact(self._path(
+                    kind, text), kind))
+                self.assertEqual(sorted(parsed), ["metadata", "records",
+                                                 "sections"])
+
+    def test_crlf_and_unicode_bytes_parse_identically(self):
+        text = self.artifacts["review"].replace("\n", "\r\n") + "é\n"
+        raw = text.encode("utf-8")
+        path = self._path("review", text)
+        self.assertEqual(contracts.parse_artifact(raw, "review"),
+                         contracts.read_artifact(path, "review"))
+        self.assertIn(b"\r\n", raw, "the fixture lost its CRLF")
+
+    def test_unknown_kind_is_rejected_from_bytes_and_disk(self):
+        raw = self.artifacts["review"].encode("utf-8")
+        with self.assertRaises(contracts.ContractError) as ctx:
+            contracts.parse_artifact(raw, "notes")
+        self.assertIn("unknown artifact kind", str(ctx.exception))
+        with self.assertRaises(contracts.ContractError):
+            contracts.read_artifact(self._path("review",
+                                               self.artifacts["review"]),
+                                    "notes")
+
+    def test_non_utf8_bytes_and_missing_file_report_as_contract_errors(self):
+        with self.assertRaises(contracts.ContractError) as ctx:
+            contracts.parse_artifact(b"\xff\xfe not utf-8", "review")
+        self.assertIn("not UTF-8", str(ctx.exception))
+        with self.assertRaises(contracts.ContractError):
+            contracts.read_artifact(os.path.join(self.root, "absent.md"),
+                                    "review")
+
+    def test_fenced_heading_is_still_not_a_record_boundary(self):
+        text = self.artifacts["evidence"] + (
+            "```markdown\n### F-99 [FACT]\n\n**Statement:** fake\n```\n")
+        self.assertEqual(contracts.validate_evidence(
+            contracts.parse_artifact(text.encode("utf-8"), "evidence"), "T1"),
+            [])
+
+
+class ReviewProvenanceTest(unittest.TestCase):
+    """The reserved `Isolation provenance` section: absent, exact or refused."""
+
+    def _raw(self, section=""):
+        return (valid_review("T1", "pass", "abc1234", _HEX) + section).encode(
+            "utf-8")
+
+    def test_absent_section_is_a_legacy_report(self):
+        self.assertIsNone(contracts.read_review_provenance(self._raw()))
+
+    def test_a_heading_only_inside_a_code_fence_is_not_a_section(self):
+        fenced = "\n```\n## Isolation provenance\n\n```json\n{}\n```\n```\n"
+        self.assertIsNone(contracts.read_review_provenance(self._raw(fenced)))
+
+    def test_declared_section_parses_to_the_exact_mapping(self):
+        claim = _valid_provenance()
+        parsed = contracts.read_review_provenance(self._raw(
+            _provenance_section(claim)))
+        self.assertEqual(parsed, claim)
+        self.assertEqual(sorted(parsed), sorted(PROVENANCE_KEYS))
+
+    def test_duplicate_section_raises(self):
+        with self.assertRaises(contracts.ContractError) as ctx:
+            contracts.read_review_provenance(self._raw(
+                _provenance_section() + _provenance_section()))
+        self.assertIn("duplicate", str(ctx.exception).lower())
+
+    def test_two_fences_in_one_section_raises(self):
+        section = ("\n## Isolation provenance\n\n```json\n%s\n```\n\n"
+                   "```json\n%s\n```\n"
+                   % (json.dumps(_valid_provenance()),
+                      json.dumps(_valid_provenance())))
+        with self.assertRaises(contracts.ContractError) as ctx:
+            contracts.read_review_provenance(self._raw(section))
+        self.assertIn("exactly one", str(ctx.exception))
+
+    def test_no_fence_at_all_raises(self):
+        with self.assertRaises(contracts.ContractError):
+            contracts.read_review_provenance(self._raw(
+                "\n## Isolation provenance\n\nSee the attached log.\n"))
+
+    def test_malformed_and_non_object_json_raise(self):
+        for body in ("{not json}", "[1, 2, 3]", '"a string"', "null", "17"):
+            with self.subTest(body=body):
+                with self.assertRaises(contracts.ContractError):
+                    contracts.read_review_provenance(
+                        self._raw("\n## Isolation provenance\n\n```json\n%s\n"
+                                  "```\n" % body))
+
+    def test_every_missing_required_field_raises(self):
+        for key in PROVENANCE_KEYS:
+            with self.subTest(missing=key):
+                claim = _valid_provenance()
+                del claim[key]
+                with self.assertRaises(contracts.ContractError) as ctx:
+                    contracts.read_review_provenance(self._raw(
+                        _provenance_section(claim)))
+                self.assertIn(key, str(ctx.exception))
+
+    def test_undeclared_extra_field_raises(self):
+        claim = _valid_provenance()
+        claim["model_seniority"] = "claimed senior"
+        with self.assertRaises(contracts.ContractError) as ctx:
+            contracts.read_review_provenance(self._raw(_provenance_section(claim)))
+        self.assertIn("model_seniority", str(ctx.exception))
+
+    def test_wrong_typed_and_partial_declarations_raise(self):
+        for key, value in (
+                ("format_version", "1"), ("format_version", 2),
+                ("format_version", True),
+                ("reviewed_commit", "abc1234"),
+                ("reviewed_commit", "D" * 40),
+                ("plan_sha256", _HEX.upper()),
+                ("plan_sha256", "short"),
+                ("input_hashes", {}),
+                ("input_hashes", [_HEX]),
+                ("input_hashes", {"/abs/decision.md": _HEX}),
+                ("input_hashes", {"../escape.md": _HEX}),
+                ("input_hashes", {"a.md": "not-a-hash"}),
+                ("boundary", "linux-bwrap-v1"),
+                ("boundary", {"profile": "linux-bwrap-v1"}),
+                ("boundary", dict(_valid_provenance()["boundary"],
+                                  enforced="yes")),
+                ("runs", []),
+                ("runs", [{"run_id": "a"}]),
+                ("runs", [dict(_valid_provenance()["runs"][0], kind="smoke")]),
+                ("runs", [dict(_valid_provenance()["runs"][0], argv="pytest")]),
+                ("runs", [dict(_valid_provenance()["runs"][0],
+                               exit_code=True)]),
+                ("probe_changes", "src/app.py"),
+                ("probe_changes", [{"path": "/abs/src/app.py"}]),
+                ("probe_changes", [{"path": "src/app.py",
+                                    "before_sha256": _HEX}]),
+                ("residual_changes", ["src/app.py"]),
+                ("residual_changes", {"modified": [], "added": []}),
+                ("residual_changes", {"modified": "src/app.py", "added": [],
+                                      "removed": []}),
+                ("limits", []),
+                ("limits", [""]),
+                ("limits", "only one limit")):
+            with self.subTest(key=key, value=repr(value)[:40]):
+                claim = _valid_provenance()
+                claim[key] = value
+                with self.assertRaises(contracts.ContractError) as ctx:
+                    contracts.read_review_provenance(self._raw(
+                        _provenance_section(claim)))
+                self.assertIn(key, str(ctx.exception))
+
+    def test_a_restored_probe_edit_is_a_legal_declaration(self):
+        claim = _valid_provenance()
+        claim["probe_changes"] = [{"path": "src/app.py", "before_sha256": _HEX,
+                                   "after_sha256": _HEX, "deleted": False}]
+        claim["residual_changes"] = {"modified": [], "added": [], "removed": []}
+        self.assertEqual(contracts.read_review_provenance(
+            self._raw(_provenance_section(claim))), claim)
 
 
 class MutateVersionGuardTest(V2CLITestCase):
