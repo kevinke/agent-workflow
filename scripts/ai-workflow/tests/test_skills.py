@@ -8,13 +8,16 @@ agents to call the CLI, never to hand-edit `state.yaml` state-machine fields
 
 import contextlib
 import io
+import json
 import os
+import re
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import contracts  # noqa: E402
 import main  # noqa: E402
 import skills  # noqa: E402
 
@@ -34,6 +37,9 @@ BANNED = [
 
 # Instructions that make the *reviewer* write or commit a live record — the exact
 # gap HARDEN-011 closes, so they must not survive in the reviewer entry point.
+# Compared case-insensitively: an instruction reworded with a capital first letter
+# ("Commit live records per PROTOCOL before stopping.") is the same defect, not a
+# new phrasing, so the ban has to catch it wherever it is capitalized.
 LIVE_WRITE_INSTRUCTIONS = [
     "Commit per",
     "Commits and rollback",
@@ -41,6 +47,11 @@ LIVE_WRITE_INSTRUCTIONS = [
     "Write `review.md`",
     "Write `handoff.md`",
     "commit live",
+    "Commit live records",
+    "commit the live",
+    "commit your live",
+    "write the live record",
+    "writes the live record",
 ]
 
 # Limit statements that HARDEN-011 forbids softening. Compared on normalized
@@ -57,6 +68,91 @@ PROTOCOL_LIMITS = [
     "isolation claims for them.",
 ]
 
+# The two honest limits of the published mechanism, pinned as written. Losing one,
+# or replacing it with a friendlier promise, is the rot this pins against.
+HONEST_LIMITS = [
+    "A publication consumes its context. `state.yaml` and `handoff.md` are "
+    "captured inputs, so the currentness check refuses a second publication from "
+    "one prepared context: each verdict needs a fresh `prepare-review` run and a "
+    "fresh independent review of anything that changed.",
+    "Journal recovery is deliberately conservative. When an interrupted "
+    "transaction cannot hand its own bytes back, the context stays blocked and "
+    "there is no operator-facing command to clear it; discarding that context and "
+    "preparing a fresh snapshot is the only route, and nothing about that refusal "
+    "publishes a verdict.",
+]
+
+# No operator-facing command clears a journal-blocked context, so no document may
+# name one either.
+INVENTED_RECOVERY_COMMANDS = [
+    "unblock",
+    "unblock-review-context",
+    "recover-review-context",
+    "clear-review-context",
+    "reset-review-context",
+    "force-publication",
+]
+
+# adapters/codex/windows.md, pinned both ways: the session stays unsupported, and
+# the boundary's actual availability on this host is never presented as a blocker.
+WINDOWS_VERDICTS = [
+    "Isolated review support for this adapter's sessions: not established",
+    "**native Windows sessions and Codex Desktop/MCP are unsupported for isolated "
+    "reviewer verification** until their actual host tool-write restriction is "
+    "separately demonstrated on the host and build in use.",
+    "never an automatic permission weakening, never a model-session retry, and "
+    "never a passing isolated verdict from a session that could not demonstrate "
+    "denial.",
+    "The profile this project has demonstrated is bubblewrap (`linux-bwrap-v1`) "
+    "inside WSL Ubuntu-24.04 driven by a **Windows** coordinator through "
+    "`wsl.exe --exec`",
+    "`ai-workflow run-review` invoked from native Windows Python on this machine "
+    "does reach an enforced boundary and does write the receipts a guarded "
+    "`set-review` validates against",
+    "the workflow commands never start at all: the session produces no "
+    "`meta/runs/` receipt, no `meta/preflight.json`, no candidate report and "
+    "nothing else publishable",
+    "The evidence for the supported route is "
+    "[../local-review.md](../local-review.md), which records that measurement — "
+    "that document, not this runbook, is the evidence source for support claims.",
+]
+
+# The refuted claim: `linux-bwrap-v1` is reachable from this Windows host through
+# WSL, so no document may predict a blocker here as this machine's practical case.
+WINDOWS_FALSE_CLAIMS = ["only provides inside WSL"]
+
+# .ai/workflow/ARTIFACTS.md: what publication actually compares, and what stays a
+# reviewer-authored claim. "In any field" overstates the first and hides the second.
+ARTIFACTS_RECEIPT_SCOPE = [
+    "publication refuses a provenance claim that disagrees with the persisted "
+    "receipt in every field the supervisor actually records — each cited run's "
+    "`kind`, `argv`, `exit_code`, `stdout_sha256`, `stderr_sha256`, "
+    "`snapshot_before` and `snapshot_after` plus its recorded `profile`, the "
+    "captured context, manifest and input identities, and the persisted boundary "
+    "evidence — together with the rule that no recorded receipt may go uncited.",
+    "Fields the receipts cannot corroborate stay reviewer-authored claims, and "
+    "publication checks their shape, never their truth: the `limits` list, the "
+    "inner commands a run's `argv` goes on to invoke, and a probe's "
+    "`before_sha256`/`after_sha256` (a receipt names the observed paths, not "
+    "per-path content hashes).",
+    "and `deleted` is true exactly when `after_sha256` is null",
+]
+
+ARTIFACTS_FALSE_CLAIMS = ["in any field"]
+
+# .ai/workflow/PROTOCOL.md: the Windows gap is scoped to a Windows-*native*
+# boundary. The demonstrated host is driven by a Windows coordinator, so "why
+# Windows is not [demonstrated]" would contradict the supported configuration.
+PROTOCOL_ADAPTER_SCOPE = [
+    "`adapters/local-review.md` records the host actually demonstrated (a Windows "
+    "coordinator driving `bwrap` through WSL) and `adapters/codex/windows.md` "
+    "records why no **Windows-native boundary** is",
+    "That is a claim about the session's restriction, not about the boundary's "
+    "availability",
+]
+
+PROTOCOL_FALSE_SCOPE = ["records why Windows is not"]
+
 ISOLATION_SECTION = 'Reviewer verification isolation and publication'
 
 
@@ -64,10 +160,47 @@ def _flat(text):
     return " ".join(text.split())
 
 
+def _sentences(text):
+    """Sentence-ish slices of flattened prose, for co-occurrence claims.
+
+    A claim is only contradicted by a *specific* sentence, so a check like "no
+    sentence says this host reports a blocker" needs the sentences, not the file.
+    """
+    return [part.strip() for part in re.split(r"(?<=[.;!])\s+", _flat(text))
+            if part.strip()]
+
+
 def _doc(*parts):
     path = os.path.join(_KIT_ROOT, *parts)
     with open(path, encoding="utf-8") as fh:
         return fh.read()
+
+
+def _template_provenance(template):
+    """The fenced JSON draft under the reserved heading of the shipped template.
+
+    Read from the template itself, so the test compares the document against
+    `contracts` rather than against a second hand-written key list.
+    """
+    marker = re.compile(r"^## %s\s*$" % re.escape(contracts.PROVENANCE_HEADING),
+                        re.M)
+    heading = marker.search(template)
+    if heading is None or len(marker.findall(template)) != 1:
+        raise AssertionError(
+            "the template must reserve exactly one %r heading, found %d"
+            % (contracts.PROVENANCE_HEADING, len(marker.findall(template))))
+    tail = template[heading.end():]
+    following = re.search(r"^## ", tail, re.M)
+    if following is not None:
+        tail = tail[:following.start()]
+    blocks = re.findall(r"^```json\n(.*?)\n```", tail, re.S | re.M)
+    if len(blocks) != 1:
+        raise AssertionError("the reserved section holds %d fenced json blocks, "
+                             "expected 1" % len(blocks))
+    claim = json.loads(blocks[0])
+    if not isinstance(claim, dict):
+        raise AssertionError("the template provenance is not a JSON map")
+    return claim
 
 
 class SkillsLintTest(unittest.TestCase):
@@ -155,7 +288,7 @@ class SkillsLintTest(unittest.TestCase):
             self.assertIn(needle, text,
                           "the reviewer skill never names %r" % needle)
         for phrase in LIVE_WRITE_INSTRUCTIONS:
-            self.assertNotIn(phrase, text,
+            self.assertNotIn(phrase.lower(), text.lower(),
                              "the reviewer skill still instructs %r" % phrase)
         for line in text.splitlines():
             if "set-review" in line and "--verdict" in line:
@@ -210,6 +343,17 @@ class SkillsLintTest(unittest.TestCase):
                        "linux-bwrap-v1", "blocker"):
             self.assertIn(needle, protocol,
                           "PROTOCOL.md never names %r" % needle)
+        # The adapter pointer must scope the undemonstrated thing precisely: a
+        # Windows-*native* boundary, not Windows itself, whose coordinator is the
+        # one the supported profile is demonstrated on.
+        for sentence in PROTOCOL_ADAPTER_SCOPE:
+            self.assertIn(_flat(sentence), protocol,
+                          "PROTOCOL.md lost the adapter scope sentence: %r"
+                          % sentence)
+        for claim in PROTOCOL_FALSE_SCOPE:
+            self.assertNotIn(claim, protocol,
+                             "PROTOCOL.md again writes off the whole of Windows, "
+                             "which is the supported coordinator: %r" % claim)
 
         artifacts = _flat(_doc(".ai", "workflow", "ARTIFACTS.md"))
         self.assertNotIn("pending HARDEN-011", artifacts,
@@ -232,6 +376,183 @@ class SkillsLintTest(unittest.TestCase):
         for needle in ("linux-bwrap-v1", "EROFS", "ENETUNREACH", "unsupported"):
             self.assertIn(needle, local,
                           "the local adapter doc never records %r" % needle)
+
+
+    def test_honest_limits_stay_stated_and_no_recovery_is_invented(self):
+        """The two published-mechanism limits are pinned where agents read them.
+
+        HARDEN-011's honest limits are that a publication *consumes* its prepared
+        context (one verdict per context, because `state.yaml` and `handoff.md` are
+        captured inputs) and that a journal-blocked context has **no**
+        operator-facing unblock command. A friendlier sentence — or an invented
+        `unblock`/`recover` command — sends an agent to re-publish from a consumed
+        context, which is the failure these documents exist to prevent.
+        """
+        protocol = _flat(_doc(".ai", "workflow", "PROTOCOL.md"))
+        for sentence in HONEST_LIMITS:
+            self.assertIn(_flat(sentence), protocol,
+                          "PROTOCOL.md dropped or reworded an honest limit: %r"
+                          % sentence)
+        self.assertIn("Two limits of the published mechanism stay stated rather "
+                      "than implied away", protocol)
+
+        reviewer = _flat(self._text("reviewer"))
+        self.assertIn("a prepared context publishes at most one verdict", reviewer,
+                      "the reviewer skill no longer says a context is consumed by "
+                      "one verdict")
+        handoff = _flat(self._text("checkpoint-handoff"))
+        self.assertIn("never a re-used context", handoff,
+                      "the checkpoint-handoff skill offers a re-used context")
+        local = _flat(_doc("adapters", "local-review.md"))
+        self.assertIn("A publication consumes its context: each verdict needs its "
+                      "own prepared context.", local,
+                      "the supported adapter no longer says a context is consumed")
+        self.assertIn("There is **no operator-facing command to clear a "
+                      "journal-blocked context**", local,
+                      "the supported adapter promises an unblock route")
+        self.assertIn("publication consumes its context — one verdict per prepared "
+                      "context", _flat(main.USAGE),
+                      "the CLI usage no longer says a context is consumed")
+
+        surface = [("PROTOCOL.md", _doc(".ai", "workflow", "PROTOCOL.md")),
+                   ("ROLES.md", _doc(".ai", "workflow", "ROLES.md")),
+                   ("ARTIFACTS.md", _doc(".ai", "workflow", "ARTIFACTS.md")),
+                   ("local-review.md", _doc("adapters", "local-review.md")),
+                   ("windows.md", _doc("adapters", "codex", "windows.md")),
+                   ("README.md", _doc("README.md")),
+                   ("reviewer skill", self._text("reviewer")),
+                   ("checkpoint-handoff skill", self._text("checkpoint-handoff")),
+                   ("CLI usage", main.USAGE)]
+        for label, text in surface:
+            for command in INVENTED_RECOVERY_COMMANDS:
+                self.assertNotIn(command, text.lower(),
+                                 "%s offers the non-existent command %r; a "
+                                 "journal-blocked context has no unblock route"
+                                 % (label, command))
+
+    def test_shipped_template_provenance_matches_the_contract(self):
+        """The draft the kit ships satisfies the validator it is filled into.
+
+        The key sets come from `contracts` and the values from the template's own
+        fenced block, so a key renamed or dropped on either side breaks this test,
+        and so does a draft example that violates the deletion-pairing rule.
+        """
+        template = _doc(".ai", "workflow", "templates", "review.md")
+        claim = _template_provenance(template)
+        self.assertEqual(set(claim), set(contracts.PROVENANCE_KEYS),
+                         "the template's reserved section and contracts.py no "
+                         "longer agree on the provenance keys")
+        self.assertTrue(claim["runs"], "the template ships no run example")
+        for run in claim["runs"]:
+            self.assertEqual(set(run), set(contracts.PROVENANCE_RUN_KEYS),
+                             "the template's run example and contracts.py no "
+                             "longer agree on the run keys")
+        self.assertEqual(set(claim["boundary"]),
+                         set(contracts.PROVENANCE_BOUNDARY_KEYS),
+                         "the template's boundary example and contracts.py no "
+                         "longer agree on the boundary keys")
+        self.assertTrue(claim["probe_changes"],
+                        "the template ships no probe_changes example")
+        for change in claim["probe_changes"]:
+            self.assertEqual(set(change), set(contracts.PROVENANCE_PROBE_KEYS),
+                             "the template's probe example and contracts.py no "
+                             "longer agree on the probe keys")
+            # contracts.py refuses a report whose `deleted` disagrees with
+            # after_sha256 being null: a draft copied from the template must not
+            # be refused for the shape of the shipped example itself.
+            self.assertEqual(
+                change["deleted"], change["after_sha256"] is None,
+                "the template's probe_changes example is not a legal pair: a "
+                "path is deleted only when after_sha256 is null (%r)" % (change,))
+        self.assertEqual(set(claim["residual_changes"]),
+                         set(contracts.PROVENANCE_RESIDUAL_KEYS),
+                         "the template's residual example and contracts.py no "
+                         "longer agree on the residual keys")
+
+        # An example is not evidence: every identity slot keeps its draft marker
+        # and no real-looking hash ships in the file.
+        for key in ("reviewed_commit", "context_sha256", "live_manifest_sha256",
+                    "snapshot_manifest_sha256", "plan_sha256"):
+            self.assertIn("draft", claim[key],
+                          "template key %r stopped being a marked placeholder"
+                          % key)
+        for key in ("preflight_sha256",):
+            self.assertIn("draft", claim["boundary"][key],
+                          "template key %r stopped being a marked placeholder"
+                          % key)
+        for run in claim["runs"]:
+            for key in ("run_id", "argv", "stdout_sha256", "stderr_sha256",
+                        "snapshot_before", "snapshot_after"):
+                self.assertIn("draft", json.dumps(run[key]),
+                              "template run key %r stopped being a marked "
+                              "placeholder" % key)
+        for change in claim["probe_changes"]:
+            self.assertIn("draft", change["path"],
+                          "the template's probe path stopped being a marked "
+                          "placeholder")
+            for key in ("before_sha256", "after_sha256"):
+                value = change[key]
+                self.assertTrue(value is None or "draft" in value,
+                                "template probe key %r stopped being a marked "
+                                "placeholder" % key)
+        self.assertNotRegex(
+            template, r"[0-9a-f]{64}",
+            "the shipped template carries a full SHA-256: a draft must never "
+            "look like a receipt")
+
+    def test_windows_adapter_keeps_the_verdict_without_a_fabricated_blocker(
+            self):
+        """windows.md stays unsupported for its sessions and true about this host.
+
+        Pinned both ways: the file must keep saying the native Windows / Codex
+        session is unsupported, and it must not claim that `run-review` reports a
+        blocker on a host whose WSL does provide `bwrap`. The second half matters
+        as much as the first — a false "this machine is blocked" sentence routes an
+        agent away from the one verification route that works here.
+        """
+        windows = _doc("adapters", "codex", "windows.md")
+        flat = _flat(windows)
+        for sentence in WINDOWS_VERDICTS:
+            self.assertIn(_flat(sentence), flat,
+                          "windows.md lost its verdict or its measured scope: "
+                          "%r" % sentence)
+        self.assertIn("CreateProcess", windows,
+                      "the observed Windows launch diagnostics were laundered away")
+        for claim in WINDOWS_FALSE_CLAIMS:
+            self.assertNotIn(claim, flat,
+                             "windows.md re-asserts the refuted claim %r" % claim)
+        for sentence in _sentences(windows):
+            lower = sentence.lower()
+            self.assertFalse(
+                ("named blocker" in lower and
+                 ("this machine" in lower or "this host" in lower)),
+                "windows.md predicts a blocker for this machine, which its own "
+                "evidence contradicts: %r" % sentence)
+
+    def test_artifacts_keeps_the_checked_versus_claimed_distinction(self):
+        """ARTIFACTS.md states what receipts corroborate and what they cannot.
+
+        The validator compares the receipt fields `contracts`/`review_publication`
+        persist; `limits`, a run's inner commands and a probe's before/after hashes
+        stay reviewer-authored claims. Inflating that back to "any field" turns a
+        documented limit into a support claim, so both halves are pinned.
+        """
+        artifacts = _flat(_doc(".ai", "workflow", "ARTIFACTS.md"))
+        for sentence in ARTIFACTS_RECEIPT_SCOPE:
+            self.assertIn(_flat(sentence), artifacts,
+                          "ARTIFACTS.md lost the receipt-scope statement: %r"
+                          % sentence)
+        for claim in ARTIFACTS_FALSE_CLAIMS:
+            self.assertNotIn(claim, artifacts,
+                             "ARTIFACTS.md re-inflated the publication check to "
+                             "%r: the receipts cannot corroborate every claimed "
+                             "field" % claim)
+        for sentence in _sentences(_doc(".ai", "workflow", "ARTIFACTS.md")):
+            lower = sentence.lower()
+            self.assertFalse(
+                "before_sha256" in lower and "disagrees with the persisted" in lower,
+                "ARTIFACTS.md now presents a probe's content hashes as "
+                "receipt-corroborated: %r" % sentence)
 
 
 if __name__ == "__main__":
