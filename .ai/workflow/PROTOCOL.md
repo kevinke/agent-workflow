@@ -89,7 +89,7 @@ When the State marks the repo as adopted (`migration.adopted_existing_repo`), th
 
 ### Review and completion (workflow_version 2)
 
-On a `workflow_version: 2` Ticket the Reviewer owns the Review in an independent context (senior default): it reads `decision.md` and the registered Plan, independently verifies the acceptance criteria against the actual change and the recorded verification results, writes `review.md` (see ARTIFACTS.md), and records the verdict with `set-review`. The Review Metadata `reviewed_commit` is a literal hexadecimal Git object ID (full, or an unambiguous abbreviation of at least seven hex digits) resolving to an ancestor of HEAD; HEAD, branch and tag names are rejected even when they resolve, and `set-review` stores the full resolved commit ID once — for `pass` and `changes_requested` alike — so the verdict is bound to the immutable change that was actually reviewed. A mechanical checkpoint-handoff alone cannot supply the technical verdict, so in `review` the route is `reviewer`, not `checkpoint-handoff`.
+On a `workflow_version: 2` Ticket the Reviewer owns the Review in an independent context (senior default): it reads `decision.md` and the registered Plan, independently verifies the acceptance criteria against the actual change and the recorded verification results **inside a prepared isolated snapshot** (section 9, §"Reviewer verification isolation and publication"), authors `review.md` as its own candidate report under that snapshot's scratch area (see ARTIFACTS.md), and has the verdict published by the guarded `set-review`; it writes no live record and performs no live commit. The Review Metadata `reviewed_commit` is a literal hexadecimal Git object ID (full, or an unambiguous abbreviation of at least seven hex digits) resolving to an ancestor of HEAD; HEAD, branch and tag names are rejected even when they resolve, and `set-review` stores the full resolved commit ID once — for `pass` and `changes_requested` alike — so the verdict is bound to the immutable change that was actually reviewed. A mechanical checkpoint-handoff alone cannot supply the technical verdict, so in `review` the route is `reviewer`, not `checkpoint-handoff`.
 
 Completion is gated:
 
@@ -159,9 +159,64 @@ A mismatch requires a fresh snapshot and new independent review.
 The index-drift and exact Ticket-record exemptions still apply. Review
 provenance cannot prove acceptance or reconstruct past transient writes.
 Historical reviews keep their original binding semantics; do not fabricate
-isolation claims for them. This is the required procedure; current `set-review`
-alone does not implement snapshot preparation, permission enforcement or
-guarded report publication. Those mechanisms are pending HARDEN-011.
+isolation claims for them. This is the required procedure, and the public
+commands below are what carry it: an ordinary `set-review` on its own performs
+no snapshot preparation and no permission enforcement, and it refuses a Review
+that carries the reserved provenance section without the guarded options.
+
+#### The commands that carry this procedure
+
+```
+ai-workflow prepare-review <ticket-id> --commit <literal-oid> --output <new-directory>
+ai-workflow run-review <ticket-id> --review-context <dir> --kind baseline|probe -- <argv...>
+ai-workflow set-review <ticket-id> --verdict <pass|changes_requested> \
+    --review-context <dir> --report <candidate-review.md> --handoff <candidate-handoff.md>
+```
+
+- `prepare-review` creates a previously absent output directory outside the live
+  worktree and Git metadata: an independent clone of the literal reviewed commit,
+  raw-byte copies of the registered Plan and of every captured verification
+  input, and the supervisor manifest (`meta/context.json`) pinning the separate
+  live and snapshot content identities. A failure leaves no partial context and
+  changes no live file.
+- `run-review` is how a reviewer's command actually executes on the supported
+  profile. It runs one verifier command under the enforced `linux-bwrap-v1`
+  boundary — `/snapshot` and `/scratch` writable, no live path and no supervisor
+  `meta/` mounted at all, a cleared environment, no network, no host sockets —
+  captures stdout/stderr, records the command's own exit status plus the residual
+  snapshot changes as a supervisor receipt, and exits with that status.
+  `--kind baseline` runs are the independent acceptance runs; the first accepted
+  baseline is pinned to the prepared snapshot identity, so a probe edit can never
+  promote itself into the baseline. `--kind probe` records the declared
+  snapshot-relative edits, which stay in the receipt whether or not the reviewer
+  restores them. A boundary blocker exits 1 and never falls back to an
+  unconstrained run; an unsupported host reports a named blocker instead of
+  support. `adapters/local-review.md` records the host actually demonstrated and
+  `adapters/codex/windows.md` records why Windows is not.
+- Guarded `set-review` publishes, it does not judge: `--review-context`,
+  `--report` and `--handoff` are required together, the report and handoff are
+  the reviewer's own candidate bytes written under that context's `scratch/`, and
+  the command re-reads the live code, Plan and inputs against the prepared
+  manifest before writing. It writes only this Ticket's Review, State and Handoff
+  through one journal-guarded transaction; a refusal changes no live record and no
+  phase, and every hash pointer it publishes is the reviewer's exact bytes.
+
+Two limits of the published mechanism stay stated rather than implied away:
+
+- A publication consumes its context. `state.yaml` and `handoff.md` are captured
+  inputs, so the currentness check refuses a second publication from one prepared
+  context: each verdict needs a fresh `prepare-review` run and a fresh
+  independent review of anything that changed.
+- Journal recovery is deliberately conservative. When an interrupted transaction
+  cannot hand its own bytes back, the context stays blocked and there is no
+  operator-facing command to clear it; discarding that context and preparing a
+  fresh snapshot is the only route, and nothing about that refusal publishes a
+  verdict.
+
+The reviewer therefore writes nothing live and performs no live commit.
+Publication writes Review, State and Handoff through the public command; the
+phase-boundary commit in §"Commits and rollback" belongs to checkpoint-handoff
+afterwards, never to the reviewer.
 
 ### Portable continuation
 

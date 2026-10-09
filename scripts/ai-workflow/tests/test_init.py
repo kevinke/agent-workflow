@@ -142,6 +142,49 @@ class InitTest(unittest.TestCase):
         self.assertNotIn("old block", text)
         self.assertEqual(_count_marker(text, init.BEGIN_MARKER), 1)
 
+    # -- HARDEN-011: customized installed instruction files survive re-init ---
+
+    def test_shipped_review_template_carries_the_draft_provenance_placeholder(self):
+        # A new isolated Review records the reserved provenance section; the
+        # shipped scaffold must read as a clearly-marked draft, because a
+        # placeholder is not receipts and structural validity is not evidence.
+        init.init(self.target)
+        path = os.path.join(self.target, ".ai", "workflow", "templates",
+                            "review.md")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("Isolation provenance", text)
+        self.assertIn("draft", text.lower())
+        self.assertIn("receipt", text.lower(),
+                      "the placeholder never says the section is filled from "
+                      "supervisor receipts")
+        self.assertIn("ARTIFACTS.md", text,
+                      "the template does not point at the contract that owns the "
+                      "provenance keys")
+
+    def test_customized_installed_files_survive_repeated_init(self):
+        # The installer never overwrites an installed protocol, ROLES or template:
+        # a target's local edits to the reviewer routing must not be undone by a
+        # repeat `init` (and `init` adds no overwrite path for them).
+        init.init(self.target)
+        paths = [os.path.join(self.target, ".ai", "workflow", name)
+                 for name in ("PROTOCOL.md", "ROLES.md", "ARTIFACTS.md")]
+        paths.append(os.path.join(self.target, ".ai", "workflow", "templates",
+                                 "review.md"))
+        for path in paths:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("\n<!-- repo-local customization -->\n")
+        customized = {}
+        for path in paths:
+            with open(path, "rb") as fh:
+                customized[path] = fh.read()
+        for _ in range(2):
+            self.assertEqual(init.init(self.target), [])
+        for path in paths:
+            with open(path, "rb") as fh:
+                self.assertEqual(fh.read(), customized[path],
+                                 "a repeated init overwrote %s" % path)
+
 
 if __name__ == "__main__":
     unittest.main()

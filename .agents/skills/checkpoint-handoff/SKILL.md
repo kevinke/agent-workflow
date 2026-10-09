@@ -22,21 +22,34 @@ Phase transitions and handoff (see `.ai/workflow/ROLES.md`). Any model tier.
    findings. Record any WARN findings in handoff.md.
 5. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
-6. Perform the transition:
+6. When a `review` Ticket's verdict must be published, coordinate the guarded
+   publication and nothing else: the reviewer's candidate report and handoff live
+   in the prepared review context's scratch area, and the publisher runs
+   `ai-workflow set-review <ticket-id> --verdict <pass|changes_requested> --review-context <dir> --report <candidate-review.md> --handoff <candidate-handoff.md>`
+   (PROTOCOL.md §"Reviewer verification isolation and publication"; the report's
+   reserved provenance section is defined in `.ai/workflow/ARTIFACTS.md`).
+   Publication authors no verdict, repairs no source and performs no phase
+   transition during publication; if it refuses, the review is stale — a fresh
+   snapshot and a new independent review are required, never a hand-edited record
+   and never a re-used context.
+7. Perform the transition:
    `ai-workflow advance <ticket-id> --to <destination>`.
    The command enforces the allowed transition and its gates (PROTOCOL.md
    §"Phases and statuses", §"Review and completion"). If it rejects the
    transition, the state is not ready — do not force it; fix the blocker or
    escalate.
-7. Clear `escalation.required` only when a senior resolved it per
+8. Clear `escalation.required` only when a senior resolved it per
    `.ai/workflow/ESCALATION.md`:
    `ai-workflow escalate <ticket-id> --clear --resolution "<what was resolved
    and its supporting references>"`.
    (A v1 ticket keeps the bare `ai-workflow escalate <ticket-id> --clear`.)
-8. Write `handoff.md` per the contract in `.ai/workflow/ARTIFACTS.md` — the
+9. Write `handoff.md` per the contract in `.ai/workflow/ARTIFACTS.md` — the
    fixed sections plus the Repository State block, as that contract defines
    them. No unverified claims.
-9. Commit per PROTOCOL.md §"Commits and rollback" (phase-boundary commit).
+10. Commit per PROTOCOL.md §"Commits and rollback" (phase-boundary commit). The
+    reviewer never commits: this phase-boundary commit belongs to this role, and
+    it happens only after publication wrote the records through the public
+    command above.
 
 ## Continuing across sessions
 

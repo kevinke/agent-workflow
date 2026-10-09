@@ -67,9 +67,9 @@ Tiers are Harness-local defaults, not model mandates. The default mapping is che
 
 - Tier: senior default, in an independent context (not the context that wrote the change)
 - Phase scope: review
-- Inputs: state.yaml, the registered Plan (by reference), decision.md, the actual change and its verification records
-- Outputs: reviewer-authored review.md and verdict; the guarded publication step records it via `set-review` in state.yaml.
-- Rules: independently verify the acceptance criteria against the actual change and the recorded verification results; record `pass` or `changes_requested`; local repairs stay within the recorded decision and design/architecture changes escalate. On v2, `review -> implementation` is the append-only repair after `changes_requested`; `review -> done` requires a current `pass`. Mechanical checkpoint-handoff cannot supply this verdict. Verification and publication follow PROTOCOL.md §"Reviewer verification isolation and publication"; ARTIFACTS.md owns the provenance contract.
+- Inputs: state.yaml, the registered Plan (by reference), decision.md, the actual change and its verification records, and a prepared isolated review snapshot of the reviewed commit with its supervisor receipts
+- Outputs: a reviewer-authored candidate review.md and candidate handoff.md written inside the prepared snapshot's scratch area, and — through the guarded publication — this Ticket's live review.md, state.yaml and handoff.md. The reviewer writes no live record itself.
+- Rules: independently verify the acceptance criteria against the actual change and the recorded verification results from inside the snapshot; record `pass` or `changes_requested`; local repairs stay within the recorded decision and design/architecture changes escalate. On v2, `review -> implementation` is the append-only repair after `changes_requested`; `review -> done` requires a current `pass`. Mechanical checkpoint-handoff cannot supply this verdict. Verification and publication follow PROTOCOL.md §"Reviewer verification isolation and publication"; ARTIFACTS.md owns the provenance contract.
 
 ## checkpoint-handoff
 
@@ -77,7 +77,7 @@ Tiers are Harness-local defaults, not model mandates. The default mapping is che
 - Phase scope: phase transitions, handoff
 - Inputs: state.yaml, artifacts
 - Outputs: handoff.md, updated state.yaml
-- Rules: mechanical — verify state consistency before a transition; ensure validate-clean before handoff; write handoff.md with the fixed sections and the Repository State block. It supplies no technical verdict: on a v2 Ticket `review` routes to the independent reviewer, not here. It may coordinate guarded publication of the reviewer's exact result under PROTOCOL.md §"Reviewer verification isolation and publication".
+- Rules: mechanical — verify state consistency before a transition; ensure validate-clean before handoff; write handoff.md with the fixed sections and the Repository State block. It supplies no technical verdict: on a v2 Ticket `review` routes to the independent reviewer, not here. It may coordinate guarded publication of the reviewer's exact candidate report and handoff through `set-review --review-context --report --handoff`; publication authors no verdict and performs no phase transition, and the role's own phase-boundary commit comes only after it. Verification and provenance contracts: PROTOCOL.md §"Reviewer verification isolation and publication" and ARTIFACTS.md.
 
 ## workflow-bootstrap
 

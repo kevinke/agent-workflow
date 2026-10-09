@@ -72,7 +72,15 @@ commands:
   complete-task <ticket-id> [--total N]  mark one implementation task done
   register-plan <ticket-id> --path P --total N  register a referenced Plan (v2)
   set-gate <ticket-id> --gate G [--round N]  record evidence verdict (G: sufficient|insufficient)
-  set-review <ticket-id> --verdict V  record a Review verdict (V: pass|changes_requested)
+  set-review <ticket-id> --verdict V [--review-context <dir> --report <candidate-review.md> --handoff <candidate-handoff.md>]
+                      record a Review verdict (V: pass|changes_requested). The
+                      three guarded options publish the reviewer's candidate
+                      report and handoff after re-checking the prepared review
+                      context (PROTOCOL.md §"Reviewer verification isolation and
+                      publication"); a Review carrying the reserved isolation
+                      provenance section is refused without them, and a
+                      publication consumes its context — one verdict per prepared
+                      context.
   prepare-review <ticket-id> --commit <literal-oid> --output <new-directory>
                       prepare an identified independent review snapshot
                       (independent clone + raw-byte Plan/input copies +

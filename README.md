@@ -114,7 +114,9 @@ ai-workflow escalate TICKET-001 --clear --resolution "当前阶段契约已重�
 | `complete-task <ticket> [--total N]` | 实现阶段完成任务计数 |
 | `register-plan <ticket> --path P --total N` | 注册引用的执行 Plan（v2，绑定 Plan 字节哈希与各任务哈希） |
 | `set-gate <ticket> --gate G [--round N]` | 记录证据审计结论 |
-| `set-review <ticket> --verdict V` | 记录 Reviewer 结论（v2：pass / changes_requested） |
+| `prepare-review <ticket> --commit <literal-oid> --output <new-dir>` | 为隔离 review 准备可丢弃快照：独立 clone（Git 元数据与 live 分离）+ 注册 Plan/校验输入的原始字节副本 + 监督者清单 `meta/context.json`（分别固定 live 与 snapshot 身份）；失败不留半成品，也不碰 live 文件 |
+| `run-review <ticket> --review-context <dir> --kind baseline\|probe -- <argv…>` | 在受强制的 `linux-bwrap-v1` 边界内运行验证命令并写监督者回执（捕获 stdout/stderr、记录命令自身退出码与 snapshot 残留改动）。`baseline` 是验收入口运行、`probe` 是声明式 snapshot 内改动；边界阻塞器退出 1，绝不回退为无约束运行 |
+| `set-review <ticket> --verdict V [--review-context <dir> --report <candidate-review.md> --handoff <candidate-handoff.md>]` | 记录 Reviewer 结论（v2：pass / changes_requested）。带保留 `## Isolation provenance` 段的隔离报告只能经这三个守卫选项发布：发布前重新核对 live 基线，只写本 Ticket 的 Review/State/Handoff，不给出结论也不做阶段转移；一旦发布即消耗该 context（每个结论需重新 prepare）。无守卫形式的普通用法保持历史 binding 行为 |
 | `escalate <ticket> --scope S --reason "..." \| --clear` | 设置/清除升级 |
 | `set-status <ticket> --status S` | 设置横向状态（blocked/paused/abandoned…） |
 | `resume <ticket>` | 只读续接简报（有 ERROR 阻断时退出 1） |
@@ -131,9 +133,10 @@ ai-workflow escalate TICKET-001 --clear --resolution "当前阶段契约已重�
 
 - **本套件是什么 / 怎么设计**：[docs/specs/agent-workflow-protocol.md](docs/specs/agent-workflow-protocol.md)
 - **安装到目标仓库的协议正文**：`.ai/workflow/`（PROTOCOL / STATE_SCHEMA / ARTIFACTS / ROLES / ESCALATION / MIGRATION）
-- **Windows 上的 Codex 启动诊断**：[adapters/codex/windows.md](adapters/codex/windows.md)（策略拒绝 ≠ 模型结论；只读诊断与停止条件）
+- **Windows 上的 Codex 启动诊断**：[adapters/codex/windows.md](adapters/codex/windows.md)（策略拒绝 ≠ 模型结论；只读诊断与停止条件；这些观察**不构成**任何写限制证明，因此 Windows 与 Codex Desktop/MCP 会话的隔离 review 仍不支持）
+- **本地隔离 review 边界**：[adapters/local-review.md](adapters/local-review.md)（`linux-bwrap-v1` 实测挂载表、EROFS/EXDEV/ENETUNREACH 拒绝证据与诚实限制）
 - **决策记录**：[docs/adr/](docs/adr/)（仓库原生协议、受限 YAML、纯 stdlib CLI）
 - **领域术语**：[CONTEXT.md](CONTEXT.md)
 - **开发约定**：[docs/agents/](docs/agents/)（domain / issue-tracker）
 - **票据**：`.scratch/<feature>/issues/`
-- **测试**：`scripts/ai-workflow/tests/`（400 个用例，含端到端 dogfood 与完整安装生命周期）
+- **测试**：`scripts/ai-workflow/tests/`（473 个用例，含端到端 dogfood、完整安装生命周期与隔离 review 安装生命周期）

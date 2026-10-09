@@ -25,13 +25,18 @@ Everything is driven through the real CLI (`self.cli`).
 import hashlib
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import contracts       # noqa: E402
 import state           # noqa: E402
 import workflow_v2     # noqa: E402
+# Imported as a module (never subclassed here) so the Task 3 fixture below is
+# the committed one rather than a copy that can drift from it.
+import test_review_publication  # noqa: E402
 from v2_support import (V2CLITestCase, install_v1_templates,  # noqa: E402
                         valid_audit, valid_evidence, valid_handoff,
                         valid_plan)
@@ -649,6 +654,226 @@ class LateBootstrapRecoveryTest(V2CLITestCase):
         stale = self.cli("validate", ticket)
         self.assertEqual(stale.returncode, 1, stale.stdout + stale.stderr)
         self.assertIn("route corruption", stale.stdout)
+
+
+class InstalledIsolatedReviewLifecycleTest(V2CLITestCase):
+    """HARDEN-011 Task 4: an installed target reviews and publishes isolatedly.
+
+    One lifecycle over the real installed kit: `init` + `install-skills` into a
+    temporary target, `prepare-review` for the snapshot, the Task 2 host boundary
+    for the baseline and probe runs, guarded
+    `set-review --review-context --report --handoff` for BOTH verdicts, then the
+    ordinary currentness/continuation consumers (`validate`, `resume`,
+    `advance --to done`, the append-only repair).
+
+    A publication consumes its context — `state.yaml` and `handoff.md` are
+    captured inputs — so each verdict is prepared and published from its own
+    fresh context; the refusal of a second publication from one context is
+    asserted here rather than assumed.
+
+    The supervisor-evidence and candidate-report fixture is *borrowed* by method
+    alias from the committed Task 3 suite, so the installed lifecycle cannot test
+    a different fixture from the unit test. Which route produced the evidence is
+    recorded in `self.evidence_source`: real `linux-bwrap-v1` runs where this host
+    enforces them, otherwise the Task 3 fixture supervisor writing the same
+    records for commands that really ran. Neither route is a support claim for the
+    executing host; `adapters/local-review.md` owns what is supported.
+    """
+
+    _PUB = test_review_publication.ReviewPublicationTest
+
+    # borrowed fixture (Task 3): snapshot preparation, boundary runs, receipts,
+    # candidate report/handoff, guarded CLI publication, live-record probes
+    _record_bytes = _PUB._record_bytes
+    _key = _PUB._key
+    _read_bytes = _PUB._read_bytes
+    _write_bytes = _PUB._write_bytes
+    _new_output = _PUB._new_output
+    _meta = _PUB._meta
+    _scratch = _PUB._scratch
+    _plan_sha = _PUB._plan_sha
+    _head = _PUB._head
+    _live = _PUB._live
+    _fixture = _PUB._fixture
+    _supervisor_evidence = _PUB._supervisor_evidence
+    _record_stand_in_evidence = _PUB._record_stand_in_evidence
+    _tree = _PUB._tree
+    _receipt_ids = _PUB._receipt_ids
+    _load_receipt = _PUB._load_receipt
+    _write_json = _PUB._write_json
+    _provenance = _PUB._provenance
+    _report_raw = _PUB._report_raw
+    _handoff_raw = _PUB._handoff_raw
+    _write_candidate = _PUB._write_candidate
+    _cli_guarded = _PUB._cli_guarded
+    _strays = _PUB._strays
+    _index_record = _PUB._index_record
+    _source_bytes = _PUB._source_bytes
+    _reset_fixture = _PUB._reset_fixture
+
+    def setUp(self):
+        super().setUp()
+        self._out_tmp = tempfile.TemporaryDirectory()
+        self._output_index = 0
+        self.output = None
+        self.context = None
+        self.receipts = []
+        self.evidence_source = None
+        self.reviewed = None
+        self.snapshot_before = {}
+
+    def tearDown(self):
+        self._out_tmp.cleanup()
+        super().tearDown()
+
+    def _installed(self, *parts):
+        path = os.path.join(self.root, *parts)
+        self.assertTrue(os.path.isfile(path), "%s is not installed" % path)
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    # -- 1. the installed instruction surface routes reviewers isolatedly -----
+
+    def _assert_installed_routing(self):
+        protocol = self._installed(".ai", "workflow", "PROTOCOL.md")
+        for needle in ("prepare-review", "run-review", "--review-context",
+                       "--report", "--handoff"):
+            self.assertIn(needle, protocol,
+                          "the installed protocol never names %r" % needle)
+        self.assertNotIn("pending HARDEN-011", protocol,
+                         "the installed protocol still calls the mechanism pending")
+        artifacts = self._installed(".ai", "workflow", "ARTIFACTS.md")
+        self.assertIn("prepare-review", artifacts)
+        self.assertNotIn("pending HARDEN-011", artifacts,
+                         "the provenance contract still calls enforcement pending")
+        skill = self._installed(".agents", "skills", "reviewer", "SKILL.md")
+        for needle in ("prepare-review", "run-review", "--review-context"):
+            self.assertIn(needle, skill,
+                          "the installed reviewer skill never names %r" % needle)
+        self.assertNotIn("Commits and rollback", skill,
+                         "the installed reviewer skill still sends the reviewer "
+                         "to the live commit procedure")
+        template = self._installed(".ai", "workflow", "templates", "review.md")
+        self.assertIn("Isolation provenance", template)
+        self.assertIn("draft", template.lower(),
+                      "the template provenance is not marked as a draft placeholder")
+
+    # -- 2. the published verdict, both ways ---------------------------------
+
+    def _publish(self, verdict):
+        """Prepare a fresh context, run the boundary, guarded-publish; return bytes."""
+        if self.context is None:
+            self._fixture(verdict=verdict)
+        else:
+            # A publication consumes its context, so a second verdict needs a
+            # second prepared context — never a re-used one.
+            self._reset_fixture(verdict)
+        self.assertEqual(sorted(item["kind"] for item in self.receipts),
+                         ["baseline", "probe"],
+                         "the boundary recorded no baseline/probe run")
+        self.assertIn(self.evidence_source.split(" ")[0],
+                      ("linux-bwrap-v1", "fixture"),
+                      "unknown evidence source %r" % self.evidence_source)
+        self.assertEqual(self.receipts[0]["exit_code"], 3,
+                         "the baseline run never actually failed, so this fixture "
+                         "proves nothing about a probe erasing it")
+        self.assertEqual(self.receipts[0]["kind"], "baseline")
+        records_before = self._record_bytes()
+        source_before = self._source_bytes()
+        index_before = self._index_record()
+        proc = self._cli_guarded(verdict)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        published = self._read_bytes(self._live("review.md"))
+        self.assertEqual(published, self._report_raw(verdict),
+                         "the live Review is not the reviewer's exact candidate bytes")
+        self.assertEqual(contracts.read_review_provenance(published),
+                         self._provenance(),
+                         "the published provenance is not the supervisor's receipts")
+        self.assertNotEqual(self._record_bytes(), records_before,
+                            "publication wrote no live record")
+        self.assertEqual(self._source_bytes(), source_before,
+                         "publication repaired live source")
+        self.assertEqual(self._index_record(), index_before,
+                         "publication moved the Git index")
+        self.assertEqual(self._strays(), [])
+        data = self.read_state()
+        self.assertEqual(data["review"]["verdict"], verdict)
+        self.assertEqual(data["phase"], "review")
+        self.assertEqual(data["workflow_version"], 2)
+        self.assertEqual(data["schema_version"], 1)
+        return published
+
+    def test_installed_isolated_review_lifecycle(self):
+        # -- installed target: protocol, template and role skills ------------
+        self.assertEqual(self.cli("install-skills").returncode, 0)
+        self._assert_installed_routing()
+        # A customized installed template survives a repeated `init`: the
+        # installer never overwrites it, and the routing edits are not undone by
+        # re-running init over the same target.
+        template_path = os.path.join(self.root, ".ai", "workflow", "templates",
+                                     "review.md")
+        with open(template_path, "a", encoding="utf-8") as fh:
+            fh.write("\n<!-- repo-local note -->\n")
+        customized = self._installed(".ai", "workflow", "templates", "review.md")
+        self.assertEqual(self.cli("init").returncode, 0)
+        self.assertEqual(self._installed(".ai", "workflow", "templates",
+                                         "review.md"), customized)
+
+        # -- changes_requested: published from its own context ---------------
+        self._publish("changes_requested")
+        # An ordinary unguarded `set-review` must refuse the marked report.
+        before = self._record_bytes()
+        proc = self.cli("set-review", self.TICKET, "--verdict",
+                        "changes_requested")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("--review-context", proc.stderr)
+        self.assertEqual(self._record_bytes(), before,
+                         "an unguarded set-review published an isolated report")
+        check = self.cli("validate", self.TICKET)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertNotIn("stale", check.stdout)
+        done = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        # Append-only repair keeps working after a guarded publication.
+        rel = self.write_plan(2)
+        self.assertEqual(self.cli("register-plan", self.TICKET, "--path", rel,
+                                  "--total", "2").returncode, 0)
+        proc = self.cli("advance", self.TICKET, "--to", "implementation")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.read_state()["review"]["verdict"], "pending")
+        brief = self.cli("resume", self.TICKET)
+        self.assertEqual(brief.returncode, 0, brief.stdout + brief.stderr)
+
+        # -- pass: a FRESH context, because a publication consumes its own ----
+        previous_output = self.output
+        self._publish("pass")
+        self.assertNotEqual(self.output, previous_output,
+                            "the second verdict reused the first verdict's context")
+        # The same context may not publish twice: proved, not assumed.
+        before = self._record_bytes()
+        again = self._cli_guarded("pass")
+        self.assertEqual(again.returncode, 1, again.stdout + again.stderr)
+        self.assertIn("changed since the review context was prepared",
+                      again.stderr)
+        self.assertEqual(self._record_bytes(), before,
+                         "the refused repeat publication rewrote a live record")
+        # -- currentness and continuation after publication ------------------
+        check = self.cli("validate", self.TICKET)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertNotIn("stale", check.stdout)
+        brief = self.cli("resume", self.TICKET)
+        self.assertEqual(brief.returncode, 0, brief.stdout + brief.stderr)
+        proc = self.cli("advance", self.TICKET, "--to", "done")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.read_state()["phase"], "done")
+        check = self.cli("validate", self.TICKET)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertIn("no ERROR findings", check.stdout)
+        # And the archive export still transports the guarded report's bytes.
+        export = os.path.join(self.root, "archive.zip")
+        proc = self.cli("archive-artifacts", self.TICKET, "--output", export)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(os.path.isfile(export))
 
 
 if __name__ == "__main__":

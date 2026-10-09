@@ -39,6 +39,45 @@ time). Other hosts and builds may differ. Nothing here claims the setting
 launches successfully anywhere else — success is established per host by the
 diagnostic below, never assumed.**
 
+## Isolated review support on this host: not established
+
+The diagnostics above are launch evidence only. They establish **no**
+write-restriction proof for isolated reviewer verification
+(`.ai/workflow/PROTOCOL.md` §"Reviewer verification isolation and publication"),
+and must not be read as establishing one:
+
+- Nothing in them denies a write to live source, tests, fixtures, configuration or
+  Git metadata. No protected sentinel was ever attempted against a Windows
+  session, so there is no denial record of any kind (no `EROFS`/`EACCES`/`EPERM`
+  observation, no unchanged-sentinel re-enumeration).
+- The pilot's read-only **session posture** is a harness policy setting, not the
+  per-run enforced boundary the protocol requires: it was never shown to keep a
+  verifier process from writing the live tree, it does not separate snapshot from
+  live mounts, and it clears nothing about inherited environment, Git overrides,
+  descriptors or network reachability.
+- `-c windows.sandbox="unelevated"` changed the Windows sandbox **execution mode**
+  so the sandbox could launch. It was never measured against live writes, and a
+  launch that works is not a restriction that holds.
+- A passing helper or mock test on Windows is a test, not a host restriction; the
+  protocol says a restriction the unrestricted verifier can undo is not evidence,
+  and the same applies to one a test suite asserts on the supervisor's behalf.
+
+Consequently **native Windows sessions and Codex Desktop/MCP are unsupported for
+isolated reviewer verification** until their actual host tool-write restriction is
+separately demonstrated on the host and build in use. In practice on this
+machine `ai-workflow run-review <ticket-id> --review-context <dir> --kind
+baseline -- <argv...>` reports a named blocker (the `linux-bwrap-v1` profile needs
+an installed `bwrap`, which this host only provides inside WSL), and
+`ai-workflow set-review … --review-context …` cannot publish a report whose
+provenance claims an enforced boundary it does not have. The correct behavior is
+to report the run as unsupported/blocked and escalate — never an automatic
+permission weakening, never a model-session retry, and never a passing isolated
+verdict from a session that could not demonstrate denial.
+
+The one host profile that *is* demonstrated is the WSL bubblewrap boundary
+recorded in [../local-review.md](../local-review.md); that document, not this
+runbook, is the evidence source for support claims.
+
 ## Step 0 — cost-free diagnostics (no model session)
 
 Collect these first; they consume no model budget:
@@ -103,3 +142,7 @@ On any launch/policy rejection: **stop**. Specifically:
   work"; current permissions are preserved exactly;
 - report the rejection (with the version/help output collected in Step 0) and
   hand the decision back to the operator.
+
+A successful launch changes none of this: it proves the harness starts, and the
+isolated-review section above still says the session is unsupported until a host
+write restriction is actually demonstrated.

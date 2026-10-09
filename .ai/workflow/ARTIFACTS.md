@@ -228,6 +228,26 @@ allowed.
 
 ### Verification provenance for new isolated reviews
 
+One H2 heading is reserved: `## Isolation provenance`, recorded under
+`Verification results` as exactly one fenced `json` block. Its required keys are
+`format_version`, `reviewed_commit`, `context_sha256`, `live_manifest_sha256`,
+`snapshot_manifest_sha256`, `plan_sha256`, `input_hashes`, `boundary`, `runs`,
+`probe_changes`, `residual_changes` and `limits`; `runs` entries carry
+`run_id`, `kind`, `argv`, `exit_code`, `stdout_sha256`, `stderr_sha256`,
+`snapshot_before` and `snapshot_after`; `boundary` carries `profile`, `enforced`,
+`preflight` and `preflight_sha256`; each `probe_changes` entry carries `path`,
+`before_sha256`, `after_sha256` and `deleted`; `residual_changes` carries
+`modified`, `added` and `removed`. Every value is read from the supervisor's own
+persisted records for that context, never retyped: `prepare-review` writes
+`meta/context.json` with the live and snapshot manifests, `run-review` writes
+`meta/preflight.json` and one receipt per verifier command, and the published
+Report must equal the reviewer's candidate bytes exactly. A Report that carries
+this section can only be recorded through the guarded
+`set-review <ticket-id> --verdict <pass|changes_requested> --review-context <dir>
+--report <candidate-review.md> --handoff <candidate-handoff.md>`; the ordinary
+unguarded form refuses it, and a legacy Report without the section keeps its
+historical behavior.
+
 Under `Verification results`, a new isolated review records:
 
 - The full reviewed commit and separate live/snapshot baseline content identities
@@ -249,8 +269,16 @@ Keep Review Metadata and existing raw-byte bindings unchanged. These provenance
 requirements apply to newly produced isolated reviews; old artifacts retain
 historical validity and are not retroactively presented as isolation evidence.
 Structural report checks cannot attest that a host denied writes or that a
-narrative is true. The launch boundary needs actual denial evidence; enforcement
-and machine validation for new reviews remain pending HARDEN-011.
+narrative is true. The launch boundary needs actual denial evidence, and that
+evidence is now produced by the commands above rather than promised:
+`run-review` records the sentinel denials, the writable scopes, the absence of
+any live or `meta/` mount, the cleared environment and the network refusal, and
+publication refuses a provenance claim that disagrees with the persisted receipt
+in any field. What that still does not buy is stated plainly: a host without an
+available boundary gets a named blocker and no publishable isolation provenance
+(see `adapters/local-review.md` and `adapters/codex/windows.md`), and matching
+receipts prove the recorded runs happened under the recorded mounts — they do not
+prove the review's technical judgment or its acceptance conclusion.
 
 Recording the verdict with `set-review <ticket-id> --verdict pass|changes_requested`
 binds it to the Review artifact's raw-byte SHA-256, the full resolved commit ID
