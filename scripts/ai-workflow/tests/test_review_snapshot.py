@@ -313,6 +313,26 @@ class ReviewSnapshotTest(V2CLITestCase):
         self.assertEqual(lock_path.read_bytes(), before_lock)
         self.assertEqual(lock_path.stat().st_mtime_ns, before_lock_mtime)
 
+    def test_uncreatable_output_is_a_contract_error(self):
+        """An output that cannot be created refuses cleanly, leaving nothing."""
+        reviewed = self.prepare_v2_review()
+        # The parent of the output path is a regular file, so `makedirs` cannot
+        # succeed. The refusal must be a clean contract error rather than a raw
+        # OSError escaping `prepare` (which the CLI would surface as a
+        # traceback instead of exit 1).
+        blocker = os.path.join(self._out_tmp.name, "blocker-file")
+        with open(blocker, "w", encoding="utf-8") as fh:
+            fh.write("not a directory\n")
+        blocked = os.path.join(blocker, "ctx")
+        with self.assertRaises(contracts.ContractError):
+            review_snapshot.prepare(self.root, self.TICKET, reviewed, blocked)
+        self.assertFalse(os.path.exists(blocked))
+        # The live records are untouched by the refusal.
+        before = self._record_bytes()
+        with self.assertRaises(contracts.ContractError):
+            review_snapshot.prepare(self.root, self.TICKET, reviewed, blocked)
+        self.assertEqual(before, self._record_bytes())
+
     def test_unsafe_input_scopes_reject(self):
         """External/escaping inputs, external links and submodules refuse."""
         reviewed = self.prepare_v2_review()

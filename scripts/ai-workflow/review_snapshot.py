@@ -422,7 +422,12 @@ def prepare(root, ticket_id, reviewed_commit, output):
     live_entries = _manifest(root, paths, kinds)
     inputs = _configured_inputs(root, ticket_id, data)
 
-    os.makedirs(output)
+    try:
+        os.makedirs(output)
+    except OSError as exc:
+        raise contracts.ContractError(
+            "cannot create the review snapshot output directory %r: %s"
+            % (output, exc))
     try:
         clone_root = os.path.join(output, _REPO_DIR)
         _clone(root, clone_root, full_oid)
