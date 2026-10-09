@@ -1,0 +1,2 @@
+# Keep the installer protection template in LF across platform checkouts.
+/.ai/workflow/templates/work.gitattributes text eol=lf
