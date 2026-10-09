@@ -438,6 +438,12 @@ def cmd_set_gate(args, root):
         args, root, {"--gate", "--round"}, apply)
 
 
+# The options `set-review` accepts, named once so a refusal message and the
+# parser cannot drift apart: anything a message tells a reader to pass has to be
+# in this set or following the message fails with an unknown-option error.
+SET_REVIEW_OPTIONS = {"--verdict", "--review-context", "--report", "--handoff"}
+
+
 def cmd_set_review(args, root):
     def apply(ticket_id, opts):
         verdict = opts.get("verdict")
@@ -453,8 +459,7 @@ def cmd_set_review(args, root):
         "set-review <ticket-id> --verdict pass|changes_requested "
         "[--review-context <dir> --report <candidate-review.md> --handoff "
         "<candidate-handoff.md>]",
-        args, root,
-        {"--verdict", "--review-context", "--report", "--handoff"}, apply)
+        args, root, SET_REVIEW_OPTIONS, apply)
 
 
 def cmd_prepare_review(args, root):

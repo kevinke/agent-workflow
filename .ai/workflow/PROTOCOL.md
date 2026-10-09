@@ -144,7 +144,10 @@ Capture the reviewed full commit, separate live/snapshot baseline identities,
 and the exact registered Plan/input hashes. Retain artifact raw bytes and path
 references; legitimate source checkout newline conversion is not code drift.
 Run baseline acceptance independently of any probe-modified tests and record
-both scopes. ARTIFACTS.md owns the verification-provenance report fields.
+both scopes: a guarded publication refuses a report whose cited runs do not
+distinguish a `baseline` acceptance run from a `probe` run, so both kinds have to
+be named and no recorded receipt may go uncited. ARTIFACTS.md owns the
+verification-provenance report fields.
 
 The Reviewer authors the technical verdict. A separate, guarded publication
 step coordinated by checkpoint-handoff may publish the reviewer's exact report
@@ -173,12 +176,21 @@ ai-workflow set-review <ticket-id> --verdict <pass|changes_requested> \
     --review-context <dir> --report <candidate-review.md> --handoff <candidate-handoff.md>
 ```
 
-- `prepare-review` creates a previously absent output directory outside the live
-  worktree and Git metadata: an independent clone of the literal reviewed commit,
-  raw-byte copies of the registered Plan and of every captured verification
-  input, and the supervisor manifest (`meta/context.json`) pinning the separate
-  live and snapshot content identities. A failure leaves no partial context and
-  changes no live file.
+- `prepare-review` is run by the trusted coordinator that also performs the
+  guarded publication (`checkpoint-handoff`), never by the reviewer, which works
+  only inside the context it produces. It creates a previously absent output
+  directory outside the live worktree and Git metadata: an independent clone of
+  the literal reviewed commit, raw-byte copies of the registered Plan and of
+  every captured verification input, and the supervisor manifest
+  (`meta/context.json`) pinning the separate live and snapshot content
+  identities. A failure leaves no partial context and changes no live file.
+  Preparation counts untracked paths as drift, so a stray generated artifact
+  inside scope — the `__pycache__` a verifier command leaves behind is the
+  ordinary case — blocks it, because a snapshot of anything other than the
+  reviewed commit could not certify the code under review. That fail-closed
+  refusal is the design: removing or ignoring the stray artifact and running
+  `prepare-review` again is the route to a fresh context, and nothing forces a
+  publication past the refusal.
 - `run-review` is how a reviewer's command actually executes on the supported
   profile. It runs one verifier command under the enforced `linux-bwrap-v1`
   boundary — `/snapshot` and `/scratch` writable, no live path and no supervisor
@@ -191,13 +203,17 @@ ai-workflow set-review <ticket-id> --verdict <pass|changes_requested> \
   snapshot-relative edits, which stay in the receipt whether or not the reviewer
   restores them. A boundary blocker exits 1 and never falls back to an
   unconstrained run; an unsupported host reports a named blocker instead of
-  support. `adapters/local-review.md` records the host actually demonstrated (a
-  Windows coordinator driving `bwrap` through WSL) and
+  support. The two host runbooks live in the **ai-workflow source repository**,
+  not in an installed target: `adapters/local-review.md` records the host
+  actually demonstrated (a Windows coordinator driving `bwrap` through WSL) and
   `adapters/codex/windows.md` records why no **Windows-native boundary** is: no
   Windows or Codex session's own tool-write restriction has been demonstrated on
   the host and build in use. That is a claim about the session's restriction, not
   about the boundary's availability, which the same Windows coordinator
-  demonstrates through WSL.
+  demonstrates through WSL. Nothing in this procedure depends on opening those
+  files from a target repository: the runtime answer for any host is the prepared
+  context's own `meta/preflight.json`, which either records an enforced boundary
+  or fails closed with a named blocker and no receipt.
 - Guarded `set-review` publishes, it does not judge: `--review-context`,
   `--report` and `--handoff` are required together, the report and handoff are
   the reviewer's own candidate bytes written under that context's `scratch/`, and

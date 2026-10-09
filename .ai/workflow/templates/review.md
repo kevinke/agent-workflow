@@ -41,6 +41,13 @@ contract's pairing rule — a path is `deleted` only when `after_sha256` is null
 so an edited or added path carries its real `after_sha256` — and they are shape
 examples, not evidence.
 
+A guarded publication needs both kinds of run named: `runs` must carry at least
+one `baseline` acceptance run **and** at least one `probe` run, because
+publication refuses a report whose cited runs do not distinguish the two, and a
+baseline-only review is unpublishable however honest it is. Every receipt the
+supervisor recorded under `meta/runs/` has to be cited — a shorter report is not
+an acceptable one.
+
 ## Isolation provenance
 
 ```json
@@ -62,6 +69,16 @@ examples, not evidence.
     {
       "run_id": "<draft: meta/runs receipt id>",
       "kind": "baseline",
+      "argv": ["<draft: the argv the receipt recorded>"],
+      "exit_code": 0,
+      "stdout_sha256": "<draft: receipt stdout hash>",
+      "stderr_sha256": "<draft: receipt stderr hash>",
+      "snapshot_before": "<draft: receipt snapshot_before identity>",
+      "snapshot_after": "<draft: receipt snapshot_after identity>"
+    },
+    {
+      "run_id": "<draft: meta/runs receipt id>",
+      "kind": "probe",
       "argv": ["<draft: the argv the receipt recorded>"],
       "exit_code": 0,
       "stdout_sha256": "<draft: receipt stdout hash>",

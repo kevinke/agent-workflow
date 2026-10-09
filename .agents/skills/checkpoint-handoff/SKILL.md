@@ -15,7 +15,13 @@ Phase transitions and handoff (see `.ai/workflow/ROLES.md`). Any model tier.
 ## Procedure
 
 1. Read `.ai/work/<ticket-id>/state.yaml` first — it is authoritative.
-2. Confirm `next_action.role` is `checkpoint-handoff`. If not, hand back.
+2. Confirm `next_action.role` is `checkpoint-handoff` and hand back if it is not,
+   except for the guarded review publication in step 6. That gate routes ordinary
+   phase work, and in `review` ordinary phase work belongs to the independent
+   `reviewer` (PROTOCOL.md §"Review and completion") — yet once that reviewer's
+   candidate is in hand, publishing it is still this role's to coordinate, so the
+   gate never sends the publication back. The exception is coordination, never
+   judgement: this role supplies no technical verdict.
 3. Read `.ai/workflow/PROTOCOL.md` (state machine, handoff discipline) and
    `.ai/workflow/STATE_SCHEMA.md` (phases and statuses).
 4. Run `ai-workflow validate <ticket-id>` first — it must report no ERROR
@@ -23,7 +29,14 @@ Phase transitions and handoff (see `.ai/workflow/ROLES.md`). Any model tier.
 5. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
 6. When a `review` Ticket's verdict must be published, coordinate the guarded
-   publication and nothing else: the reviewer's candidate report and handoff live
+   publication and nothing else. Preparation is part of that coordination and is
+   not the reviewer's to do:
+   `ai-workflow prepare-review <ticket-id> --commit <literal-oid> --output <dir>`
+   creates the context the reviewer works in. Its refusal when an untracked
+   artifact inside scope differs from the reviewed commit — the `__pycache__` a
+   verifier command leaves behind is the usual one — is the fail-closed design:
+   clear that stray artifact and prepare again, which yields a fresh context;
+   never publish over it. Then the reviewer's candidate report and handoff live
    in the prepared review context's scratch area, and the publisher runs
    `ai-workflow set-review <ticket-id> --verdict <pass|changes_requested> --review-context <dir> --report <candidate-review.md> --handoff <candidate-handoff.md>`
    (PROTOCOL.md §"Reviewer verification isolation and publication"; the report's
@@ -63,6 +76,8 @@ assumes are missing, escalate per `.ai/workflow/ESCALATION.md` rather than guess
 
 This is a mechanical role: it performs the transition mechanics and supplies no
 technical verdict (`.ai/workflow/ROLES.md`). In `review` the route is the
-independent `reviewer`, not here — the review, repair, and completion gates
+independent `reviewer`, not here (step 2 keeps that gate scoped, and step 6's
+guarded publication is coordination of the reviewer's own candidate bytes and
+nothing more) — the review, repair, and completion gates
 live in PROTOCOL.md §"Review and completion". Do not write `review.md` or judge
 the change.

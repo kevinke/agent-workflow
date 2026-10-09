@@ -36,9 +36,33 @@ context: each verdict needs its own prepared context.
 
 ## Measured evidence on this host
 
-Recorded from the boundary's own runs on the machine this kit is developed on
-(see `.superpowers/sdd/2026-10-09-harden-11/progress.md`, `task-2-report.md` and
-`task-2-review-round2.md` for the raw command output):
+Recorded from the boundary's own runs on the machine this kit is developed on.
+Where the measurement lives, resolvable from a fresh checkout of this
+repository (nothing below points at a git-ignored working note):
+
+- `scripts/ai-workflow/tests/test_review_boundary.py` (`ReviewBoundaryTest`)
+  drives the same `bwrap` code path `run-review` uses and asserts the denial
+  table, the writable scopes and the network refusal;
+  `scripts/ai-workflow/tests/test_review_publication.py`
+  (`ReviewPublicationTest`) asserts that guarded publication validates those
+  receipts field by field; and
+  `scripts/ai-workflow/tests/test_lifecycle_v2.py`
+  (`InstalledIsolatedReviewLifecycleTest.test_installed_isolated_review_lifecycle`)
+  drives the installed kit end to end and records which route produced its
+  receipts.
+- The fields the supervisor itself writes into a prepared context carry the same
+  measurement for any real run. `meta/preflight.json` records `profile`,
+  `enforced`, `blocker`, `bwrap_version`, `supervisor_host`, `sandbox_host`,
+  `launcher`, `distro`, `cwd`, `env_keys`, `mount_roots`, `denials`,
+  `rename_errno`, `writable`, `not_visible`, `network_denied`,
+  `network_denial_errno` and the `sentinel` re-enumeration. Each
+  `meta/runs/<run_id>.json` receipt records `kind`, `argv`, `cwd`, `exit_code`,
+  `stdout_sha256`, `stderr_sha256`, `snapshot_before`, `snapshot_after`, the
+  residual snapshot changes as `changed_paths`/`added_paths`/`removed_paths`, and
+  a `boundary` summary of that evidence (`denials_attempted`, `denial_errnos`,
+  `network_denial_errno`, `env_keys`, `sentinel_removed`).
+
+The values those sources recorded here:
 
 - **Host.** Windows coordinator (native Python) launching `wsl.exe -d
   Ubuntu-24.04 --exec` → installed `bwrap`, **bubblewrap 0.9.0**. Reviewer argv is

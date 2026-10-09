@@ -234,7 +234,11 @@ One H2 heading is reserved: `## Isolation provenance`, recorded under
 `snapshot_manifest_sha256`, `plan_sha256`, `input_hashes`, `boundary`, `runs`,
 `probe_changes`, `residual_changes` and `limits`; `runs` entries carry
 `run_id`, `kind`, `argv`, `exit_code`, `stdout_sha256`, `stderr_sha256`,
-`snapshot_before` and `snapshot_after`; `boundary` carries `profile`, `enforced`,
+`snapshot_before` and `snapshot_after`, and the list has to distinguish the two
+kinds — at least one `baseline` acceptance run and at least one `probe` run —
+because a guarded publication refuses a report whose cited runs name only one
+kind, and every receipt recorded under `meta/runs/` must be cited; `boundary`
+carries `profile`, `enforced`,
 `preflight` and `preflight_sha256`; each `probe_changes` entry carries `path`,
 `before_sha256`, `after_sha256` and `deleted`, and `deleted` is true exactly when
 `after_sha256` is null — an edited or added path pairs `deleted: false` with its
@@ -287,7 +291,11 @@ and a probe's `before_sha256`/`after_sha256` (a receipt names the observed paths
 not per-path content hashes). That is precisely why those claims stay visible in
 the record. What that still does not buy is stated plainly: a host without an
 available boundary gets a named blocker and no publishable isolation provenance
-(see `adapters/local-review.md` and `adapters/codex/windows.md`), and matching
+(the two host runbooks, `adapters/local-review.md` and
+`adapters/codex/windows.md`, live in the ai-workflow source repository rather
+than in an installed target; the runtime answer for the host you are actually on
+is the prepared context's own `meta/preflight.json`, which fails closed with that
+named blocker), and matching
 receipts prove the recorded runs happened under the recorded mounts — they do
 not prove the review's technical judgment or its acceptance conclusion.
 

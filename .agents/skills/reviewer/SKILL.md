@@ -31,7 +31,9 @@ owns the reserved provenance section. Read both before acting.
    copy) and `decision.md` (by reference). These are the contract under review.
 5. Record your working session:
    `ai-workflow claim <ticket-id> --harness <H> --model <M>`.
-6. Have the coordinator prepare your snapshot, then work only inside that
+6. Have the trusted coordinator — `checkpoint-handoff`, the role that also
+   performs the guarded publication in step 9 — prepare your snapshot; running
+   `prepare-review` is not yours to do. Then work only inside that
    prepared context `<dir>` created by
    `ai-workflow prepare-review <ticket-id> --commit <literal-oid> --output <dir>`:
    `<dir>/repo` is the disposable snapshot of the reviewed commit (the boundary's

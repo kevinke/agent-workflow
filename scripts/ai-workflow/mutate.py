@@ -748,7 +748,8 @@ def set_review(root, ticket_id, verdict, *, review_context=None,
     `_review_candidate` and bound in a single save — and a report carrying the
     reserved isolation-provenance section is refused, because nothing checked the
     claims it makes. With all three of `review_context`, `report_path` and
-    `handoff_path`, the candidate is published through `review_publication`, which
+    `handoff_path` (the CLI spells them `--review-context`, `--report` and
+    `--handoff`), the candidate is published through `review_publication`, which
     proves the report's provenance against the supervisor's receipts, re-checks
     that the live code, Plan and captured inputs still match the prepared review
     context, and then writes only the configured Review, State and Handoff.
@@ -757,16 +758,20 @@ def set_review(root, ticket_id, verdict, *, review_context=None,
     its existing shape. Partial guarded options are refused before any candidate
     file is read. Every rejection leaves State unchanged.
     """
-    guarded = (("review_context", review_context),
-               ("report_path", report_path), ("handoff_path", handoff_path))
-    supplied = [name for name, value in guarded if value]
+    # Each entry pairs the in-process parameter name with the option the CLI
+    # actually accepts for it: a refusal that names `--report-path` sends the
+    # reader to an option `main.py` rejects as unknown.
+    guarded = (("review_context", "--review-context", review_context),
+               ("report_path", "--report", report_path),
+               ("handoff_path", "--handoff", handoff_path))
+    supplied = [(name, option) for name, option, value in guarded if value]
     if supplied and len(supplied) != len(guarded):
-        missing = [name for name, value in guarded if not value]
+        missing = [(name, option) for name, option, value in guarded if not value]
         raise MutateError(
             "the guarded publication options must be supplied together: got %s, "
             "missing %s"
-            % (", ".join("--%s" % name.replace("_", "-") for name in supplied),
-               ", ".join("--%s" % name.replace("_", "-") for name in missing)))
+            % (", ".join(option for _, option in supplied),
+               ", ".join(option for _, option in missing)))
     data = _load(root, ticket_id)
     if workflow_v2.version(data) != 2:
         raise MutateError(

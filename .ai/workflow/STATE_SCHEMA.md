@@ -219,8 +219,28 @@ and no review-blocking code drift since the reviewed commit. The Metadata
 repository's full object ID, or an unambiguous abbreviation of at least seven
 hex digits — resolving to a commit that is an ancestor of HEAD. HEAD, branch
 and tag names are rejected even when they resolve, and a ref named like a
-hexadecimal prefix never takes precedence over the object with that prefix. On
-success it writes (additive, v2-only):
+hexadecimal prefix never takes precedence over the object with that prefix.
+
+The guarded publication form of the same command writes that identical binding
+from the reviewer's candidate bytes:
+
+```
+set-review <ticket-id> --verdict <pass|changes_requested> --review-context <dir> \
+    --report <candidate-review.md> --handoff <candidate-handoff.md>
+```
+
+`--review-context`, `--report` and `--handoff` are required together, a Review
+carrying the reserved `## Isolation provenance` section can only be recorded
+this way (the unguarded form above refuses it), and publication re-reads the live
+code, Plan and captured inputs against the prepared review context's manifest
+before one journal-guarded write of this Ticket's Review, State and Handoff. It
+supplies no verdict of its own, repairs no source and advances no phase, and it
+consumes its context: one verdict per prepared context. A refusal changes no
+State bytes, and a stale review needs a fresh `prepare-review` context and a new
+independent review rather than a re-used one. PROTOCOL.md §"Reviewer verification
+isolation and publication" owns that procedure.
+
+On success both forms write (additive, v2-only):
 
 - `review.verdict` — `pass` or `changes_requested` (`pending` is the scaffold
   default before a verdict is recorded).
