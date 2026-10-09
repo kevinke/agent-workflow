@@ -142,6 +142,45 @@ DENIAL_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
 CROSS_MOUNT_RENAME_ERRNOS = frozenset({errno.EXDEV})
 CROSS_MOUNT_SYSCALLS = frozenset({"rename", "link"})
 
+# The scopes the profile promises are writable. A report that cannot prove all
+# of them is not a boundary, it is a sandbox that cannot do the reviewer's work.
+WRITABLE_SCOPES = ("/snapshot", "/scratch", "/tmp", "$HOME")
+
+# Linux errno numbers as the sandbox reports them, written out because the
+# supervisor may be Windows Python reaching `bwrap` through `wsl.exe`: there
+# `errno.ENETUNREACH` is 10051, which would never match the 101 a Linux sandbox
+# actually reports, and a denial would be refused as "not proof". The write
+# errnos above happen to carry the same value on both platforms; the network
+# ones do not, so they are stated as Linux values and never as host constants.
+LINUX_NETWORK_ERRNOS = {"ENETUNREACH": 101, "EHOSTUNREACH": 113,
+                        "ECONNREFUSED": 111, "ECONNRESET": 104,
+                        "ETIMEDOUT": 110}
+
+# A network *denial* is only proven by an errno that means "there is no network
+# to reach": `--unshare-all` leaves the namespace with no interface at all, so
+# `connect()` answers ENETUNREACH, and a permission filter answers EPERM/EACCES.
+# Every other failure is refused as evidence, because each of them is also what
+# a boundary *with* network produces:
+#   * a timeout carries no errno at all, and is exactly what a shared network
+#     namespace reports for a firewalled destination (measured on this host);
+#   * ECONNREFUSED / ECONNRESET mean something on the other end answered;
+#   * EHOSTUNREACH means a live route existed and a router rejected the packet,
+#     which is what an iptables `REJECT --reject-with icmp-host-unreachable`
+#     rule on a *connected* host looks like — deliberately not accepted;
+#   * `EAI_*` name-resolution codes are negative pseudo-errnos that also occur
+#     when a resolver is present but broken.
+NO_NETWORK_ERRNOS = frozenset((errno.EPERM, errno.EACCES,
+                               LINUX_NETWORK_ERRNOS["ENETUNREACH"]))
+# The attempts the probe must make: name resolution *and* an outbound connect.
+# Both are required, because a report that skipped one proves nothing about it,
+# and only the connect's own errno can prove the network is absent (a resolver
+# failure is ambiguous: glibc answers with a negative `EAI_*` pseudo-errno both
+# when there is no network and when there is a network and a broken resolver).
+NETWORK_ATTEMPTS = ("dns", "connect")
+# The attempt whose failure alone can prove the network is gone: it needs no
+# resolver and no name service, so it is the only unambiguous observation.
+NETWORK_PROOF_ATTEMPT = "connect"
+
 # The only environment the sandboxed process may see. `--clearenv` removes
 # everything inherited; `LC_CTYPE` and `PWD` are set by bwrap itself, and no
 # `GIT_*` override may survive into the verifier (the plan's "clear inherited
@@ -891,29 +930,38 @@ not_visible = {}
 for path in config["must_be_absent"]:
     not_visible[path] = not os.path.exists(path)
 
-network = {}
-network_denied = True
-try:
-    socket.getaddrinfo("example.com", 80)
-    network["dns"] = "ALLOWED"
-    network_denied = False
-except OSError as exc:
-    network["dns"] = type(exc).__name__ + ": " + str(exc)
-try:
+network = []
+def network_attempt(name, call):
+    # The probe only reports what it observed. Deciding whether that
+    # observation *means* "no network" is the supervisor's job: a report that
+    # graded itself would be a report whose denial claim could never be checked.
+    try:
+        call()
+    except OSError as exc:
+        return {"name": name, "allowed": False,
+                "errno": exc.errno if isinstance(exc.errno, int) else None,
+                "error": type(exc).__name__ + ": " + str(exc)}
+    except Exception as exc:
+        return {"name": name, "allowed": False, "errno": None,
+                "error": type(exc).__name__ + ": " + str(exc)}
+    return {"name": name, "allowed": True, "errno": None, "error": "succeeded"}
+
+def open_connect():
     handle = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    handle.settimeout(3)
-    handle.connect(("1.1.1.1", 443))
-    network["connect"] = "ALLOWED"
-    network_denied = False
-    handle.close()
-except OSError as exc:
-    network["connect"] = type(exc).__name__ + ": " + str(exc)
+    try:
+        handle.settimeout(3)
+        handle.connect(("1.1.1.1", 443))
+    finally:
+        handle.close()
+
+network.append(network_attempt("dns",
+                               lambda: socket.getaddrinfo("example.com", 80)))
+network.append(network_attempt("connect", open_connect))
 
 sys.stdout.write(json.dumps({
     "attempts": attempts,
     "writable": writable,
     "not_visible": not_visible,
-    "network_denied": network_denied,
     "network": network,
     "cwd": os.getcwd(),
     "env_keys": sorted(os.environ),
@@ -1065,10 +1113,18 @@ def _absent_probe_paths(context, context_root, meta_root, roots):
 
 def _evaluate_probe_report(report):
     """Turn the sandbox's own report into accepted/denied evidence."""
+    if not isinstance(report, dict):
+        raise _blocker(PROBE_REPORT_UNREADABLE,
+                       "the boundary probe reported %s, not a report object"
+                       % type(report).__name__)
     attempts = report.get("attempts")
     if not isinstance(attempts, list) or not attempts:
         raise _blocker(PROBE_REPORT_UNREADABLE,
                        "the boundary probe reported no write attempts")
+    if not all(isinstance(attempt, dict) for attempt in attempts):
+        raise _blocker(PROBE_REPORT_UNREADABLE,
+                       "the boundary probe reported an attempt that is not an "
+                       "attempt object: %r" % (attempts,))
     denials = {}
     permitted = []
     unverified = []
@@ -1087,6 +1143,11 @@ def _evaluate_probe_report(report):
             allowed = DENIAL_ERRNOS
         if code is not None and code not in allowed:
             unverified.append("%s (%s -> errno %s)" % (name, syscall, code))
+        elif code is None and not attempt.get("allowed"):
+            # A failure that reports no errno at all cannot be matched against
+            # the denial set, so it proves nothing either way.
+            unverified.append("%s (%s -> failed with no errno reported)"
+                              % (name, syscall))
         denials[name] = {"syscall": syscall, "path": attempt.get("path"),
                          "allowed": bool(attempt.get("allowed")),
                          "errno": code}
@@ -1105,6 +1166,141 @@ def _evaluate_probe_report(report):
     return denials, rename_errno
 
 
+def _judge_probe_report(report, absent_paths, observed):
+    """The whole preflight verdict, as a pure function of the evidence.
+
+    `report` is the sandbox's own claim about what it was allowed to do; it is
+    never trusted, only tested. `observed` is the supervisor's own record of the
+    protected sentinel it built for this pass: where it was created, the file
+    set before and after the sandbox ran, and the per-file hashes/modes.
+
+    Splitting the verdict out of `_preflight_pass` is what makes it testable
+    against *lying* reports: a report that records an allowed write, an ENOENT
+    dressed up as a denial, a missing cross-mount escape attempt, a writable
+    scope it never proved or a network that merely timed out can all be fed
+    straight to the judge without configuring a host or launching a sandbox.
+    Every leg names its own blocker; nothing here is allowed to raise a generic
+    error, and nothing here accepts a claim the supervisor did not verify.
+
+    Returns `(denials, rename_errno, env_keys, network_denial_errno)`.
+    """
+    if not isinstance(observed, dict):
+        raise _blocker(SENTINEL_CHANGED,
+                       "preflight recorded no supervisor-side sentinel "
+                       "observation, so the report has nothing to be checked "
+                       "against")
+    # Structural first: a sentinel outside the supervisor-owned meta area means
+    # preflight was about to probe somebody else's files. Nothing about the
+    # report can rescue that.
+    for key in ("sentinel_root", "meta_root", "context_root"):
+        if not observed.get(key):
+            raise _blocker(
+                SENTINEL_ROOT_NOT_ISOLATED,
+                "preflight reported no %r, so the protected sentinel's owner "
+                "cannot be established" % key)
+    _require_supervisor_owned_sentinel(observed.get("sentinel_root"),
+                                       observed.get("meta_root"),
+                                       observed.get("context_root"))
+
+    denials, rename_errno = _evaluate_probe_report(report)
+
+    writable = report.get("writable")
+    writable = writable if isinstance(writable, dict) else {}
+    _require(WRITABLE_SCOPE_UNAVAILABLE,
+             all(writable.get(scope) is True for scope in WRITABLE_SCOPES),
+             "a declared writable scope is not proven writable: %r"
+             % (writable,))
+
+    not_visible = report.get("not_visible")
+    not_visible = (not_visible if isinstance(not_visible, dict) else {})
+    reachable = [path for path in absent_paths if not not_visible.get(path)]
+    _require(HOST_SCOPE_REACHABLE, not reachable,
+             "paths profile %s must not reach are visible inside the boundary: "
+             "%s" % (PROFILE, ", ".join(reachable)))
+
+    network = _network_attempts(report)
+    reported = set(item.get("name") for item in network
+                   if isinstance(item.get("name"), str))
+    unreported = sorted(set(NETWORK_ATTEMPTS) - reported)
+    unknown = sorted(reported - set(NETWORK_ATTEMPTS))
+    _require(NETWORK_PERMITTED, not unreported and not unknown,
+             "profile %s proves its no-network restriction from a %s attempt "
+             "and a %s attempt: this report attempted %s and not %s%s: %r"
+             % (PROFILE, NETWORK_ATTEMPTS[0], NETWORK_ATTEMPTS[1],
+                ", ".join(sorted(reported)) or "nothing at all",
+                ", ".join(unreported) or "nothing",
+                ", besides the unrecognized %s" % ", ".join(unknown)
+                if unknown else "", network))
+    reached = [item for item in network if item.get("allowed")]
+    _require(NETWORK_PERMITTED, not reached,
+             "the sandboxed process reached the network: %s"
+             % "; ".join("%s succeeded (%s)" % (item.get("name"),
+                                                item.get("error"))
+                         for item in reached))
+    proofs = [item for item in network
+              if item.get("name") == NETWORK_PROOF_ATTEMPT]
+    unproven = [item for item in proofs
+                if item.get("errno") not in NO_NETWORK_ERRNOS]
+    _require(NETWORK_PERMITTED, not unproven,
+             "the sandbox reached for the network and was not refused by the "
+             "absence of one: %s is not a no-network errno (only %s are); a "
+             "timeout, an EAI_* name-resolution failure, a refused or reset "
+             "connection and an ICMP-style unreachable all happen on hosts "
+             "that DO have network: %r"
+             % ("; ".join("%r" % (item.get("error"),) for item in unproven),
+                ", ".join(str(code) for code in sorted(NO_NETWORK_ERRNOS)),
+                network))
+    network_denial_errno = proofs[0].get("errno") if proofs else None
+
+    env_keys = sorted(report.get("env_keys") or [])
+    _require(ENVIRONMENT_NOT_SANITIZED,
+             set(env_keys) <= set(ALLOWED_ENV_KEYS),
+             "the sandboxed process inherited environment keys %s; profile %s "
+             "clears the environment and permits only %s"
+             % (", ".join(env_keys), PROFILE,
+                ", ".join(sorted(ALLOWED_ENV_KEYS))))
+    git_env_keys = list(report.get("git_env_keys") or [])
+    _require(ENVIRONMENT_NOT_SANITIZED, not git_env_keys,
+             "GIT_* overrides survived into the sandbox: %s"
+             % ", ".join(git_env_keys))
+    _require(UNSUPPORTED_RUNTIME_LAYOUT, report.get("cwd") == SANDBOX_CWD,
+             "the verifier cwd is %r, not the pinned %r"
+             % (report.get("cwd"), SANDBOX_CWD))
+
+    # The supervisor's own re-enumeration is the actual proof: the sandbox could
+    # have reported whatever it liked about its own attempts, so its bytes and
+    # file set are checked against what was recorded before the launch.
+    files = observed.get("files")
+    files = files if isinstance(files, dict) else {}
+    unprotected = sorted(set(SENTINEL_FILES) - set(files))
+    _require(SENTINEL_CHANGED, not unprotected,
+             "preflight protected no record for sentinel file(s): %s"
+             % ", ".join(unprotected))
+    paths_before = list(observed.get("paths_before") or [])
+    paths_after = list(observed.get("paths_after") or [])
+    _require(SENTINEL_CHANGED, paths_before and paths_before == paths_after,
+             "the protected sentinel's file set changed: %s"
+             % _describe_difference(paths_before, paths_after))
+    changed = sorted(rel for rel, record in files.items()
+                     if not isinstance(record, dict)
+                     or record.get("sha256_before")
+                     != record.get("sha256_after")
+                     or record.get("mode_before") != record.get("mode_after")
+                     or record.get("size_before") != record.get("size_after"))
+    _require(SENTINEL_CHANGED, not changed,
+             "protected bytes or metadata changed for: %s" % ", ".join(changed))
+    return denials, rename_errno, env_keys, network_denial_errno
+
+
+def _network_attempts(report):
+    """The report's network attempts, shaped, or empty — never a crash."""
+    raw = report.get("network")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+
 # ---------------------------------------------------------------------------
 # Public: preflight
 # ---------------------------------------------------------------------------
@@ -1121,6 +1317,11 @@ def preflight(context_path):
     Every attempt must be denied as a privilege denial (EACCES/EPERM/EROFS, or
     EXDEV for the renames) *and* the sentinel must be byte-for-byte unchanged
     when re-enumerated from the host side; anything else is a named blocker.
+    The network must be refused because there is no network to refuse —
+    ENETUNREACH, EPERM or EACCES — never because a connection timed out on a
+    host that has one. The verdict is `_judge_probe_report`, a pure function of
+    the sandbox's report and the supervisor's own sentinel record, which is what
+    lets the focused tests feed it reports that lie.
     The sentinel is always removed again.
 
     Returns the restriction evidence and persists it as `meta/preflight.json`.
@@ -1212,48 +1413,19 @@ def _preflight_pass(context_path):
             raise _blocker(PROBE_REPORT_UNREADABLE,
                            "the boundary probe reported no parseable evidence "
                            "(stderr: %s)" % (stderr_text.strip() or "empty"))
-        denials, rename_errno = _evaluate_probe_report(report)
-        _require(WRITABLE_SCOPE_UNAVAILABLE,
-                 all(report["writable"].get(scope) is True
-                     for scope in ("/snapshot", "/scratch", "/tmp", "$HOME")),
-                 "a declared writable scope is not writable: %r"
-                 % report["writable"])
-        reachable = [path for path in absent_paths
-                     if not report["not_visible"].get(path)]
-        _require(HOST_SCOPE_REACHABLE, not reachable,
-                 "paths profile %s must not reach are visible inside the "
-                 "boundary: %s" % (PROFILE, ", ".join(reachable)))
-        _require(NETWORK_PERMITTED, report["network_denied"] is True,
-                 "the sandboxed process reached the network: %r"
-                 % report.get("network"))
-        env_keys = sorted(report.get("env_keys") or [])
-        _require(ENVIRONMENT_NOT_SANITIZED,
-                 set(env_keys) <= set(ALLOWED_ENV_KEYS),
-                 "the sandboxed process inherited environment keys %s; profile "
-                 "%s clears the environment and permits only %s"
-                 % (", ".join(env_keys), PROFILE,
-                    ", ".join(sorted(ALLOWED_ENV_KEYS))))
-        _require(ENVIRONMENT_NOT_SANITIZED, not report.get("git_env_keys"),
-                 "GIT_* overrides survived into the sandbox: %s"
-                 % ", ".join(report["git_env_keys"]))
-        _require(UNSUPPORTED_RUNTIME_LAYOUT, report.get("cwd") == SANDBOX_CWD,
-                 "the verifier cwd is %r, not the pinned %r"
-                 % (report.get("cwd"), SANDBOX_CWD))
-
         # The supervisor's own re-enumeration is the actual proof: the sandbox
-        # could have reported whatever it liked about its own attempts.
+        # could have reported whatever it liked about its own attempts. Both
+        # halves are handed to the judge, which is a pure function of the report
+        # plus this observation, so the focused tests can feed it reports that
+        # lie without configuring a host or launching a sandbox.
         paths_after, _ = _enumerate_sentinel(sentinel_root)
         _seal_sentinel_after(records, sentinel_root)
-        _require(SENTINEL_CHANGED, paths_before == paths_after,
-                 "the protected sentinel's file set changed: %s"
-                 % _describe_difference(paths_before, paths_after))
-        changed = sorted(rel for rel, record in records.items()
-                         if record["sha256_before"] != record["sha256_after"]
-                         or record["mode_before"] != record["mode_after"]
-                         or record["size_before"] != record["size_after"])
-        _require(SENTINEL_CHANGED, not changed,
-                 "protected bytes or metadata changed for: %s"
-                 % ", ".join(changed))
+        denials, rename_errno, env_keys, network_denial_errno = (
+            _judge_probe_report(
+                report, absent_paths,
+                {"sentinel_root": sentinel_root, "meta_root": meta_root,
+                 "context_root": context_root, "paths_before": paths_before,
+                 "paths_after": paths_after, "files": records}))
 
         evidence = {
             "format_version": FORMAT_VERSION,
@@ -1279,6 +1451,7 @@ def _preflight_pass(context_path):
             "not_visible": report["not_visible"],
             "network": report["network"],
             "network_denied": True,
+            "network_denial_errno": network_denial_errno,
             "live_git_unavailable": all(report["not_visible"].get(path)
                                         for path in live_paths),
             "absent_probe_paths": absent_paths,
@@ -1339,7 +1512,9 @@ def _evidence_is_current(evidence, roots, version):
         all(not attempt.get("allowed")
             for attempt in (evidence.get("denials") or {}).values()),
         all(bool(evidence.get("writable", {}).get(scope))
-            for scope in ("/snapshot", "/scratch", "/tmp", "$HOME")),
+            for scope in WRITABLE_SCOPES),
+        evidence.get("network_denied") is True,
+        evidence.get("network_denial_errno") in NO_NETWORK_ERRNOS,
         evidence.get("bwrap_version") == version,
         evidence.get("supervisor_host") == supervisor_host(),
         evidence.get("launcher") == _launcher_label(),
@@ -1708,6 +1883,7 @@ def _receipt_boundary(context_path, evidence):
         "writable": evidence.get("writable"),
         "not_visible": evidence.get("not_visible"),
         "network_denied": evidence.get("network_denied"),
+        "network_denial_errno": evidence.get("network_denial_errno"),
         "live_git_unavailable": evidence.get("live_git_unavailable"),
         "env_keys": evidence.get("env_keys"),
         "sentinel_removed": bool((evidence.get("sentinel") or {})

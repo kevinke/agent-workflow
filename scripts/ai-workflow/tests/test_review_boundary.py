@@ -1,7 +1,8 @@
 """Tests for the enforced local process boundary and supervisor receipts
 (HARDEN-011 Task 2).
 
-Three named tests, exactly as the plan freezes them:
+The plan's three named tests, then the refusal legs an independent review
+required (see ``.superpowers/sdd/2026-10-09-harden-11/``):
 
 ``test_boundary_denies_live_and_allows_snapshot``
     ``preflight`` really does deny every write to a disposable protected
@@ -25,6 +26,15 @@ Three named tests, exactly as the plan freezes them:
     recorded; the supervisor's ``meta/`` is unreachable from inside the sandbox;
     and a snapshot that drifted from its recorded baseline refuses further
     baseline runs until it is restored.
+
+``test_denial_judge_refuses_lying_probe_reports``
+    the denial judge itself, driven with reports no sandbox produced. The real
+    legs can only ever hand it honest evidence, so a judge that accepted an
+    allowed write, an ENOENT posing as a denial, a missing cross-mount rename, a
+    self-graded network claim or a mutated sentinel would stay invisible to
+    them. Each leg names the blocker it expects, and one leg confirms an honest
+    report is still accepted — a judge that refused everything would otherwise
+    look identical to a judge that refuses nothing.
 
 Host execution legs are conditional: if the boundary reports itself
 unavailable the executing legs skip with a message naming the blocker, which
@@ -92,11 +102,47 @@ DENIED_META_WRITE_ERRNOS = {"denied %d" % code for code in
                              errno.EROFS)}
 
 
+def _slug(rel):
+    """The probe template's own attempt-name transform, kept in one place.
+
+    Deriving the names here instead of typing them means a report built by
+    these tests names the same attempts the sandboxed probe really reports.
+    """
+    return rel.replace("/", ".").replace(".", "_")
+
+
+# "the judge's `observed` argument was not supplied" — a plain None cannot carry
+# that meaning here, because a missing observation is itself one of the lies.
+_NO_OBSERVED = object()
+
+# Linux errno numbers, hardcoded independently of the module: the sandbox is
+# Linux while the supervisor may be Windows Python driving `wsl.exe`, and on
+# Windows `errno.ENETUNREACH` is 10051. Reading the profile's own table would
+# hide a wrong table behind the same wrong arithmetic.
+LINUX = {"EPERM": 1, "EACCES": 13, "EROFS": 30, "EXDEV": 18, "ENOENT": 2,
+         "ENETUNREACH": 101, "EHOSTUNREACH": 113, "ECONNREFUSED": 111,
+         "ECONNRESET": 104, "ETIMEDOUT": 110}
+
+
 class ReviewBoundaryTest(V2CLITestCase):
     # -- fixture helpers -----------------------------------------------------
 
+    # Every module-level seam a leg may stub. A stub that survives the leg that
+    # installed it silently changes what later legs exercise — a leaked
+    # `_probe_captured` in particular would replace the real sandbox with a
+    # canned report, which is the opposite of this file's purpose. `setUp`
+    # refuses to start a test on top of a leak.
+    _SEAM_NAMES = ("launch", "_probe_captured", "_extra_bind_specs",
+                   "_sentinel_root", "_bwrap_version")
+    _pristine_seams = dict((name, getattr(review_boundary, name))
+                           for name in _SEAM_NAMES)
+
     def setUp(self):
         super().setUp()
+        for name in self._SEAM_NAMES:
+            current = getattr(review_boundary, name)
+            self.assertIs(current, self._pristine_seams[name],
+                          "seam %s leaked from an earlier test" % name)
         # Review contexts live OUTSIDE the live worktree (Task 1 enforces that).
         self._out_tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._out_tmp.cleanup)
@@ -424,6 +470,23 @@ class ReviewBoundaryTest(V2CLITestCase):
             self.assertIs(evidence["not_visible"][path], True,
                           "%s is reachable inside the boundary" % path)
         self.assertIs(evidence["network_denied"], True)
+        # Network denial has to be proven by an errno that means "there is no
+        # network at all", not by "the call failed": on a host that DOES have
+        # network a firewalled destination merely times out and reports no
+        # errno, which the old check scored as a denial. `--unshare-all` leaves
+        # the namespace with no interface, so the real answer is ENETUNREACH.
+        names = [item["name"] for item in evidence["network"]]
+        self.assertEqual(names, ["dns", "connect"])
+        self.assertEqual([item["name"] for item in evidence["network"]
+                          if item["allowed"] is True], [],
+                         "the sandboxed process reached the network")
+        proof = [item for item in evidence["network"]
+                 if item["name"] == review_boundary.NETWORK_PROOF_ATTEMPT]
+        self.assertEqual(len(proof), 1)
+        self.assertIn(proof[0]["errno"], review_boundary.NO_NETWORK_ERRNOS,
+                      "the network attempt failed with %r, which does not "
+                      "prove the absence of a network" % (proof[0]["errno"],))
+        self.assertEqual(evidence["network_denial_errno"], proof[0]["errno"])
         self.assertIs(evidence["live_git_unavailable"], True)
         self.assertEqual(evidence["env_keys"],
                          ["HOME", "LC_CTYPE", "PATH", "PWD"])
@@ -465,6 +528,642 @@ class ReviewBoundaryTest(V2CLITestCase):
                 for name in filenames:
                     self.assertNotIn("preflight", name,
                                      "preflight left %s in %s" % (name, base))
+
+    # ========================================================================
+    # 1b. The denial judge on its own: a *lying* report must be refused by name.
+    # ========================================================================
+    #
+    # `preflight` proves enforcement by running an in-sandbox probe that reports
+    # what it was allowed to do, and then judging that report against the
+    # supervisor's own record of the protected sentinel. The real-sandbox legs
+    # can only ever feed the judge honest reports — on this host writes genuinely
+    # are denied — so a judge that accepted an allowed write, an ENOENT posing as
+    # a denial, a missing cross-mount rename, a self-graded "network_denied":
+    # true or a mutated sentinel would stay invisible to them. These legs drive
+    # the judge with reports no sandbox produced, and each leg names the blocker
+    # it expects.
+
+    # The paths a report has to claim are unreachable. The pure legs use this
+    # fixed set; the entry-point legs derive the context's real set.
+    _ABSENT_PATHS = ("/meta", "/mnt", "/mnt/c", "/run", "/home", "/init",
+                     "/tmp/.X11-unix")
+
+    @staticmethod
+    def _attempt(name, syscall, path, code):
+        """One attempt, in the shape the probe template writes it."""
+        return {"name": name, "syscall": syscall, "path": path,
+                "allowed": code is None, "errno": code}
+
+    def _attempts(self):
+        """Every attempt the sandboxed probe makes, in its own order.
+
+        Mirrored straight from `_PROBE_TEMPLATE` — same names, same syscall
+        labels, same `/live` paths — so nothing here invents a report shape.
+        """
+        live = review_boundary.SANDBOX_LIVE
+        files = list(review_boundary.SENTINEL_FILES)
+        attempts = []
+        for verb, syscall, code in (("overwrite", "open-write", errno.EROFS),
+                                    ("append", "open-append", errno.EROFS),
+                                    ("truncate", "open-truncate", errno.EACCES)):
+            for rel in files:
+                attempts.append(self._attempt("%s-%s" % (verb, _slug(rel)),
+                                              syscall, "%s/%s" % (live, rel),
+                                              code))
+        attempts.append(self._attempt("create-new-file", "open-write",
+                                      "%s/injected-source.py" % live,
+                                      errno.EROFS))
+        attempts.append(self._attempt("mkdir-live", "mkdir",
+                                      "%s/injected-dir" % live, errno.EROFS))
+        attempts.append(self._attempt("makedirs-live", "mkdir",
+                                      "%s/injected-dir/deep" % live,
+                                      errno.EROFS))
+        attempts.append(self._attempt("chmod-sentinel", "chmod",
+                                      "%s/%s" % (live, files[0]), errno.EPERM))
+        attempts.append(self._attempt("symlink-into-snapshot", "symlink",
+                                      "%s/escape" % live, errno.EROFS))
+        attempts.append(self._attempt("hardlink-into-scratch", "link",
+                                      "%s/%s" % (live, files[0]), errno.EXDEV))
+        for label, index in (("rename-into-snapshot", 0),
+                             ("rename-into-scratch", 1),
+                             ("rename-into-tmp", 2)):
+            attempts.append(self._attempt(label, "rename",
+                                          "%s/%s" % (live, files[index]),
+                                          errno.EXDEV))
+        for rel in files:
+            attempts.append(self._attempt("unlink-%s" % _slug(rel), "unlink",
+                                          "%s/%s" % (live, rel), errno.EPERM))
+        return attempts
+
+    @staticmethod
+    def _network():
+        """What the real sandbox answers: DNS unresolvable, no route at all."""
+        return [{"name": "dns", "allowed": False, "errno": -3,
+                 "error": "gaierror: [Errno -3] Temporary failure in name "
+                          "resolution"},
+                {"name": "connect", "allowed": False,
+                 "errno": LINUX["ENETUNREACH"],
+                 "error": "OSError: [Errno %d] Network is unreachable"
+                          % LINUX["ENETUNREACH"]}]
+
+    def _report(self, **changes):
+        """An honest probe report; then lie about exactly one part."""
+        report = {
+            "attempts": self._attempts(),
+            "writable": dict((scope, True)
+                             for scope in review_boundary.WRITABLE_SCOPES),
+            "not_visible": dict((path, True) for path in self._ABSENT_PATHS),
+            "network": self._network(),
+            "cwd": review_boundary.SANDBOX_CWD,
+            "env_keys": sorted(review_boundary.ALLOWED_ENV_KEYS),
+            "git_env_keys": [],
+            "sandbox_host": "Linux 6.6.0-synthetic (x86_64)",
+            "sandbox_uid": 1000,
+        }
+        report.update(changes)
+        return report
+
+    def _observed(self, **changes):
+        """The supervisor's own record of the sentinel it built for this pass."""
+        context_root = os.path.join(self._out_tmp.name, "observed", "context")
+        meta_root = os.path.join(context_root, "meta")
+        digest = hashlib.sha256(b"protected sentinel bytes").hexdigest()
+        paths = sorted(review_boundary.SENTINEL_FILES)
+        observed = {
+            "sentinel_root": os.path.join(meta_root,
+                                          review_boundary.SENTINEL_DIR),
+            "meta_root": meta_root,
+            "context_root": context_root,
+            "paths_before": paths,
+            "paths_after": list(paths),
+            "files": dict((rel, {"sha256_before": digest,
+                                 "sha256_after": digest,
+                                 "size_before": 24, "size_after": 24,
+                                 "mode_before": 0o644, "mode_after": 0o644})
+                           for rel in review_boundary.SENTINEL_FILES),
+            }
+        observed.update(changes)
+        return observed
+
+    def _judge(self, report, observed=_NO_OBSERVED):
+        if observed is _NO_OBSERVED:
+            observed = self._observed()
+        return review_boundary._judge_probe_report(report,
+                                                   list(self._ABSENT_PATHS),
+                                                   observed)
+
+    @staticmethod
+    def _lie_file(observed, rel, **fields):
+        """Move one sentinel record's after-half: bytes, mode or size changed."""
+        files = dict(observed["files"])
+        files[rel] = dict(files[rel], **fields)
+        return dict(observed, files=files)
+
+    @staticmethod
+    def _lie_record(observed, rel, value):
+        """Replace (`value`) or drop (`None`) one sentinel protection record."""
+        files = dict(observed["files"])
+        if value is None:
+            files.pop(rel, None)
+        else:
+            files[rel] = value
+        return dict(observed, files=files)
+
+    @staticmethod
+    def _lie_paths(observed, before=_NO_OBSERVED, after=_NO_OBSERVED):
+        """Distort the supervisor's before/after enumeration of the sentinel."""
+        observed = dict(observed)
+        if before is not _NO_OBSERVED:
+            observed["paths_before"] = before
+        if after is not _NO_OBSERVED:
+            observed["paths_after"] = after
+        return observed
+
+    def _assert_refused(self, report, blocker, observed=_NO_OBSERVED):
+        """The judge must refuse this evidence, and name the reason."""
+        with self.assertRaises(contracts.ContractError) as ctx:
+            self._judge(report, observed)
+        message = str(ctx.exception)
+        self.assertEqual(message.split(":", 1)[0].strip(), blocker,
+                          "expected blocker %s, got: %s" % (blocker, message))
+        self.assertIn("profile %s cannot enforce the boundary"
+                      % review_boundary.PROFILE, message)
+        return message
+
+    def _lie_attempts(self, report, names, **fields):
+        """Rewrite named attempts; an unknown name is a broken leg."""
+        remaining = set(names)
+        for item in report["attempts"]:
+            if item["name"] in remaining:
+                item.update(fields)
+                remaining.discard(item["name"])
+        if remaining:
+            raise AssertionError("no such probe attempt: %s"
+                                 % ", ".join(sorted(remaining)))
+        return report
+
+    def _canned_probe(self, report):
+        """Replace the sandboxed probe with a report of the test's choosing.
+
+        Only the in-sandbox probe is replaced: the supervisor still builds its
+        own protected sentinel, still re-enumerates it and still judges the
+        report, so `preflight` itself is what these legs exercise.
+        """
+        payload = json.dumps(report, sort_keys=True).encode("utf-8") + b"\n"
+
+        def captured(command):
+            if "--version" in command:
+                return 0, b"bubblewrap 0.9.0-synthetic\n", b""
+            return 0, payload, b""
+        return captured
+
+    def _report_for_context(self, output, **changes):
+        """An honest report whose reachability claims cover this real context."""
+        context_root, roots = review_boundary._mount_roots(output)
+        meta_root = roots[review_boundary._META_DIR]["host"]
+        context = review_boundary._read_context(output)
+        absent, _live = review_boundary._absent_probe_paths(context,
+                                                            context_root,
+                                                            meta_root, roots)
+        report = self._report(not_visible=dict((path, True) for path in absent))
+        report.update(changes)
+        return report
+
+    _EVIDENCE_VERSION = "bubblewrap 0.9.0-synthetic"
+
+    def _evidence(self, **changes):
+        """Accepted preflight evidence, shaped as `run()` reads it back."""
+        roots = dict((name, {"host": "/synthetic/%s/host" % name,
+                             "sandbox_source": "/synthetic/%s" % name})
+                     for name in ("repo", "scratch", "meta"))
+        evidence = {
+            "format_version": review_boundary.FORMAT_VERSION,
+            "profile": review_boundary.PROFILE,
+            "enforced": True,
+            "blocker": None,
+            "meta_mounted": False,
+            "cwd": review_boundary.SANDBOX_CWD,
+            "denials": dict((item["name"], {"allowed": item["allowed"],
+                                             "syscall": item["syscall"],
+                                             "errno": item["errno"]})
+                            for item in self._attempts()),
+            "writable": dict((scope, True)
+                             for scope in review_boundary.WRITABLE_SCOPES),
+            "network_denied": True,
+            "network_denial_errno": LINUX["ENETUNREACH"],
+            "bwrap_version": self._EVIDENCE_VERSION,
+            "supervisor_host": review_boundary.supervisor_host(),
+            "launcher": review_boundary._launcher_label(),
+            "sandbox_host": "Linux 6.6.0-synthetic (x86_64)",
+            "sentinel": {"removed": True},
+            "mount_roots": dict((name, dict(roots[name])) for name in roots),
+            }
+        evidence.update(changes)
+        return evidence, roots
+
+    def _assert_evidence_current(self, evidence, roots, expected):
+        """Persisted evidence authorizes later runs, so it must split too."""
+        self.assertIs(review_boundary._evidence_is_current(
+            evidence, roots, self._EVIDENCE_VERSION), expected)
+
+    def test_denial_judge_refuses_lying_probe_reports(self):
+        # -- the control: an honest report is accepted, for the right reasons --
+        # Without this leg, "the judge now refuses everything" and "the judge is
+        # a no-op" both look like a passing test suite.
+        denials, rename_errno, env_keys, network_errno = self._judge(
+            self._report())
+        self.assertEqual(set(denials),
+                         set(item["name"] for item in self._attempts()),
+                         "the judge did not record every attempted write")
+        self.assertEqual([name for name, item in sorted(denials.items())
+                          if item["allowed"]], [])
+        self.assertEqual(rename_errno, LINUX["EXDEV"])
+        self.assertEqual(env_keys, sorted(review_boundary.ALLOWED_ENV_KEYS))
+        self.assertEqual(network_errno, LINUX["ENETUNREACH"])
+        # The denial sets must be the numbers a LINUX sandbox reports, not this
+        # host's: Windows shares Linux's EACCES/EPERM/EROFS/EXDEV/ENOENT but not
+        # its network errnos, and a table read from the host would silently make
+        # every real denial "not proof" (or, worse, accept 10051 as one).
+        self.assertEqual(review_boundary.DENIAL_ERRNOS,
+                         frozenset((LINUX["EACCES"], LINUX["EPERM"],
+                                    LINUX["EROFS"])))
+        self.assertEqual(review_boundary.CROSS_MOUNT_RENAME_ERRNOS,
+                         frozenset((LINUX["EXDEV"],)))
+        self.assertEqual(review_boundary.NO_NETWORK_ERRNOS,
+                         frozenset((LINUX["EPERM"], LINUX["EACCES"],
+                                    LINUX["ENETUNREACH"])))
+        for code in (LINUX["EHOSTUNREACH"], LINUX["ECONNREFUSED"],
+                     LINUX["ECONNRESET"], LINUX["ETIMEDOUT"],
+                     LINUX["ENOENT"]):
+            self.assertNotIn(code, review_boundary.NO_NETWORK_ERRNOS)
+
+        report_legs = (
+            # A write the sandbox was *allowed* to make is the plan's "a sandbox
+            # that launches but permits live writes is unsupported" case.
+            ("an overwrite the sandbox reported as allowed",
+             lambda r: self._lie_attempts(
+                 r, {"overwrite-%s" % _slug(review_boundary.SENTINEL_FILES[0])},
+                 allowed=True, errno=None),
+             review_boundary.LIVE_WRITE_ALLOWED),
+            ("a cross-mount rename the sandbox reported as allowed",
+             lambda r: self._lie_attempts(r, {"rename-into-snapshot"},
+                                          allowed=True, errno=None),
+             review_boundary.LIVE_WRITE_ALLOWED),
+            ("a hard link into /scratch the sandbox reported as allowed",
+             lambda r: self._lie_attempts(r, {"hardlink-into-scratch"},
+                                          allowed=True, errno=None),
+             review_boundary.LIVE_WRITE_ALLOWED),
+            ("a create-new-file the sandbox reported as allowed",
+             lambda r: self._lie_attempts(r, {"create-new-file"},
+                                          allowed=True, errno=None),
+             review_boundary.LIVE_WRITE_ALLOWED),
+            # ENOENT means the file was never there to be protected, which is
+            # not a boundary — the sentinel would simply have been missing.
+            ("a denial reported as ENOENT",
+             lambda r: self._lie_attempts(
+                 r,
+                 {"unlink-%s" % _slug(".git/index")}, allowed=False,
+                 errno=errno.ENOENT),
+             review_boundary.DENIAL_UNVERIFIED),
+            ("a denial reported as ENOTDIR",
+             lambda r: self._lie_attempts(
+                 r, {"append-%s" % _slug("config.toml")}, allowed=False,
+                 errno=errno.ENOTDIR),
+             review_boundary.DENIAL_UNVERIFIED),
+            ("an attempt that failed reporting no errno at all",
+             lambda r: self._lie_attempts(
+                 r, {"truncate-%s" % _slug("fixture.json")}, allowed=False,
+                 errno=None),
+             review_boundary.DENIAL_UNVERIFIED),
+            # EXDEV is the escape-refusal signature; a privilege error there is
+            # not evidence that the mount boundary held.
+            ("a cross-mount rename denied with EACCES instead of EXDEV",
+             lambda r: self._lie_attempts(r, {"rename-into-scratch"},
+                                          allowed=False, errno=errno.EACCES),
+             review_boundary.DENIAL_UNVERIFIED),
+            ("a report that never exercised the cross-mount escape",
+             lambda r: dict(r, attempts=[
+                 item for item in r["attempts"]
+                 if item["syscall"] not in
+                 review_boundary.CROSS_MOUNT_SYSCALLS]),
+             review_boundary.UNSUPPORTED_RUNTIME_LAYOUT),
+            ("a report with no write attempts at all",
+             lambda r: dict(r, attempts=[]),
+             review_boundary.PROBE_REPORT_UNREADABLE),
+            ("a report whose attempts are not attempt objects",
+             lambda r: dict(r, attempts=["everything was denied"]),
+             review_boundary.PROBE_REPORT_UNREADABLE),
+            ("a report that is not a report",
+             lambda r: [],
+             review_boundary.PROBE_REPORT_UNREADABLE),
+            # -- declared writable scope ------------------------------------
+            ("a writable-scope claim that omits /snapshot",
+             lambda r: dict(r, writable={
+                 scope: True for scope in review_boundary.WRITABLE_SCOPES
+                 if scope != "/snapshot"}),
+             review_boundary.WRITABLE_SCOPE_UNAVAILABLE),
+            ("a writable-scope claim that omits /scratch",
+             lambda r: dict(r, writable={
+                 scope: True for scope in review_boundary.WRITABLE_SCOPES
+                 if scope != "/scratch"}),
+             review_boundary.WRITABLE_SCOPE_UNAVAILABLE),
+            ("a writable scope that is merely truthy, not proven",
+             lambda r: dict(r, writable=dict(
+                 r["writable"], **{"/tmp": 1})),
+             review_boundary.WRITABLE_SCOPE_UNAVAILABLE),
+            ("a writable scope that reported failure",
+             lambda r: dict(r, writable=dict(
+                 r["writable"], **{"$HOME": False})),
+             review_boundary.WRITABLE_SCOPE_UNAVAILABLE),
+            ("a report with no writable-scope evidence at all",
+             lambda r: dict(r, writable=None),
+             review_boundary.WRITABLE_SCOPE_UNAVAILABLE),
+            # -- reachability ------------------------------------------------
+            ("a host path the sandbox could still see",
+             lambda r: dict(r, not_visible=dict(
+                 r["not_visible"], **{"/meta": False})),
+             review_boundary.HOST_SCOPE_REACHABLE),
+            ("a report with no reachability evidence at all",
+             lambda r: dict(r, not_visible=None),
+             review_boundary.HOST_SCOPE_REACHABLE),
+            # -- network: only "there is no network" counts as a denial ------
+            # A resolvable name IS network, even where one raw connect happens to
+            # be refused. This is the only leg that refuses it: the connect half
+            # of the same report is a textbook ENETUNREACH, so the errno rule
+            # alone would wave it through.
+            ("a report whose name resolution succeeded while connect was "
+             "refused",
+             lambda r: dict(r, network=[
+                 {"name": "dns", "allowed": True, "errno": None,
+                  "error": "succeeded"}, r["network"][1]]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a report whose connect succeeded",
+             lambda r: dict(r, network=[
+                 r["network"][0],
+                 {"name": "connect", "allowed": True, "errno": None,
+                  "error": "succeeded"}]),
+             review_boundary.NETWORK_PERMITTED),
+            # The reviewer's measurement: on a *shared* network namespace this
+            # connect times out with no errno at all, and the old check filed
+            # that as a denial.
+            ("a connect that merely timed out, carrying no errno",
+             lambda r: dict(r, network=[
+                 r["network"][0],
+                 {"name": "connect", "allowed": False, "errno": None,
+                  "error": "TimeoutError: timed out"}]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a connect refused by something that answered",
+             lambda r: dict(r, network=[
+                 r["network"][0],
+                 {"name": "connect", "allowed": False,
+                  "errno": LINUX["ECONNREFUSED"],
+                  "error": "ConnectionRefusedError: [Errno 111] Connection "
+                           "refused"}]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a connect reset mid-session",
+             lambda r: dict(r, network=[
+                 r["network"][0],
+                 {"name": "connect", "allowed": False,
+                  "errno": LINUX["ECONNRESET"],
+                  "error": "ConnectionResetError: [Errno 104] Connection reset "
+                           "by peer"}]),
+             review_boundary.NETWORK_PERMITTED),
+            # EHOSTUNREACH needs a live route to produce: it is what a rejecting
+            # firewall on a networked host answers, never what an absent network
+            # answers, so it cannot prove the boundary has no network.
+            ("a connect rejected as host-unreachable",
+             lambda r: dict(r, network=[
+                 r["network"][0],
+                 {"name": "connect", "allowed": False,
+                  "errno": LINUX["EHOSTUNREACH"],
+                  "error": "OSError: [Errno 113] No route to host"}]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a connect that timed out carrying ETIMEDOUT",
+             lambda r: dict(r, network=[
+                 r["network"][0],
+                 {"name": "connect", "allowed": False,
+                  "errno": LINUX["ETIMEDOUT"],
+                  "error": "OSError: [Errno 110] Connection timed out"}]),
+             review_boundary.NETWORK_PERMITTED),
+            # The report may not grade itself: `network_denied: true` was the
+            # old self-reported flag, and it means nothing next to a timeout.
+            ("a network denial the report graded for itself",
+             lambda r: dict(r, network=[
+                 r["network"][0],
+                 {"name": "connect", "allowed": False, "errno": None,
+                  "error": "TimeoutError: timed out"}],
+                 network_denied=True),
+             review_boundary.NETWORK_PERMITTED),
+            # Coverage: the judge scores both attempts or none of them.
+            ("a report that attempted no network call at all",
+             lambda r: dict(r, network=[]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a report that never attempted an outbound connect",
+             lambda r: dict(r, network=[r["network"][0]]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a report that never attempted a name resolution",
+             lambda r: dict(r, network=[r["network"][1]]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a report carrying an attempt profile %s does not know"
+             % review_boundary.PROFILE,
+             lambda r: dict(r, network=list(r["network"]) + [
+                 {"name": "udp", "allowed": False,
+                  "errno": LINUX["ENETUNREACH"], "error": "OSError"}]),
+             review_boundary.NETWORK_PERMITTED),
+            ("a report whose network evidence is not shaped",
+             lambda r: dict(r, network={"connect": "denied"}),
+             review_boundary.NETWORK_PERMITTED),
+            ("a report whose network attempts have no names",
+             lambda r: dict(r, network=[{"allowed": False, "errno": None},
+                                        {"allowed": False,
+                                         "errno": LINUX["ENETUNREACH"]}]),
+             review_boundary.NETWORK_PERMITTED),
+            # -- environment and cwd ----------------------------------------
+            ("an inherited environment key that survived into the sandbox",
+             lambda r: dict(r, env_keys=sorted(
+                 list(review_boundary.ALLOWED_ENV_KEYS) + ["SSH_AUTH_SOCK"])),
+             review_boundary.ENVIRONMENT_NOT_SANITIZED),
+            ("a GIT_* override that survived into the sandbox",
+             lambda r: dict(r, git_env_keys=["GIT_DIR", "GIT_WORK_TREE"]),
+             review_boundary.ENVIRONMENT_NOT_SANITIZED),
+            ("a report from the wrong cwd",
+             lambda r: dict(r, cwd="/live"),
+             review_boundary.UNSUPPORTED_RUNTIME_LAYOUT),
+            ("a report from the snapshot root instead of the pinned cwd",
+             lambda r: dict(r, cwd="/"),
+             review_boundary.UNSUPPORTED_RUNTIME_LAYOUT),
+        )
+
+        for label, lie, blocker in report_legs:
+            with self.subTest(label):
+                self._assert_refused(lie(self._report()), blocker)
+
+        observation_legs = (
+            ("sentinel bytes changed while the report claimed denial",
+             lambda o: self._lie_file(o, "source.py",
+                                      sha256_after=hashlib.sha256(
+                                          b"overwritten by the verifier").
+                                          hexdigest()),
+             review_boundary.SENTINEL_CHANGED),
+            ("sentinel mode changed",
+             lambda o: self._lie_file(o, "config.toml", mode_after=0o777),
+             review_boundary.SENTINEL_CHANGED),
+            ("sentinel size changed",
+             lambda o: self._lie_file(o, "fixture.json", size_after=9999),
+             review_boundary.SENTINEL_CHANGED),
+            ("a sentinel record that is not a record",
+             lambda o: self._lie_record(o, "test_source.py", "unreadable"),
+             review_boundary.SENTINEL_CHANGED),
+            ("the sentinel grew a file the sandbox created",
+             lambda o: self._lie_paths(o, after=list(o["paths_after"])
+                                       + ["injected-source.py"]),
+             review_boundary.SENTINEL_CHANGED),
+            ("the sentinel lost a file the sandbox unlinked",
+             lambda o: self._lie_paths(
+                 o, after=[path for path in o["paths_after"]
+                           if path != ".git/index"]),
+             review_boundary.SENTINEL_CHANGED),
+            ("the sentinel was never enumerated at all",
+             lambda o: self._lie_paths(o, before=[], after=[]),
+             review_boundary.SENTINEL_CHANGED),
+            ("one sentinel kind carries no protection record",
+             lambda o: self._lie_record(o, "fixture.json", None),
+             review_boundary.SENTINEL_CHANGED),
+            ("the supervisor recorded no observation for the report",
+             lambda o: None,
+             review_boundary.SENTINEL_CHANGED),
+            ("the sentinel is not supervisor-owned",
+             lambda o: dict(o, sentinel_root=os.path.join(self.root, ".git")),
+             review_boundary.SENTINEL_ROOT_NOT_ISOLATED),
+            ("the sentinel root is the meta directory itself",
+             lambda o: dict(o, sentinel_root=o["meta_root"]),
+             review_boundary.SENTINEL_ROOT_NOT_ISOLATED),
+            ("the sentinel root is not inside the meta directory",
+             lambda o: dict(o, sentinel_root=os.path.join(
+                 o["context_root"], review_boundary.SENTINEL_DIR)),
+             review_boundary.SENTINEL_ROOT_NOT_ISOLATED),
+            ("the sentinel would contain the review context root",
+             lambda o: dict(
+                 o,
+                 meta_root=os.path.join(self._out_tmp.name, "nested", "meta"),
+                 sentinel_root=os.path.join(self._out_tmp.name, "nested",
+                                            "meta",
+                                            review_boundary.SENTINEL_DIR),
+                 context_root=os.path.join(self._out_tmp.name, "nested", "meta",
+                                           review_boundary.SENTINEL_DIR,
+                                           "context")),
+             review_boundary.SENTINEL_ROOT_NOT_ISOLATED),
+            ("the supervisor recorded no sentinel root at all",
+             lambda o: dict(o, sentinel_root=None),
+             review_boundary.SENTINEL_ROOT_NOT_ISOLATED),
+        )
+        for label, distort, blocker in observation_legs:
+            with self.subTest(label):
+                self._assert_refused(self._report(), blocker,
+                                     observed=distort(self._observed()))
+
+        # -- what `run()` will accept as proof when it reads it back ----------
+        # The judge is only half the story: a persisted preflight record is what
+        # authorizes every later run, so the acceptance check has to
+        # discriminate on the same evidence and must not be satisfied by a claim.
+        evidence, roots = self._evidence()
+        self._assert_evidence_current(evidence, roots, True)
+
+        def without(item, key):
+            return dict((name, value) for name, value in item.items()
+                        if name != key)
+
+        def allowed_denial(item):
+            name = "overwrite-%s" % _slug(review_boundary.SENTINEL_FILES[0])
+            denials = dict(item["denials"])
+            denials[name] = dict(denials[name], allowed=True, errno=None)
+            return dict(item, denials=denials)
+
+        def missing_scope(item, scope):
+            return dict(item, writable=without(item["writable"], scope))
+
+        evidence_legs = (
+            ("evidence carrying no network denial errno",
+             lambda e: without(e, "network_denial_errno")),
+            ("evidence whose network failure proves nothing (EHOSTUNREACH)",
+             lambda e: dict(e, network_denial_errno=LINUX["EHOSTUNREACH"])),
+            ("evidence whose network failure was a timeout",
+             lambda e: dict(e, network_denial_errno=None)),
+            ("evidence that merely claims the network was denied",
+             lambda e: dict(e, network_denied=False)),
+            ("evidence recording a write the sandbox was allowed to make",
+             allowed_denial),
+            ("evidence that never proved /snapshot writable",
+             lambda e: missing_scope(e, "/snapshot")),
+            ("evidence that never proved /scratch writable",
+             lambda e: missing_scope(e, "/scratch")),
+            ("evidence with an unremoved protected sentinel",
+             lambda e: dict(e, sentinel={"removed": False})),
+        )
+        for label, distort in evidence_legs:
+            with self.subTest(label):
+                self._assert_evidence_current(distort(evidence), roots, False)
+
+        # -- the judge is on preflight's real path ---------------------------
+        # The same reports, delivered through the public entry point instead of
+        # called directly: a refusal must name its blocker, must launch nothing,
+        # and must leave behind `enforced: false` evidence rather than a passing
+        # claim. The honest case is here too, because it is what proves the
+        # canned report really reached the judge — without it every refusing leg
+        # above could be passing for the wrong reason.
+        self.prepare_v2_review()
+        timeout_report = lambda r: dict(r, network=[  # noqa: E731
+            r["network"][0],
+            {"name": "connect", "allowed": False, "errno": None,
+             "error": "TimeoutError: timed out"}])
+        cases = (
+            ("an honest report, judged through preflight", lambda r: r, None),
+            ("an allowed live write",
+             lambda r: self._lie_attempts(
+                 r, {"overwrite-%s" % _slug(review_boundary.SENTINEL_FILES[0])},
+                 allowed=True, errno=None),
+             review_boundary.LIVE_WRITE_ALLOWED),
+            ("a network timeout", timeout_report,
+             review_boundary.NETWORK_PERMITTED),
+        )
+        for index, (label, lie, blocker) in enumerate(cases):
+            with self.subTest("preflight entry point: %s" % label):
+                _context, output = self._prepare(
+                    output=self._new_output("lying-%d" % index))
+                report = lie(self._report_for_context(output))
+                calls = self._seam(self._never_launches)
+                with self._scoped("_probe_captured", self._canned_probe(report)):
+                    if blocker is None:
+                        evidence = review_boundary.preflight(output)
+                    else:
+                        with self.assertRaises(contracts.ContractError) as ctx:
+                            review_boundary.preflight(output)
+                        evidence = None
+                self.assertEqual(calls, [],
+                                 "a canned report reached the judge by "
+                                 "launching a real sandbox")
+                self.assertFalse(os.path.exists(
+                    self._meta(output, review_boundary.SENTINEL_DIR)),
+                    "preflight left its protected sentinel behind")
+                persisted = json.loads(self._read_bytes(
+                    self._meta(output, "preflight.json")).decode("utf-8"))
+                if blocker is None:
+                    self.assertIs(evidence["enforced"], True)
+                    self.assertIsNone(evidence["blocker"])
+                    self.assertEqual(persisted, evidence)
+                    self.assertEqual(
+                        evidence["network_denial_errno"],
+                        LINUX["ENETUNREACH"])
+                    self.assertEqual(sorted(evidence["sentinel"]
+                                             ["paths_before"]),
+                                     sorted(review_boundary.SENTINEL_FILES))
+                else:
+                    message = str(ctx.exception)
+                    self.assertEqual(message.split(":", 1)[0].strip(), blocker,
+                                     message)
+                    self.assertIs(persisted["enforced"], False)
+                    self.assertEqual(persisted["blocker"], blocker)
+                    self._assert_no_enforced_receipt(output)
 
     # ========================================================================
     # 2. Every unavailable or misconfigured boundary fails closed, by name.
@@ -560,6 +1259,9 @@ class ReviewBoundaryTest(V2CLITestCase):
                     review_boundary.run(output, "probe", ["true"])
             self.assertIn(review_boundary.UNAPPROVED_MOUNT_ROOT,
                           str(ctx.exception))
+            self.assertIs(review_boundary._extra_bind_specs,
+                          self._pristine_seams["_extra_bind_specs"],
+                          "the injected foreign bind outlived its subtest")
             self.assertEqual(calls, [], "an unapproved mount root was launched")
             self._assert_no_enforced_receipt(output)
 
@@ -1109,6 +1811,15 @@ class ReviewBoundaryTest(V2CLITestCase):
         self.assertEqual(boundary["denials_attempted"],
                          len(evidence["denials"]))
         self.assertEqual(boundary["writable"], evidence["writable"])
+        # The receipt carries the *proof* of the network denial, not just the
+        # claim: a run whose boundary had network must not be able to record a
+        # bare `network_denied: true`.
+        self.assertIs(boundary["network_denied"], True)
+        self.assertIn(boundary["network_denial_errno"],
+                      review_boundary.NO_NETWORK_ERRNOS,
+                      "the receipt records no no-network errno")
+        self.assertEqual(boundary["network_denial_errno"],
+                         evidence["network_denial_errno"])
 
 
 if __name__ == "__main__":
