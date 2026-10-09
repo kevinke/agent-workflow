@@ -126,6 +126,14 @@ _SENTINEL_CONTENT = {
 # A write denied with one of these errnos is a denial of the *privilege*. Any
 # other failure (ENOENT above all) means the path was not there to be denied,
 # which is not evidence of a boundary, so it fails closed too.
+# The verifier command is not started by a shell, so `run` cannot otherwise tell
+# "the boundary refused to set up" from "the verifier ran and failed quietly":
+# both can leave a nonzero status and empty output. The sandbox therefore writes
+# this marker itself, from inside, immediately before `exec`ing the reviewer's
+# command; `run` clears it first, so a stale one cannot mask a non-start.
+_START_MARKER = ".boundary-started"
+_START_SCRIPT = 't="$1"; shift; : > "$t"; exec "$@"'
+
 DENIAL_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
 # A rename or a hard link that leaves one mount for another must be refused
 # across the mount boundary; anything else would be an escape out of `/live`.
@@ -161,6 +169,7 @@ NETWORK_PERMITTED = "boundary-permits-network"
 ENVIRONMENT_NOT_SANITIZED = "inherited-environment-not-cleared"
 PROBE_REPORT_UNREADABLE = "boundary-probe-report-unreadable"
 BOUNDARY_SETUP_FAILED = "boundary-setup-failed"
+BOUNDARY_NEVER_STARTED = "boundary-never-started"
 
 _BWRAP = "bwrap"
 _GLOBAL_FLAGS = ("--unshare-all", "--new-session", "--die-with-parent",
@@ -571,10 +580,19 @@ def _runtime_args():
     return args
 
 
-def _boundary_command(roots, context_path, inner_argv, live_source=None):
+def _boundary_command(roots, context_path, inner_argv, live_source=None,
+                      start_marker=False):
     specs = _bind_specs(roots, context_path, live_source=live_source)
     _verify_bind_specs(specs, roots, live_source=live_source)
-    return _boundary_argv(_runtime_args() + _mount_args(specs), inner_argv)
+    argv = list(inner_argv)
+    if start_marker:
+        # `sh -c` here takes the reviewer's command positionally: `$1` is the
+        # marker path, and after `shift` `"$@"` is the reviewer's own argv, so
+        # no reviewer content is ever re-parsed as shell syntax. `exec` keeps
+        # the verifier's exit status and signal death as the reported status.
+        argv = ["sh", "-c", _START_SCRIPT, "review-boundary",
+                "%s/%s" % (SANDBOX_SCRATCH, _START_MARKER)] + argv
+    return _boundary_argv(_runtime_args() + _mount_args(specs), argv)
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +655,18 @@ def _pinned_paths(context):
     if plan_path:
         paths.add(plan_path)
     return sorted(paths), kinds
+
+
+def _scope_identity(entries, context):
+    """The code-scope part of a pinned identity, comparable to Task 1's capture.
+
+    The pinned set is deliberately wider than Task 1's scope (it also covers the
+    captured verification inputs), so the preparation baseline can only be
+    compared over the paths `prepare` itself hashed.
+    """
+    names = set(((context.get("scope") or {}).get("paths")) or {})
+    return review_snapshot._canonical_sha(
+        {path: entry for path, entry in entries.items() if path in names})
 
 
 def _pinned_identity(root, context):
@@ -1489,7 +1519,17 @@ def run(context_path, kind, argv):
     _require_independent_git(roots)
     # Build and verify the mount set before anything is launched: an
     # unapproved bind source must never reach the host launcher.
-    command = _boundary_command(roots, context_path, command_argv)
+    marker_host = os.path.join(roots[_SCRATCH_DIR]["host"], _START_MARKER)
+    # Cleared before the launch so a marker left by an earlier run can never
+    # stand in for a boundary that did not start this time.
+    try:
+        if os.path.lexists(marker_host):
+            os.remove(marker_host)
+    except OSError as exc:
+        raise _blocker(WRITABLE_SCOPE_UNAVAILABLE,
+                       "cannot clear the boundary start marker: %s" % exc)
+    command = _boundary_command(roots, context_path, command_argv,
+                                start_marker=True)
     evidence = _boundary_evidence(context_path, roots)
     context = _read_context(context_path)
     context_bytes_before = _read_bytes_or_none(
@@ -1500,7 +1540,19 @@ def run(context_path, kind, argv):
     before_entries, before_identity = _pinned_identity(repo, context)
     before_tree = _enumerate_tree(repo)
     if kind == "baseline":
-        _require_baseline_accepted(context_path, before_identity)
+        pinned = _require_baseline_accepted(context_path, before_identity)
+        if pinned is None:
+            # The first baseline is the preparation baseline. Tying it to Task
+            # 1's captured snapshot identity is what stops a probe-modified
+            # snapshot from promoting its own edits into "the" baseline.
+            prepared = context.get("snapshot_manifest")
+            current = _scope_identity(before_entries, context)
+            if current != prepared:
+                raise _blocker(
+                    BASELINE_IDENTITY_DRIFT,
+                    "the first baseline run must start from the prepared "
+                    "snapshot (prepared %r, snapshot now %r); restore it or "
+                    "prepare a fresh review context" % (prepared, current))
 
     run_id = uuid.uuid4().hex
     runs_dir = os.path.join(_meta_dir(context_path), _RUNS_DIR)
@@ -1544,6 +1596,24 @@ def run(context_path, kind, argv):
         raise _blocker(named,
                        "the boundary refused to start the verifier command: %s"
                        % captured_err.strip())
+
+    if not os.path.isfile(marker_host):
+        # Nothing inside the sandbox reached its start step, so this cannot be
+        # recorded as an enforced run however the status reads. A launcher that
+        # could not exec at all (wsl.exe or bwrap unreachable) leaves a nonzero
+        # status whose stderr is not bwrap's own marker, and would otherwise be
+        # filed as an ordinary verifier failure with `enforced: true`.
+        for stray in (stdout_path, stderr_path):
+            try:
+                if os.path.lexists(stray):
+                    os.remove(stray)
+            except OSError:
+                pass
+        raise _blocker(
+            BOUNDARY_NEVER_STARTED,
+            "the boundary never reached its in-sandbox start step, so the "
+            "verifier command did not run under profile %s (exit %r: %s)"
+            % (PROFILE, returncode, captured_err.strip()))
 
     after_entries, after_identity = _pinned_identity(repo, context)
     after_tree = _enumerate_tree(repo)

@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import shutil
+from contextlib import contextmanager
 import sys
 import tempfile
 import unittest
@@ -282,6 +283,22 @@ class ReviewBoundaryTest(V2CLITestCase):
     def _never_launches(command, stdout_path, stderr_path):
         raise AssertionError("the boundary must not launch: %s" % (command,))
 
+    @contextmanager
+    def _scoped(self, name, value):
+        """Patch a module attribute for ONE subtest.
+
+        `_patch` unwinds only when the whole test method ends, so a patch applied
+        inside a subTest leaks into every later subTest and silently changes what
+        they exercise: the injected foreign bind here made a downstream argv leg
+        fail for the wrong reason, so removing its guard kept the suite green.
+        """
+        original = getattr(review_boundary, name)
+        setattr(review_boundary, name, value)
+        try:
+            yield
+        finally:
+            setattr(review_boundary, name, original)
+
     def _patch(self, name, value):
         original = getattr(review_boundary, name)
         setattr(review_boundary, name, value)
@@ -291,16 +308,27 @@ class ReviewBoundaryTest(V2CLITestCase):
     # -- host-conditionality -------------------------------------------------
 
     def _unavailable(self, action):
-        """Run a host leg; on an unavailable boundary skip naming the blocker.
+        """Run a host leg; skip only if this host cannot run the boundary AT ALL.
 
-        A skip records that this host could not run the boundary. It is never
-        treated as support, and no fail-closed leg goes through here.
+        A skip may only mean "no bwrap here" or "namespaces are refused here".
+        Every other refusal is a real block or our own misconfiguration and must
+        fail: with the previous blanket handling, a mutation that dropped
+        `--unshare-all` or broke the baseline tie turned the leg into a skip, so
+        a green run never proved the boundary had been exercised.
         """
         try:
             return action()
         except contracts.ContractError as exc:
-            self.skipTest("linux-bwrap-v1 boundary is unavailable on this host, "
-                          "no support is claimed by this skip: %s" % exc)
+            blocker = str(exc).split(":", 1)[0].strip()
+            if blocker not in self._SKIP_BLOCKERS:
+                raise
+            self.skipTest(
+                "linux-bwrap-v1 boundary is unavailable on this host, no "
+                "support is claimed by this skip: %s" % exc)
+
+    # Only these two blockers describe a host that cannot provide the boundary.
+    _SKIP_BLOCKERS = (review_boundary.BWRAP_EXECUTABLE_NOT_FOUND,
+                      review_boundary.NAMESPACE_CREATION_DENIED)
 
     def _preflight_or_skip(self, output):
         return self._unavailable(lambda: review_boundary.preflight(output))
@@ -526,10 +554,10 @@ class ReviewBoundaryTest(V2CLITestCase):
             _context, output = self._prepare(
                 output=self._new_output("unapproved"))
             calls = self._seam(self._never_launches)
-            self._patch("_extra_bind_specs",
-                        lambda cp: [("--bind", "/etc", "/elsewhere")])
-            with self.assertRaises(contracts.ContractError) as ctx:
-                review_boundary.run(output, "probe", ["true"])
+            with self._scoped("_extra_bind_specs",
+                              lambda cp: [("--bind", "/etc", "/elsewhere")]):
+                with self.assertRaises(contracts.ContractError) as ctx:
+                    review_boundary.run(output, "probe", ["true"])
             self.assertIn(review_boundary.UNAPPROVED_MOUNT_ROOT,
                           str(ctx.exception))
             self.assertEqual(calls, [], "an unapproved mount root was launched")
@@ -922,11 +950,11 @@ class ReviewBoundaryTest(V2CLITestCase):
         self.assertIn(review_boundary.NAMESPACE_CREATION_DENIED,
                       str(ctx.exception))
         # The run really did reach its own launch: the accepted evidence was
-        # reused, and the refused command is the reviewer's, verbatim, after
-        # the literal `--`.
-        self.assertTrue(any("--" in command
-                            and command[command.index("--") + 1:] == refused_argv
-                            for command in refused_calls), refused_calls)
+        # reused, and the refused command is the reviewer's own, passed
+        # positionally after the literal `--`.
+        launched = [command for command in refused_calls if "--" in command]
+        self.assertTrue(launched, refused_calls)
+        self._assert_inner_command(launched[-1], refused_argv)
         self.assertEqual(self._receipt_files(output), receipts_before,
                          "a launch-time boundary failure wrote a receipt")
         self.assertEqual(sorted(os.listdir(runs_dir)), files_before,
@@ -936,6 +964,109 @@ class ReviewBoundaryTest(V2CLITestCase):
         self.assertEqual(records_before, self._record_bytes())
         self._assert_live_untouched(live)
         self.assertEqual(self._context_json_bytes(output), context_bytes_before)
+
+    def test_boundary_that_never_started_writes_no_enforced_receipt(self):
+        """A launcher failure must not be filed as an enforced verifier run.
+
+        An unreachable `wsl.exe`/`bwrap` leaves a nonzero status whose stderr is
+        not bwrap's own marker and which captured nothing — indistinguishable
+        from a verifier that failed quietly. Before this pin the run was recorded
+        with `boundary.enforced: true` and pinned a baseline although nothing had
+        started, which is the exact "no receipt claiming enforced success" the
+        plan forbids.
+        """
+        self.prepare_v2_review()
+        _context, output = self._prepare(output=self._new_output("nostart"))
+        self._preflight_or_skip(output)
+        receipts_before = self._receipt_files(output)
+
+        def launcher_failed(command, stdout_path, stderr_path):
+            # `run` re-probes the boundary through the same seam, so fail ONLY
+            # the verifier launch — identified by the start-marker wrapper that
+            # only `run` puts around the reviewer's argv. Letting the probe and
+            # version calls through keeps this leg testing the marker gate
+            # rather than one of the earlier layers that also closes.
+            if "review-boundary" not in command:
+                return real_launch(command, stdout_path, stderr_path)
+            with open(stderr_path, "wb") as fh:
+                fh.write(b"Wsl: the system cannot find the path specified.\n")
+            with open(stdout_path, "wb") as fh:
+                fh.write(b"")
+            return 4294967295
+
+        real_launch = review_boundary.launch
+
+        self._seam(launcher_failed)
+        with self.assertRaises(contracts.ContractError) as ctx:
+            review_boundary.run(output, "baseline",
+                                ["python3", "-c", UNCHANGED_COMMAND_SCRIPT])
+        self.assertIn(review_boundary.BOUNDARY_NEVER_STARTED,
+                      str(ctx.exception))
+        # `preflight` recorded genuine enforcement at the top of this test, so
+        # the claim under test is specifically that the refused run wrote no
+        # receipt and pinned no baseline.
+        self.assertEqual(self._receipt_files(output), receipts_before,
+                         "a run that never started still wrote a receipt")
+        self.assertFalse(os.path.exists(self._meta(output, "baseline.json")),
+                         "a run that never started pinned a baseline")
+
+    def test_first_baseline_must_start_from_the_prepared_snapshot(self):
+        """Probe edits cannot promote themselves into the acceptance baseline.
+
+        The first baseline used to pin whatever identity it happened to observe,
+        so a probe that edited snapshot source and then ran a `baseline` command
+        made the edited tree the new baseline and a second edited run passed.
+        The first baseline is now required to equal Task 1's captured snapshot
+        identity; a later baseline still compares against the recorded one.
+        """
+        self.prepare_v2_review()
+        _context, output = self._prepare(output=self._new_output("basepin"))
+        self._preflight_or_skip(output)
+        target = os.path.join(output, "repo", "src", "feature.py")
+        with open(target, "rb") as fh:
+            original = fh.read()
+        argv = ["python3", "-c", UNCHANGED_COMMAND_SCRIPT]
+
+        with open(target, "wb") as fh:
+            fh.write(original + b"\n# probe edit, never restored\n")
+        with self.assertRaises(contracts.ContractError) as ctx:
+            review_boundary.run(output, "baseline", argv)
+        self.assertIn(review_boundary.BASELINE_IDENTITY_DRIFT,
+                      str(ctx.exception))
+        # `preflight` legitimately recorded enforcement above, so the check here
+        # is that the refused attempt wrote neither a receipt nor a baseline.
+        self.assertEqual(self._receipt_files(output), [],
+                         "a refused baseline still wrote a receipt")
+        self.assertFalse(os.path.exists(self._meta(output, "baseline.json")),
+                         "a refused baseline pinned itself")
+
+        with open(target, "wb") as fh:
+            fh.write(original)
+        receipt = self._run_or_skip(output, "baseline", argv)
+        self.assertIs(receipt["boundary"]["enforced"], True)
+        self.assertTrue(os.path.exists(self._meta(output, "baseline.json")))
+
+    def _assert_inner_command(self, command, expected_argv):
+        """The reviewer's argv must be executed as discrete positional elements.
+
+        `run` prefixes the command with a two-statement in-sandbox wrapper so
+        the supervisor can prove the boundary actually started. The wrapper
+        receives everything positionally, so this pins both the command that
+        really runs and, more importantly, that no reviewer content was ever
+        joined into the `-c` script text.
+        """
+        self.assertIn("--", command, command)
+        inner = command[command.index("--") + 1:]
+        self.assertEqual(inner[0], "sh")
+        self.assertEqual(inner[1], "-c")
+        self.assertEqual(inner[3], "review-boundary")
+        self.assertEqual(inner[4], "/scratch/.boundary-started")
+        for element in expected_argv:
+            self.assertNotIn(element, inner[2],
+                             "reviewer content reached the wrapper script")
+        self.assertEqual(inner[5:], list(expected_argv),
+                         "the reviewer's argv was not passed verbatim and "
+                         "positionally after the start-marker wrapper")
 
     def _check_receipt_shape(self, output, receipt, kind, argv, evidence):
         """Every frozen key present, nothing invented, nothing weakened."""
