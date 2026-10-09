@@ -63,8 +63,9 @@ rewrite, new state version, global Git settings or source reformatting.
 ## Verification record
 
 Implemented on branch `harden-010`: Task 1 `376e4b6`, Task 2 `487adb7` plus
-`4830255`, final review fixes `48e2051`. Full `unittest discover -v` at
-`48e2051`: `Ran 420 tests in 417.252s`, `OK (skipped=2)`, exit 0 — the two skips
+`4830255`, whole-branch review fixes `48e2051`, and `a542486` correcting two
+claims of mine that a re-review disproved. Full `unittest discover -v` at
+`a542486`: `Ran 420 tests in 423.081s`, `OK (skipped=2)`, exit 0 — the two skips
 remain the pre-existing symlink-privilege cases. Negative control at `86a823c`
 (pre-Task 1) in a throwaway `--no-local` clone: all 39 subcases across the six
 fix-dependent pins FAIL, covering each of `assume-unchanged`, `skip-worktree`
