@@ -39,7 +39,7 @@ time). Other hosts and builds may differ. Nothing here claims the setting
 launches successfully anywhere else — success is established per host by the
 diagnostic below, never assumed.**
 
-## Isolated review support on this host: not established
+## Isolated review support for this adapter's sessions: not established
 
 The diagnostics above are launch evidence only. They establish **no**
 write-restriction proof for isolated reviewer verification
@@ -64,19 +64,34 @@ and must not be read as establishing one:
 
 Consequently **native Windows sessions and Codex Desktop/MCP are unsupported for
 isolated reviewer verification** until their actual host tool-write restriction is
-separately demonstrated on the host and build in use. In practice on this
-machine `ai-workflow run-review <ticket-id> --review-context <dir> --kind
-baseline -- <argv...>` reports a named blocker (the `linux-bwrap-v1` profile needs
-an installed `bwrap`, which this host only provides inside WSL), and
-`ai-workflow set-review … --review-context …` cannot publish a report whose
-provenance claims an enforced boundary it does not have. The correct behavior is
-to report the run as unsupported/blocked and escalate — never an automatic
-permission weakening, never a model-session retry, and never a passing isolated
-verdict from a session that could not demonstrate denial.
+separately demonstrated on the host and build in use. The thing that stays
+undemonstrated is the **session's own** write restriction: no protected sentinel was
+ever refused to a Windows or Codex session, so such a session has nothing to
+publish, because a passing isolation claim rests on the supervisor's own receipts
+and not on the session's account of itself.
 
-The one host profile that *is* demonstrated is the WSL bubblewrap boundary
-recorded in [../local-review.md](../local-review.md); that document, not this
-runbook, is the evidence source for support claims.
+That limit is about the session, not about the boundary's availability. The profile
+this project has demonstrated is bubblewrap (`linux-bwrap-v1`) inside WSL
+Ubuntu-24.04 driven by a **Windows** coordinator through `wsl.exe --exec`, so
+`ai-workflow run-review` invoked from native Windows Python on this machine does
+reach an enforced boundary and does write the receipts a guarded `set-review`
+validates against; reporting that run as blocked would be the wrong instruction.
+The evidence for the supported route is [../local-review.md](../local-review.md),
+which records that measurement — that document, not this runbook, is the evidence
+source for support claims.
+
+What a policy-rejected session loses is precisely those receipts, and that is the
+failure this runbook is about. When every shell invocation in a session is rejected
+by policy (`CreateProcess … rejected: blocked by policy`), the workflow commands
+never start at all: the session produces no `meta/runs/` receipt, no
+`meta/preflight.json`, no candidate report and nothing else publishable. That is a
+different and worse failure than a named blocker, which at least leaves the
+supervisor's own recorded refusal (`preflight` persisting `enforced: false` with
+that blocker) — and it is exactly why such a session must be reported as blocked
+rather than as verified. The correct behavior is to report the run as
+unsupported/blocked and escalate — never an automatic permission weakening, never a
+model-session retry, and never a passing isolated verdict from a session that could
+not demonstrate denial.
 
 ## Step 0 — cost-free diagnostics (no model session)
 

@@ -191,8 +191,13 @@ ai-workflow set-review <ticket-id> --verdict <pass|changes_requested> \
   snapshot-relative edits, which stay in the receipt whether or not the reviewer
   restores them. A boundary blocker exits 1 and never falls back to an
   unconstrained run; an unsupported host reports a named blocker instead of
-  support. `adapters/local-review.md` records the host actually demonstrated and
-  `adapters/codex/windows.md` records why Windows is not.
+  support. `adapters/local-review.md` records the host actually demonstrated (a
+  Windows coordinator driving `bwrap` through WSL) and
+  `adapters/codex/windows.md` records why no **Windows-native boundary** is: no
+  Windows or Codex session's own tool-write restriction has been demonstrated on
+  the host and build in use. That is a claim about the session's restriction, not
+  about the boundary's availability, which the same Windows coordinator
+  demonstrates through WSL.
 - Guarded `set-review` publishes, it does not judge: `--review-context`,
   `--report` and `--handoff` are required together, the report and handoff are
   the reviewer's own candidate bytes written under that context's `scratch/`, and

@@ -36,7 +36,10 @@ unfilled scaffold proves nothing and will be refused. Fill it from
 `meta/context.json`, `meta/preflight.json` and `meta/runs/<run_id>.json`, or
 omit the section entirely for a review that is not an isolated one.
 ARTIFACTS.md §"Verification provenance for new isolated reviews" owns the key
-list and the reserved-heading rule.
+list and the reserved-heading rule; the `probe_changes` entries below keep that
+contract's pairing rule — a path is `deleted` only when `after_sha256` is null,
+so an edited or added path carries its real `after_sha256` — and they are shape
+examples, not evidence.
 
 ## Isolation provenance
 
@@ -68,8 +71,14 @@ list and the reserved-heading rule.
     }
   ],
   "probe_changes": [
-    {"path": "<draft: snapshot-relative path a probe run named>",
-     "before_sha256": null, "after_sha256": null, "deleted": false}
+    {"path": "<draft: snapshot-relative path a probe run named, edited>",
+     "before_sha256": "<draft: receipt-era hash of the prepared bytes>",
+     "after_sha256": "<draft: hash of the bytes the snapshot holds now>",
+     "deleted": false},
+    {"path": "<draft: snapshot-relative path a probe run named, deleted>",
+     "before_sha256": "<draft: receipt-era hash of the prepared bytes>",
+     "after_sha256": null,
+     "deleted": true}
   ],
   "residual_changes": {"modified": [], "added": [], "removed": []},
   "limits": ["<what these records do and do not prove>"]

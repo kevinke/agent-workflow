@@ -236,12 +236,14 @@ One H2 heading is reserved: `## Isolation provenance`, recorded under
 `run_id`, `kind`, `argv`, `exit_code`, `stdout_sha256`, `stderr_sha256`,
 `snapshot_before` and `snapshot_after`; `boundary` carries `profile`, `enforced`,
 `preflight` and `preflight_sha256`; each `probe_changes` entry carries `path`,
-`before_sha256`, `after_sha256` and `deleted`; `residual_changes` carries
-`modified`, `added` and `removed`. Every value is read from the supervisor's own
-persisted records for that context, never retyped: `prepare-review` writes
-`meta/context.json` with the live and snapshot manifests, `run-review` writes
-`meta/preflight.json` and one receipt per verifier command, and the published
-Report must equal the reviewer's candidate bytes exactly. A Report that carries
+`before_sha256`, `after_sha256` and `deleted`, and `deleted` is true exactly when
+`after_sha256` is null — an edited or added path pairs `deleted: false` with its
+`after_sha256`, and only a deletion may carry null; `residual_changes` carries
+`modified`, `added` and `removed`. Every value the supervisor's records carry is
+read from them, never retyped: `prepare-review` writes `meta/context.json` with
+the live and snapshot manifests, `run-review` writes `meta/preflight.json` and one
+receipt per verifier command, and the published Report must equal the reviewer's
+candidate bytes exactly. A Report that carries
 this section can only be recorded through the guarded
 `set-review <ticket-id> --verdict <pass|changes_requested> --review-context <dir>
 --report <candidate-review.md> --handoff <candidate-handoff.md>`; the ordinary
@@ -274,11 +276,20 @@ evidence is now produced by the commands above rather than promised:
 `run-review` records the sentinel denials, the writable scopes, the absence of
 any live or `meta/` mount, the cleared environment and the network refusal, and
 publication refuses a provenance claim that disagrees with the persisted receipt
-in any field. What that still does not buy is stated plainly: a host without an
+in every field the supervisor actually records — each cited run's `kind`,
+`argv`, `exit_code`, `stdout_sha256`, `stderr_sha256`, `snapshot_before` and
+`snapshot_after` plus its recorded `profile`, the captured context, manifest and
+input identities, and the persisted boundary evidence — together with the rule
+that no recorded receipt may go uncited. Fields the receipts cannot corroborate
+stay reviewer-authored claims, and publication checks their shape, never their
+truth: the `limits` list, the inner commands a run's `argv` goes on to invoke,
+and a probe's `before_sha256`/`after_sha256` (a receipt names the observed paths,
+not per-path content hashes). That is precisely why those claims stay visible in
+the record. What that still does not buy is stated plainly: a host without an
 available boundary gets a named blocker and no publishable isolation provenance
 (see `adapters/local-review.md` and `adapters/codex/windows.md`), and matching
-receipts prove the recorded runs happened under the recorded mounts — they do not
-prove the review's technical judgment or its acceptance conclusion.
+receipts prove the recorded runs happened under the recorded mounts — they do
+not prove the review's technical judgment or its acceptance conclusion.
 
 Recording the verdict with `set-review <ticket-id> --verdict pass|changes_requested`
 binds it to the Review artifact's raw-byte SHA-256, the full resolved commit ID
