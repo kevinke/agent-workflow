@@ -91,11 +91,42 @@ class ReviewSnapshotTest(V2CLITestCase):
                          snap["gitdir"],
                          "a file was created or removed under .git")
 
+    def _abs_git(self, base, *args):
+        """Resolve a `rev-parse` path against its own repository, absolutely.
+
+        `--git-dir` values are relative to the invoking process's cwd, so two
+        different repositories must each be joined to their own root before
+        comparison; comparing `abspath` of both would make any two repos look
+        identical.
+        """
+        proc = subprocess.run(["git", "-C", base, "rev-parse", *args],
+                              capture_output=True, text=True, env=self._env())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        value = proc.stdout.strip()
+        if not os.path.isabs(value):
+            value = os.path.join(base, value)
+        return os.path.realpath(value)
+
     def _new_output(self, name="context"):
         """A previously-absent output directory outside the live worktree."""
         path = os.path.join(self._out_tmp.name, name)
         self.assertFalse(os.path.exists(path))
         return path
+
+    def _symlink_or_skip(self, target, link):
+        """Create a symlink, or report the leg as not run on a hostile host.
+
+        Unprivileged Windows refuses `os.symlink`; skipping loudly is honest,
+        while silently continuing would let a guard look tested when it was not.
+        """
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest("host cannot create symlinks: %s" % exc)
+
+    def _write_bytes(self, path, raw):
+        with open(path, "wb") as fh:
+            fh.write(raw)
 
     def _prepare(self, output=None, commit=None):
         """Prepare a snapshot via the public API; return (context, output)."""
@@ -155,20 +186,10 @@ class ReviewSnapshotTest(V2CLITestCase):
         # any two repositories look identical.
         clone_root = os.path.join(output, "repo")
 
-        def _abs_git(base, *args):
-            proc = subprocess.run(
-                ["git", "-C", base, "rev-parse", *args],
-                capture_output=True, text=True, env=self._env())
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-            value = proc.stdout.strip()
-            if not os.path.isabs(value):
-                value = os.path.join(base, value)
-            return os.path.realpath(value)
-
-        live_git = _abs_git(self.root, "--git-dir")
-        live_common = _abs_git(self.root, "--git-common-dir")
-        clone_git = _abs_git(clone_root, "--git-dir")
-        clone_common = _abs_git(clone_root, "--git-common-dir")
+        live_git = self._abs_git(self.root, "--git-dir")
+        live_common = self._abs_git(self.root, "--git-common-dir")
+        clone_git = self._abs_git(clone_root, "--git-dir")
+        clone_common = self._abs_git(clone_root, "--git-common-dir")
         self.assertNotEqual(clone_git, live_git,
                             "the snapshot clone shares the live Git directory")
         self.assertNotEqual(clone_common, live_common,
@@ -198,10 +219,10 @@ class ReviewSnapshotTest(V2CLITestCase):
                    for name in review.TICKET_EXEMPT_FILES}
         for path in records:
             self.assertNotIn(path, scope_paths)
-        proc = self._git("ls-files")
+        proc = self._git("ls-files", "-z")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        for path in proc.stdout.split():
-            if path not in records:
+        for path in proc.stdout.split("\0"):
+            if path and path not in records:
                 self.assertIn(path, scope_paths)
 
         # Live records, index and Git metadata are untouched.
@@ -229,34 +250,63 @@ class ReviewSnapshotTest(V2CLITestCase):
         self._unhint_and_rewind("src/feature.py")
 
     def test_distinct_eol_manifests_and_raw_inputs(self):
-        """autocrlf may diverge the source manifests, never the raw inputs."""
+        """Checkout conversion must not move the captured raw input bytes."""
         reviewed = self.prepare_v2_review()
-        # Real autocrlf conversion in the clone: CRLF in the live worktree,
-        # LF in the repository. The live manifest then differs from the
-        # snapshot manifest, but the registered Plan and configured inputs
-        # are captured by RAW BYTES and must stay exact.
-        self.assertEqual(
-            self._git("config", "core.autocrlf", "true").returncode, 0)
-        self.addCleanup(self._git, "config", "core.autocrlf", "false")
+        # Force the conversion from version-controlled attributes rather than
+        # from whatever `core.autocrlf` the host happens to carry. The live
+        # worktree keeps the LF bytes it was written with, while any checkout of
+        # the reviewed commit yields CRLF for the declared artifacts. The file
+        # sits beside the artifacts because `.ai/work/.gitattributes` installs
+        # `** -text`, and the closest .gitattributes wins.
+        attrs = Path(self.root, ".ai", "work", self.TICKET, ".gitattributes")
+        attrs.write_text("handoff.md text eol=crlf\n"
+                         "progress.md text eol=crlf\n", encoding="utf-8")
+        converted = self.commit_all("fixture: convert artifacts on checkout")
+
+        handoff_rel = ".ai/work/%s/handoff.md" % self.TICKET
+        live_handoff = Path(self.root, ".ai", "work", self.TICKET, "handoff.md")
+        live_raw = live_handoff.read_bytes()
+        self.assertNotIn(b"\r\n", live_raw,
+                         "the fixture must leave the live bytes unconverted")
+
+        # Control: prove a plain checkout of the reviewed commit really does
+        # convert the artifact. Without this, the equality assertion below could
+        # pass while raw-byte capture was doing nothing at all.
+        control = os.path.join(self._out_tmp.name, "control-clone")
+        proc = subprocess.run(["git", "clone", "--no-local", "--quiet", "--",
+                               self.root, control], capture_output=True,
+                              env=self._env())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        control_raw = Path(control, ".ai", "work", self.TICKET,
+                           "handoff.md").read_bytes()
+        self.assertIn(b"\r\n", control_raw,
+                      "the fixture did not force checkout conversion, so the "
+                      "raw-byte pin below proves nothing")
+
         plan_rel = ".ai/work/%s/plan.md" % self.TICKET
-        live_plan = Path(self.root, plan_rel)
+        live_plan = Path(self.root, ".ai", "work", self.TICKET, "plan.md")
         registered_plan_sha = contracts.sha256_file(str(live_plan))
         records_before = self._record_bytes()
 
-        context, output = self._prepare(commit=reviewed)
+        context, output = self._prepare(commit=converted)
 
-        self.assertNotEqual(context["live_manifest"],
-                            context["snapshot_manifest"])
-        snapshot_plan = Path(output, "repo", plan_rel)
-        self.assertEqual(snapshot_plan.read_bytes(), live_plan.read_bytes())
+        # The snapshot copy is the live bytes, not the converted checkout.
+        snapshot_handoff = Path(output, "repo", ".ai", "work", self.TICKET,
+                                "handoff.md")
+        self.assertEqual(snapshot_handoff.read_bytes(), live_raw)
+        self.assertNotEqual(snapshot_handoff.read_bytes(), control_raw)
+        self.assertEqual(context["inputs"][handoff_rel],
+                         hashlib.sha256(live_raw).hexdigest())
+
+        # The registered Plan stays exactly the hash it was registered under.
+        self.assertEqual(Path(output, "repo", ".ai", "work", self.TICKET,
+                              "plan.md").read_bytes(), live_plan.read_bytes())
         self.assertEqual(context["plan"]["sha256"], registered_plan_sha)
         self.assertEqual(records_before, self._record_bytes())
 
-        # The captured input hashes cover the live bytes exactly.
-        state_rel = ".ai/work/%s/state.yaml" % self.TICKET
-        self.assertEqual(
-            context["inputs"][state_rel],
-            contracts.sha256_file(os.path.join(self.root, state_rel)))
+        # Both identities are captured; a clean tree may legitimately match.
+        self.assertIsInstance(context["live_manifest"], str)
+        self.assertIsInstance(context["snapshot_manifest"], str)
 
     # -- rejection and preservation cases -------------------------------------
 
@@ -333,6 +383,103 @@ class ReviewSnapshotTest(V2CLITestCase):
             review_snapshot.prepare(self.root, self.TICKET, reviewed, blocked)
         self.assertEqual(before, self._record_bytes())
 
+    def test_capture_damage_refuses_and_rolls_back_a_packed_context(self):
+        """Capture that changes live code is refused and the context is gone."""
+        reviewed = self.prepare_v2_review()
+        # Pack the live objects so the clone inherits Git's read-only (0444)
+        # pack files. Windows refuses to delete those, and the rollback that
+        # used `shutil.rmtree(..., ignore_errors=True)` swallowed the resulting
+        # PermissionError and silently left a whole clone of the live repository
+        # on disk. Every other rejection leg in this file fails BEFORE the
+        # clone, so nothing else reached that path.
+        repack = self._git("-c", "gc.auto=0", "repack", "-a", "-d")
+        self.assertEqual(repack.returncode, 0, repack.stderr)
+        pack_dir = os.path.join(self.root, ".git", "objects", "pack")
+        self.assertTrue([f for f in os.listdir(pack_dir)
+                         if f.endswith(".pack")],
+                        "repack produced no pack; this leg would prove nothing")
+
+        output = self._new_output("damage-out")
+        source = os.path.join(self.root, "src", "feature.py")
+        with open(source, "rb") as fh:
+            original = fh.read()
+
+        real_copy = review_snapshot._copy_raw_inputs
+
+        def copy_then_damage(*args):
+            real_copy(*args)
+            # Simulate a capture step that damages live source. Only the
+            # post-capture drift check stands between this and a persisted
+            # context that misrepresents the reviewed code.
+            self._write_bytes(source, original + b"# injected during capture\n")
+
+        def restore():
+            review_snapshot._copy_raw_inputs = real_copy
+            self._write_bytes(source, original)
+
+        try:
+            review_snapshot._copy_raw_inputs = copy_then_damage
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review_snapshot.prepare(self.root, self.TICKET, reviewed, output)
+            self.assertIn("changed since", str(ctx.exception))
+            self.assertFalse(os.path.exists(output))
+        finally:
+            # Restored here rather than with addCleanup: unittest runs cleanups
+            # after tearDown, which has already deleted the fixture repository.
+            restore()
+
+    def test_capture_oserror_is_a_contract_error_not_a_traceback(self):
+        """An OSError anywhere in capture is the module's stated failure."""
+        reviewed = self.prepare_v2_review()
+        real_clone = review_snapshot._clone
+
+        def clone_boom(*args):
+            raise OSError("simulated capture failure")
+
+        review_snapshot._clone = clone_boom
+        output = self._new_output("clone-oserror")
+        try:
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review_snapshot.prepare(self.root, self.TICKET, reviewed, output)
+        finally:
+            review_snapshot._clone = real_clone
+        self.assertIn("simulated capture failure", str(ctx.exception))
+        self.assertFalse(os.path.exists(output))
+
+        # The pre-capture pass carries the same contract, and a refusal there
+        # must not create the output directory at all.
+        real_scope = review_snapshot._scope_paths
+
+        def scope_boom(*args):
+            raise OSError("simulated scope failure")
+
+        review_snapshot._scope_paths = scope_boom
+        output = self._new_output("scope-oserror")
+        try:
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review_snapshot.prepare(self.root, self.TICKET, reviewed, output)
+        finally:
+            review_snapshot._scope_paths = real_scope
+        self.assertIn("simulated scope failure", str(ctx.exception))
+        self.assertFalse(os.path.exists(output))
+
+    def test_assert_current_oserror_is_a_contract_error(self):
+        """Re-validating against an unreadable live tree fails as contracted."""
+        reviewed = self.prepare_v2_review()
+        context, output = self._prepare(commit=reviewed)
+        real_manifest = review_snapshot._manifest
+
+        def manifest_boom(*args):
+            raise OSError("simulated live read failure")
+
+        review_snapshot._manifest = manifest_boom
+        try:
+            with self.assertRaises(contracts.ContractError) as ctx:
+                review_snapshot.assert_current(self.root, self.TICKET, output)
+        finally:
+            review_snapshot._manifest = real_manifest
+        self.assertIn("simulated live read failure", str(ctx.exception))
+
     def test_unsafe_input_scopes_reject(self):
         """External/escaping inputs, external links and submodules refuse."""
         reviewed = self.prepare_v2_review()
@@ -402,40 +549,93 @@ class ReviewSnapshotTest(V2CLITestCase):
         # A symlink inside the repo pointing outside it. Creating a symlink
         # needs a privilege Windows does not grant by default (the same
         # limitation the suite's two pre-existing archive/plan symlink cases
-        # skip on), so the leg is exercised where the host allows it and
-        # otherwise reported as not run rather than silently dropped.
+        # skip on), so the leg is reported as skipped rather than passing
+        # without having run.
         link = os.path.join(self.root, "src", "external_link.py")
-        try:
-            os.symlink(os.path.join(self._out_tmp.name, "outside.txt"), link)
-        except (OSError, NotImplementedError):
-            link = None
-        if link is not None:
-            # Commit the link so it belongs to the reviewed tree: an
-            # uncommitted one would be rejected as drift before the symlink
-            # shape check ran.
-            link_reviewed = self.commit_all("fixture: add escaping symlink")
-            output = self._new_output("link-out")
-            with self.assertRaises(contracts.ContractError) as ctx:
-                review_snapshot.prepare(self.root, self.TICKET, link_reviewed,
-                                        output)
-            self.assertIn("symlink", str(ctx.exception))
-            self.assertFalse(os.path.exists(output))
+        self._symlink_or_skip(
+            os.path.join(self._out_tmp.name, "outside.txt"), link)
+        # Commit the link so it belongs to the reviewed tree: an
+        # uncommitted one would be rejected as drift before the symlink
+        # shape check ran.
+        link_reviewed = self.commit_all("fixture: add escaping symlink")
+        output = self._new_output("link-out")
+        with self.assertRaises(contracts.ContractError) as ctx:
+            review_snapshot.prepare(self.root, self.TICKET, link_reviewed,
+                                    output)
+        self.assertIn("symlink", str(ctx.exception))
+        self.assertFalse(os.path.exists(output))
+
+    def test_directory_symlinks_are_classified_not_followed(self):
+        """A link to a directory is a symlink: in-repo kept, out-repo refused."""
+        reviewed = self.prepare_v2_review()
+        pkg = os.path.join(self.root, "pkg")
+        os.makedirs(pkg, exist_ok=True)
+        with open(os.path.join(pkg, "real.txt"), "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+        self.commit_all("fixture: add a package directory")
+
+        # A tracked symlink to an IN-REPO directory is an ordinary symlink.
+        # `os.path.isdir` follows the link, so the tracked pass read it as a
+        # gitlink and refused the whole preparation as a submodule.
+        inside_link = os.path.join(self.root, "link_dir")
+        self._symlink_or_skip("pkg", inside_link)
+        link_reviewed = self.commit_all("fixture: track a directory symlink")
+        context, output = self._prepare(commit=link_reviewed)
+        self.assertEqual(context["scope"]["paths"]["link_dir"], "symlink")
+        self.assertTrue(os.path.islink(os.path.join(output, "repo", "link_dir")),
+                        "the snapshot must carry the link, not its target")
+
+        # A symlink to a directory OUTSIDE the repo must be refused, not quietly
+        # dropped. The untracked pass used to classify it with `os.path.isdir`,
+        # see a directory and omit it, so the persisted scope under-reported
+        # what the reviewer was shown and `_check_symlink` never ran.
+        out_dir = os.path.join(self._out_tmp.name, "outside-dir")
+        os.makedirs(out_dir, exist_ok=True)
+        escape_link = os.path.join(self.root, "zz_escaping_dir")
+        self._symlink_or_skip(out_dir, escape_link)
+        with self.assertRaises(contracts.ContractError) as ctx:
+            review_snapshot._scope_paths(self.root, self.TICKET)
+        self.assertIn("symlink", str(ctx.exception))
 
     def test_linked_worktree_is_presented_as_snapshot(self):
         """A linked worktree's context resolves against the linked root."""
-        reviewed = self.prepare_v2_review()
-        context, output = self._prepare(commit=reviewed)
-        # The clone is an ordinary (non-linked) worktree of its own Git dir;
-        # HEAD resolves to the reviewed commit inside the snapshot.
+    def test_linked_worktree_is_presented_as_snapshot(self):
+        """A linked worktree's context resolves against the linked root."""
+        self.prepare_v2_review()
+        # A real linked worktree: `--git-dir` and `--git-common-dir` differ, so
+        # the shared-metadata case this fixture must survive actually exists.
+        linked = os.path.join(self._out_tmp.name, "linked-worktree")
+        add = self._git("worktree", "add", "--detach", "-q", linked, "HEAD")
+        self.assertEqual(add.returncode, 0, add.stdout + add.stderr)
+        linked_git = self._abs_git(linked, "--git-dir")
+        linked_common = self._abs_git(linked, "--git-common-dir")
+        self.assertNotEqual(linked_git, linked_common,
+                            "the fixture made an ordinary clone, not a linked "
+                            "worktree; this leg would prove nothing")
+
+        head = subprocess.run(["git", "-C", linked, "rev-parse", "HEAD"],
+                              capture_output=True, text=True, env=self._env())
+        self.assertEqual(head.returncode, 0, head.stderr)
+        output = self._new_output("linked-context")
+        context = review_snapshot.prepare(linked, self.TICKET,
+                                          head.stdout.strip(), output)
+        self.assertEqual(context["live_root"], os.path.realpath(linked))
+        self.assertEqual(context["reviewed_commit"], head.stdout.strip())
+
+        # The snapshot is an independent repository, not a second worktree over
+        # the shared object store: `--is-inside-work-tree` cannot tell those
+        # apart, so compare the resolved Git directories themselves.
         clone_root = os.path.join(output, "repo")
-        proc = subprocess.run(
-            ["git", "-C", clone_root, "rev-parse", "--is-inside-work-tree"],
-            capture_output=True, text=True, env=self._env())
-        self.assertEqual(proc.stdout.strip(), "true")
-        # assert_current accepts the freshly prepared context.
-        current = review_snapshot.assert_current(self.root, self.TICKET,
-                                                 output)
-        self.assertEqual(current, context)
+        self.assertNotEqual(self._abs_git(clone_root, "--git-dir"), linked_git,
+                            "the snapshot clone shares the linked worktree dir")
+        self.assertNotEqual(self._abs_git(clone_root, "--git-common-dir"),
+                            linked_common,
+                            "the snapshot clone shares the live object store")
+        self.assertEqual(self._abs_git(clone_root, "--git-dir"),
+                         self._abs_git(clone_root, "--git-common-dir"),
+                         "the snapshot clone must be an ordinary repository")
+        self.assertEqual(review_snapshot.assert_current(linked, self.TICKET,
+                                                        output), context)
 
     def test_assert_current_rejects_changed_and_missing_inputs(self):
         """Changed live code stales a context; a missing input rejects it."""

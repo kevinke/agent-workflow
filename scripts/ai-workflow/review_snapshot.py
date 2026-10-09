@@ -22,6 +22,7 @@ canonical JSON of the manifest map (``sort_keys=True``,
 ``separators=(",", ":")``).
 """
 
+import contextlib
 import hashlib
 import json
 import os
@@ -52,6 +53,56 @@ _INPUT_KEYS = ("evidence", "evidence_audit", "decision", "progress", "handoff")
 # Canonical JSON for manifest identities.
 _JSON_SEPARATORS = (",", ":")
 
+# Tracked index modes: a gitlink cannot be hashed as ordinary content, and a
+# 120000 blob is a symlink rather than a directory even when its target is one.
+_MODE_GITLINK = "160000"
+_MODE_SYMLINK = "120000"
+
+
+@contextlib.contextmanager
+def _io_contract(action):
+    """Translate an OSError raised inside `action` into the module contract.
+
+    `prepare` and `assert_current` promise `contracts.ContractError` for every
+    failure; a raw OSError would reach the CLI as a traceback instead of exit 1
+    and, inside `prepare`, would escape before the rollback ran.
+    """
+    try:
+        yield
+    except OSError as exc:
+        raise contracts.ContractError(
+            "%s: %s" % (action, exc))
+
+
+def _remove_tree(path):
+    """Delete a whole context tree, then prove it is gone.
+
+    `git clone --no-local` writes pack objects with mode 0444, and Windows
+    refuses to delete a read-only file. `shutil.rmtree(..., ignore_errors=True)`
+    swallows that and silently leaves a full clone of the live repository
+    behind, so the read-only bits are cleared first and the removal is checked.
+    """
+    if not os.path.lexists(path):
+        return
+    for dirpath, dirnames, filenames in os.walk(path):
+        for name in dirnames + filenames:
+            full = os.path.join(dirpath, name)
+            try:
+                if not os.access(full, os.W_OK):
+                    os.chmod(full, stat.S_IWRITE | stat.S_IREAD)
+            except OSError:
+                pass  # rmtree below reports anything genuinely undeletable
+    try:
+        shutil.rmtree(path)
+    except OSError as exc:
+        raise contracts.ContractError(
+            "cannot remove the failed review snapshot directory %r; it may "
+            "still hold a clone of the live repository: %s" % (path, exc))
+    if os.path.lexists(path):
+        raise contracts.ContractError(
+            "the failed review snapshot directory %r still exists after "
+            "removal; it may still hold a clone of the live repository" % path)
+
 
 def _run_git(root, args, env=None):
     """Run `git --no-optional-locks -C root <args>`; bytes out, no shell."""
@@ -72,6 +123,31 @@ def _git_out(root, args, env=None):
     return proc.stdout.decode("utf-8", "surrogateescape")
 
 
+def _input_sha(full, rel):
+    """SHA-256 of a captured file, naming it if the file cannot be read."""
+    try:
+        return contracts.sha256_file(full)
+    except OSError as exc:
+        raise contracts.ContractError(
+            "cannot hash verification input %r: %s" % (rel, exc))
+
+
+def _manifest_delta(entries, scope_paths):
+    """Attribute a live-manifest mismatch as far as the persisted scope allows.
+
+    Only the manifest identity is persisted, not a hash per path, so a content
+    change is reported as an identity move; paths that vanished are nameable
+    because the persisted scope lists them.
+    """
+    gone = sorted(set(scope_paths) - set(entries))
+    if not gone:
+        return "in-scope content or modes changed"
+    shown = ", ".join(gone[:5])
+    if len(gone) > 5:
+        shown += " (+%d more)" % (len(gone) - 5)
+    return "in-scope path(s) no longer hashable: %s" % shown
+
+
 def _canonical_sha(mapping):
     """SHA-256 of the UTF-8 canonical JSON of a manifest map."""
     raw = json.dumps(mapping, sort_keys=True,
@@ -87,7 +163,7 @@ def _load_state(root, ticket_id):
             % ticket_id)
     try:
         data = state.load_file(path)
-    except state.StateError as exc:
+    except (state.StateError, OSError) as exc:
         raise contracts.ContractError(str(exc))
     try:
         workflow_v2.version(data)
@@ -182,18 +258,18 @@ def _scope_paths(root, ticket_id):
     records = _record_paths(ticket_id)
     paths = []
     kinds = {}
-    for path in _git_out(root, ["ls-files", "-z"]).split("\0"):
+    for entry in _git_out(root, ["ls-files", "-s", "-z"]).split("\0"):
+        if not entry:
+            continue
+        header, _, path = entry.partition("\t")
         if not path or path in records:
             continue
-        if os.path.isdir(os.path.join(root, path)):
-            # A gitlink (submodule) is a directory at a tracked path.
+        if header.split(" ")[0] == _MODE_GITLINK:
             raise contracts.ContractError(
                 "cannot prepare a review snapshot: submodule %r is in scope; "
                 "submodules are not supported in this profile" % path)
         full = os.path.join(root, path)
-        kind = "symlink" if os.path.islink(full) else "file"
-        _check_symlink(root, full, path)
-        kinds[path] = kind
+        kinds[path] = _worktree_kind(root, full, path)
         paths.append(path)
     for path in _git_out(
             root, ["ls-files", "-z", "--others",
@@ -201,14 +277,43 @@ def _scope_paths(root, ticket_id):
         if not path or path in records or path in kinds:
             continue
         full = os.path.join(root, path)
-        if os.path.isdir(full):
-            continue  # untracked directories contain only ignored/listed files
-        kind = "symlink" if os.path.islink(full) else "file"
-        _check_symlink(root, full, path)
-        kinds[path] = kind
+        if _is_plain_directory(full):
+            continue  # untracked directories are reported through their contents
+        kinds[path] = _worktree_kind(root, full, path)
         paths.append(path)
     ignore_rules = _ignore_rules(root)
     return sorted(paths), kinds, ignore_rules
+
+
+def _is_plain_directory(full):
+    """True for a real directory; False for a symlink that points at one."""
+    try:
+        return stat.S_ISDIR(os.lstat(full).st_mode)
+    except OSError:
+        return False
+
+
+def _worktree_kind(root, full, rel):
+    """Classify an in-scope path from its own lstat; reject odd shapes.
+
+    Classification must not follow the link: `os.path.isdir` reports a symlink to
+    a directory as a directory, which would both mislabel an in-repo directory
+    symlink as a submodule and silently drop an out-repo one from scope, so an
+    escaping link would be omitted rather than refused.
+    """
+    st = os.lstat(full)
+    if stat.S_ISLNK(st.st_mode):
+        _check_symlink(root, full, rel)
+        return "symlink"
+    if stat.S_ISDIR(st.st_mode):
+        raise contracts.ContractError(
+            "cannot prepare a review snapshot: %r is a directory at a tracked "
+            "path that is not a gitlink" % rel)
+    if stat.S_ISREG(st.st_mode):
+        return "file"
+    raise contracts.ContractError(
+        "cannot prepare a review snapshot: %r is neither a regular file nor a "
+        "symlink" % rel)
 
 
 def _ignore_rules(root):
@@ -252,17 +357,13 @@ def _manifest(root, paths, kinds):
             continue
         st = os.lstat(full)
         mode = stat.S_IMODE(st.st_mode)
-        if kinds.get(path) == "symlink" and os.path.islink(full):
+        if stat.S_ISLNK(st.st_mode):
+            kind = "symlink"
             digest = hashlib.sha256(os.readlink(full).encode(
                 "utf-8", "surrogateescape")).hexdigest()
-            kind = "symlink"
-        elif os.path.islink(full):
-            digest = hashlib.sha256(os.readlink(full).encode(
-                "utf-8", "surrogateescape")).hexdigest()
-            kind = "symlink"
-        elif os.path.isfile(full):
-            digest = contracts.sha256_file(full)
+        elif stat.S_ISREG(st.st_mode):
             kind = "file"
+            digest = contracts.sha256_file(full)
         else:
             continue
         entries[path] = {"kind": kind, "sha256": digest, "mode": mode}
@@ -361,6 +462,9 @@ def _copy_raw_inputs(root, clone_root, inputs):
 
 def _clone(root, clone_root, full_oid):
     """Independent clone (`--no-local --no-checkout`) checked out at the OID."""
+    # No OSError handler here: `prepare` shields the whole capture pass, and an
+    # inner translation would escape the outer guard. Git is already reached by
+    # the drift and scope passes before this runs.
     proc = subprocess.run(
         ["git", "clone", "--no-local", "--no-checkout", "--", root,
          clone_root], capture_output=True)
@@ -418,9 +522,12 @@ def prepare(root, ticket_id, reviewed_commit, output):
     plan_path = (plan_ref.get("path") or "").replace("\\", "/")
     _require_clean_drift(root, ticket_id, full_oid, plan_path)
 
-    paths, kinds, ignore_rules = _scope_paths(root, ticket_id)
-    live_entries = _manifest(root, paths, kinds)
-    inputs = _configured_inputs(root, ticket_id, data)
+    with _io_contract(
+            "cannot prepare a review snapshot: cannot read the in-scope "
+            "repository content"):
+        paths, kinds, ignore_rules = _scope_paths(root, ticket_id)
+        live_entries = _manifest(root, paths, kinds)
+        inputs = _configured_inputs(root, ticket_id, data)
 
     try:
         os.makedirs(output)
@@ -429,23 +536,23 @@ def prepare(root, ticket_id, reviewed_commit, output):
             "cannot create the review snapshot output directory %r: %s"
             % (output, exc))
     try:
-        clone_root = os.path.join(output, _REPO_DIR)
-        _clone(root, clone_root, full_oid)
-        _copy_raw_inputs(root, clone_root, inputs)
-        os.makedirs(os.path.join(output, _SCRATCH_DIR), exist_ok=True)
-        snapshot_entries = _manifest(clone_root, paths, kinds)
-        # The post-capture drift check proves capture itself changed nothing.
-        _require_clean_drift(root, ticket_id, full_oid, plan_path)
+        with _io_contract(
+                "cannot prepare a review snapshot: cannot capture the "
+                "snapshot content"):
+            clone_root = os.path.join(output, _REPO_DIR)
+            _clone(root, clone_root, full_oid)
+            _copy_raw_inputs(root, clone_root, inputs)
+            os.makedirs(os.path.join(output, _SCRATCH_DIR), exist_ok=True)
+            snapshot_entries = _manifest(clone_root, paths, kinds)
+            # The post-capture drift check proves capture itself changed
+            # nothing; it runs against the live repository, not the snapshot.
+            _require_clean_drift(root, ticket_id, full_oid, plan_path)
 
         state_rel = os.path.join(".ai", "work", ticket_id,
                                  "state.yaml").replace("\\", "/")
         input_hashes = {}
         for rel, full in inputs:
-            try:
-                input_hashes[rel] = contracts.sha256_file(full)
-            except OSError as exc:
-                raise contracts.ContractError(
-                    "cannot hash verification input %r: %s" % (rel, exc))
+            input_hashes[rel] = _input_sha(full, rel)
         plan_full = os.path.join(root, plan_path)
         manifest = {
             "format_version": FORMAT_VERSION,
@@ -453,7 +560,7 @@ def prepare(root, ticket_id, reviewed_commit, output):
             "live_root": os.path.realpath(root),
             "reviewed_commit": full_oid,
             "plan": {"path": plan_path,
-                     "sha256": contracts.sha256_file(plan_full)},
+                     "sha256": _input_sha(plan_full, plan_path)},
             "inputs": input_hashes,
             "state_sha256": input_hashes.get(state_rel),
             "scope": {
@@ -467,7 +574,10 @@ def prepare(root, ticket_id, reviewed_commit, output):
         }
         _write_context(output, manifest)
     except BaseException:
-        shutil.rmtree(output, ignore_errors=True)
+        # Any failure removes the whole context. Raising inside the handler
+        # chains the original cause, so a rollback that itself fails reports
+        # both rather than silently leaving a clone of the live repository.
+        _remove_tree(output)
         raise
     return manifest
 
@@ -504,26 +614,28 @@ def assert_current(root, ticket_id, context_path):
 
     full_oid = review.resolve_commit(root, manifest.get("reviewed_commit"))
     scope = manifest.get("scope") or {}
-    scope_paths = sorted((scope.get("paths") or {}).keys())
     kinds = scope.get("paths") or {}
-    live_entries = _manifest(root, scope_paths, kinds)
-    if _canonical_sha(live_entries) != manifest.get("live_manifest"):
-        raise contracts.ContractError(
-            "the live repository no longer matches the captured review "
-            "context baseline (live manifest changed)")
-
-    inputs = manifest.get("inputs") or {}
-    for rel, expected in inputs.items():
-        full = os.path.join(root, rel)
-        if not os.path.exists(full):
+    scope_paths = sorted(kinds.keys())
+    with _io_contract("cannot re-validate the review context"):
+        live_entries = _manifest(root, scope_paths, kinds)
+        if _canonical_sha(live_entries) != manifest.get("live_manifest"):
             raise contracts.ContractError(
-                "captured verification input %r is missing from the live "
-                "repository" % rel)
-        if contracts.sha256_file(full) != expected:
-            raise contracts.ContractError(
-                "captured verification input %r changed since the review "
-                "context was prepared" % rel)
+                "the live repository no longer matches the captured review "
+                "context baseline (live manifest changed; %s)"
+                % _manifest_delta(live_entries, scope_paths))
 
-    plan_path = ((manifest.get("plan") or {}).get("path") or "")
-    _require_clean_drift(root, ticket_id, full_oid, plan_path)
+        inputs = manifest.get("inputs") or {}
+        for rel, expected in inputs.items():
+            full = os.path.join(root, rel)
+            if not os.path.exists(full):
+                raise contracts.ContractError(
+                    "captured verification input %r is missing from the live "
+                    "repository" % rel)
+            if _input_sha(full, rel) != expected:
+                raise contracts.ContractError(
+                    "captured verification input %r changed since the review "
+                    "context was prepared" % rel)
+
+        plan_path = ((manifest.get("plan") or {}).get("path") or "")
+        _require_clean_drift(root, ticket_id, full_oid, plan_path)
     return manifest
