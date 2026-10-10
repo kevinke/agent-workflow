@@ -19,6 +19,43 @@ restriction is only what the host actually enforces.
 
 ## Usage
 
+### Coordinator entry routes
+
+The CLI selects by its actual process platform (`os.name` / `sys.platform`),
+not by the Harness name or by guessing from a Linux-looking string:
+
+- **Windows Python, local drive repository:** the coordinator stays Windows;
+  the boundary launches the resolved WSL2 distro using `wsl.exe -d <name>
+  --exec`. Local bind sources are translated with that distro's `wslpath`.
+- **Windows Python, WSL UNC repository:** before command dispatch, including
+  snapshot preparation, the CLI re-enters the corresponding distro using Linux
+  `python3`. Both `\\wsl$` and `\\wsl.localhost` name the same Linux root.
+  Windows launchers that cannot open a UNC cwd can use a locally readable kit:
+  `python <kit>/scripts/ai-workflow/main.py --repo <UNC-root> <command> ...`.
+- **Linux Python inside WSL:** the coordinator and boundary run in that Linux
+  distro. Normal Linux coordinators remain supported by the same measured
+  boundary, subject to its existing host preflight.
+
+`AI_WORKFLOW_BWRAP_DISTRO` selects the Windows local-drive distro. An override
+conflicting with a UNC root or a running Linux coordinator is refused. Generic
+UNC shares, drive-relative Windows paths and WSL1 cannot enter this route.
+Host path options are translated before the verifier separator; verifier argv
+after `--` is opaque, never passed through a login shell.
+
+New `meta/context.json` manifests add `execution_host` (coordinator platform and
+actual distro). Run and publication check it before launching or writing a
+verdict. Keep prepare/run/set-review on that same route; changing coordinator or
+distro requires a fresh context. Legacy manifests still require their exact
+`live_root` and all existing raw-byte bindings; no context identity is rewritten.
+Preparation checks WSL2/Linux Python and path representability. It does not
+claim bwrap enforcement: the existing boundary preflight measures that before
+the first verifier run and may still report a host blocker.
+
+All CLI text streams are UTF-8, including when redirected with a legacy
+`PYTHONIOENCODING`. Pipe callers must use explicit `encoding="utf-8"` when
+decoding CLI text. Snapshot inputs, archives, captured verifier stdout/stderr,
+receipts and their SHA-256 identities remain raw bytes.
+
 ```
 ai-workflow prepare-review <ticket-id> --commit <literal-oid> --output <new-directory>
 ai-workflow run-review <ticket-id> --review-context <new-directory> --kind baseline -- <argv...>

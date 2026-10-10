@@ -660,7 +660,7 @@ class V2CLITestCase(IndexHintFixture, unittest.TestCase):
     def cli(self, *args):
         """Run the real CLI with cwd=temp repo; return CompletedProcess."""
         return subprocess.run([sys.executable, KIT_CLI] + list(args),
-                              capture_output=True, text=True,
+                              capture_output=True, text=True, encoding="utf-8",
                               cwd=self.root, env=self._env())
 
     # -- state access ------------------------------------------------------------

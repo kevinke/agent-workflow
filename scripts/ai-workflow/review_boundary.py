@@ -40,9 +40,9 @@ therefore computed by the supervisor from raw bytes on the host side, never from
 
 One explicit host path translator
 ---------------------------------
-``linux_path`` is the only path translation in this module: a Windows
-``C:\\Users\\...\\Temp\\x`` becomes ``/mnt/c/Users/.../Temp/x`` for the bind
-source. MSYS/Git-Bash mangling is never relied on — it is a shell concern, and
+``linux_path`` uses the selected WSL2 distro's ``wslpath`` for each Windows
+bind source (normally ``C:\\Users\\...`` becomes ``/mnt/c/Users/...``).
+MSYS/Git-Bash mangling is never relied on — it is a shell concern, and
 this module never uses a shell. Note that ``wsl.exe -- <argv>`` re-parses argv
 through the default Linux shell; this module uses ``wsl.exe --exec`` so the
 argv list reaches ``bwrap`` verbatim and no reviewer-supplied word can be
@@ -82,6 +82,7 @@ import tempfile
 import uuid
 
 import contracts
+import host_runtime
 import review_snapshot
 
 __all__ = ["preflight", "run", "PROFILE", "KINDS", "launch", "linux_path",
@@ -244,8 +245,8 @@ def linux_path(path):
     """Translate one host path into the Linux sandbox's view of it.
 
     This is the module's only path translation, used for every bind source.
-    Windows `C:\\Users\\...\\Temp\\x` is `/mnt/c/Users/.../Temp/x` for
-    `wsl.exe`; a POSIX supervisor path is already correct. Nothing here relies
+    Windows drive paths are resolved by the selected WSL2 distro's `wslpath`;
+    a POSIX supervisor path is already correct. Nothing here relies
     on MSYS or Git-Bash path mangling, which is a shell concern — this module
     never goes through a shell. A path that cannot be expressed (a UNC share)
     is refused rather than passed through untranslated.
@@ -256,7 +257,7 @@ def linux_path(path):
     normalized = absolute.replace("\\", "/")
     if len(normalized) >= 3 and normalized[1] == ":" \
             and normalized[0].isalpha() and normalized[2] == "/":
-        return "/mnt/%s%s" % (normalized[0].lower(), normalized[2:])
+        return host_runtime.path_in_wsl(absolute, host_runtime.wsl_distro())
     if normalized.startswith("//"):
         raise contracts.ContractError(
             "%s: the review context path %r is on a UNC share, which profile "
@@ -268,8 +269,10 @@ def linux_path(path):
 
 
 def _wsl_distro():
-    """Optional distro override; the WSL default is used when it is unset."""
-    return os.environ.get("AI_WORKFLOW_BWRAP_DISTRO") or None
+    """Canonical selected distro on Windows, actual running distro on Linux."""
+    if os.name == "nt":
+        return host_runtime.wsl_distro()
+    return os.environ.get("WSL_DISTRO_NAME") or None
 
 
 def launcher_prefix():

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,10 +28,38 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import contracts  # noqa: E402
 import review  # noqa: E402
 import review_snapshot  # noqa: E402
+import host_runtime  # noqa: E402
 from v2_support import V2CLITestCase  # noqa: E402
 
 
 class ReviewSnapshotTest(V2CLITestCase):
+    def test_context_rejects_another_coordinator_or_distro(self):
+        self.prepare_v2_review()
+        context, output = self._prepare()
+        original = host_runtime.review_runtime()
+        self.assertEqual(context["execution_host"], original)
+        for changed in (dict(original, platform="another-platform"),
+                        dict(original, distro="another-distro")):
+            with self.subTest(changed=changed), \
+                    mock.patch.object(host_runtime, "review_runtime", return_value=changed), \
+                    self.assertRaisesRegex(contracts.ContractError, "runtime-mismatch"):
+                review_snapshot.assert_current(self.root, self.TICKET, output)
+        review_snapshot.assert_current(self.root, self.TICKET, output)
+
+    def test_legacy_context_still_requires_exact_live_root(self):
+        self.prepare_v2_review()
+        context, output = self._prepare()
+        context.pop("execution_host")
+        path = os.path.join(output, "meta", "context.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(context, fh)
+        review_snapshot.assert_current(self.root, self.TICKET, output)
+        context["live_root"] = "wrong-platform-root"
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(context, fh)
+        with self.assertRaisesRegex(contracts.ContractError, "live_root"):
+            review_snapshot.assert_current(self.root, self.TICKET, output)
+
     # -- fixture helpers -----------------------------------------------------
 
     def setUp(self):

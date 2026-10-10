@@ -45,6 +45,39 @@ python /path/to/agent-workflow/scripts/ai-workflow/main.py init --with-skills
 
 > **dogfood 隔离**：`init --with-skills` 把协议+模板+技能全装进目标仓库，不依赖也不写 harness 全局 skill 库，删仓库即清理干净，不影响其他仓库。两种技能放置方式的取舍见 [docs/users/adopting-existing.md](docs/users/adopting-existing.md)。
 
+### Windows / WSL 入口与编码
+
+入口按 Python 进程的真实平台选路线：Windows 本地盘使用原生协调器，
+`run-review` 经已安装的 WSL2 发行版执行 `linux-bwrap-v1`；Windows 打开
+`\\wsl$\<发行版>\...` 或 `\\wsl.localhost\<发行版>\...` 仓库时，整个 CLI
+在执行命令前交给该发行版的 Linux `python3`，包括 `prepare-review`。
+直接在 WSL 内调用 Linux Python 也可用。交接使用参数列表和 `--exec`，
+verifier 的 `--` 后参数保持原样。
+
+```powershell
+# 不必先让 Windows 打开 UNC cwd；kit 可保留在本地盘。
+python D:\Code\agent-workflow\scripts\ai-workflow\main.py --repo "\\wsl$\Ubuntu-24.04\home\kevin\中文 项目" status
+```
+
+`--repo <仓库>` 是命令前的可选全局参数；省略时使用当前目录。Windows
+默认发行版会被解析为实际名称，也可设置 `AI_WORKFLOW_BWRAP_DISTRO`。
+该设置与 UNC 中的发行版冲突、普通网络共享、WSL1 或缺失的 Linux Python
+会提前报错。本地盘路径由选定发行版的 `wslpath` 转换。新审查上下文绑定
+协调器平台和发行版，prepare、run、set-review 应始终走同一路线；改变路线
+时重新 prepare。prepare 检查启动环境和路径；真正的 bwrap 隔离能力仍由
+run-review 的 preflight 证明，失败时不运行 verifier。
+
+CLI 的 stdout/stderr 文本固定为 UTF-8，调用方应显式解码，例如：
+
+```python
+subprocess.run([sys.executable, cli, "status"], cwd=repository,
+               capture_output=True, text=True, encoding="utf-8")
+```
+
+artifact、快照输入、verifier 捕获和 receipt 的原始字节不做编码转换。
+Windows 若在加载 UNC 脚本或设置 UNC cwd 时被权限拦截，可用本地 kit 的
+`--repo` 入口；CLI 不会修改 UNC 权限、安装 WSL 或放宽隔离设置。
+
 ## 快速上手（绿色字段新仓库）
 
 ```bash

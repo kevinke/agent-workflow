@@ -31,6 +31,7 @@ import stat
 import subprocess
 
 import contracts
+import host_runtime
 import review
 import state
 import workflow_v2
@@ -519,6 +520,8 @@ def prepare(root, ticket_id, reviewed_commit, output):
     the persisted context manifest. Raises `contracts.ContractError`; any
     failure removes the whole context directory and never changes live files.
     """
+    host_runtime.validate_host_path(root)
+    host_runtime.validate_host_path(output)
     root = os.path.abspath(root)
     data = _load_state(root, ticket_id)
     _require_ready(root, ticket_id, data)
@@ -529,6 +532,8 @@ def prepare(root, ticket_id, reviewed_commit, output):
     plan_ref = (data.get("source_artifacts") or {}).get("plan") or {}
     plan_path = (plan_ref.get("path") or "").replace("\\", "/")
     _require_clean_drift(root, ticket_id, full_oid, plan_path)
+
+    execution_host = host_runtime.prepare_paths(root, output)
 
     with _io_contract(
             "cannot prepare a review snapshot: cannot read the in-scope "
@@ -566,6 +571,7 @@ def prepare(root, ticket_id, reviewed_commit, output):
             "format_version": FORMAT_VERSION,
             "ticket_id": ticket_id,
             "live_root": os.path.realpath(root),
+            "execution_host": execution_host,
             "reviewed_commit": full_oid,
             "plan": {"path": plan_path,
                      "sha256": _input_sha(plan_full, plan_path)},
@@ -615,6 +621,12 @@ def assert_current(root, ticket_id, context_path):
         raise contracts.ContractError(
             "review context belongs to ticket %r, not %r"
             % (manifest.get("ticket_id"), ticket_id))
+    if "execution_host" in manifest \
+            and manifest["execution_host"] != host_runtime.review_runtime():
+        raise contracts.ContractError(
+            "review-context-runtime-mismatch: prepared for %r, current %r; "
+            "use the original coordinator/distro or prepare a fresh context" %
+            (manifest["execution_host"], host_runtime.review_runtime()))
     if manifest.get("live_root") != os.path.realpath(root):
         raise contracts.ContractError(
             "review context live_root %r does not match %r"
