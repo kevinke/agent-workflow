@@ -3,7 +3,10 @@
 Status: actual paired pilot passed; PAIR-01 is `done`, current Review `pass`
 Date: 2026-10-10
 Kit base: `3aa9fc6700ad89485cdde1a7d8f993ac3754bcf2`
-Branch: `codex/harden-009-pilot`; local delivery, no remote publication
+Pilot branch: `codex/harden-009-pilot`; recorded locally before integration
+Repository integration: `master` fast-forwarded from `3aa9fc6` to `465336c`;
+the user authorized direct push to `origin/master`, without a PR. Current Git
+refs and the publication task record establish the delivered revision.
 Pilot model-launch attempts: **8**, including all failed/diagnostic starts
 
 ## Authorization and limits
@@ -202,8 +205,10 @@ cost and a comparative savings percentage are UNKNOWN/not claimed. A read-only
 Codex quota observation showed 28% used, 72% remaining at that time, so no free
 reset credit was consumed; it is account-wide, not this pilot's cost.
 
-Kit baseline suite ran 488 tests in 484.485 seconds, OK; production code was not
-changed and that suite was not repeated without cause. Authentication material,
+Kit pre-integration baseline suite ran 488 tests in 484.485 seconds, OK;
+production code was not changed and that suite was not repeated during the
+pilot without cause. The subsequent user-authorized master integration has
+its own verification before remote publication. Authentication material,
 login URLs and old private configuration remain outside the repository. Published
 logs redact personal paths/emails; original stream/metadata SHA-256 values are
 retained separately from redacted copies. The original supervisor records remain

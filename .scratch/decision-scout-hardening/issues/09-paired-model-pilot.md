@@ -70,3 +70,9 @@ If implementation requires changing v2 digest semantics, completed task history,
   by model continuation despite stop instructions; this remains a documented
   operational limitation, not an obedience claim. No production code or old
   SCOUT-008 evidence changed. Final branch review is tracked separately.
+
+- 2026-10-10 — The user chose local integration into `master` and direct push
+  to `origin/master`, without a PR. The five accepted pilot commits were
+  fast-forwarded from `3aa9fc6` to `465336c`; delivery status wording now
+  reflects integration rather than awaiting that choice. Original SCOUT history,
+  raw accepted artifacts and the recorded failed attempts remain unchanged.

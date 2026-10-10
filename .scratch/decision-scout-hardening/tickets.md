@@ -49,8 +49,8 @@ published before HARDEN-010's integration run, as that run required.
 10 and 11 are integrated, and 09 used a newly authorized budget, extended
 explicitly by the user while retaining the failed starts. PAIR-01 reached
 `done` with a current `pass` Review and verified export on 2026-10-10. The 009
-delivery is on local branch `codex/harden-009-pilot`; repository integration
-and remote publication await the user's choice. The original 01–08 acceptance
+delivery was fast-forwarded into `master` at `465336c` after the user chose
+local integration and direct push to `origin/master`, without a PR. The original 01–08 acceptance
 stays historical and does not claim these new follow-ups were tested. The
 earlier frontier below records the original delivery order rather than today's
 outstanding work.
