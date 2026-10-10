@@ -36,6 +36,43 @@ native help behavior. Independent followup review found no must-fix issue.
 
 ## Automated regression results
 
+The final implementation commit `92912a7068cd0cbb11fb9275fcf8ff5eca5c41db`
+passed full discovery on both hosts. Each run used its own private TEMP/TMP/TMPDIR,
+so WSL index-cleanup tests could not observe another suite's temporary files.
+The runner checked the exact commit and clean checkout before and after each run.
+The Git cleanliness check used command-local `-c core.autocrlf=true` to match the
+Windows checkout; it changed no config or file bytes. Temporary directories were
+removed after successful completion.
+
+| Final host | Total | Passed | Failures | Errors | Skipped | Seconds | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows Python 3.13.5 | 509 | 505 | 0 | 0 | 4 | 1354.248 | 0 |
+| WSL Ubuntu-24.04 Python 3.12.3 | 509 | 509 | 0 | 0 | 0 | 1025.293 | 0 |
+
+Windows ran from 02:53:39 to 03:16:14 UTC; WSL from 02:53:43 to 03:10:52 UTC.
+The raw logs and machine-readable summaries are in parent workspace
+`final-commit-regressions/reconnected/windows.log`, `windows-summary.json`,
+`wsl.log`, and `wsl-summary.json`. Raw log SHA-256 values:
+
+- Windows: `5889aa24644d65f6178eb6464f48a023831fa0f633be00663b2803d21d3aef7b`
+- WSL: `e1d2d6f2f08ae462c72b6c7a414b9d32071d1f1224258ceb9591339786a32eb5`
+
+The four existing Windows skips require unavailable symlink privileges:
+`test_artifact_archive.ArtifactArchiveTest.test_reject_unsafe_member_symlink_outside_root`,
+`test_plan_v2.PlanV2Test.test_symlink_escape_rejected`,
+`test_review_snapshot.ReviewSnapshotTest.test_directory_symlinks_are_classified_not_followed`,
+and `test_review_snapshot.ReviewSnapshotTest.test_unsafe_input_scopes_reject`.
+No skip or test assertion was added to accommodate this repair.
+
+The first final-commit attempts lost the execution-server connection at about
+02:33 UTC. Their logs stopped mid-suite, with no footer or summary; they count as
+interrupted runs, not passing or failing tests. After reconnection, both original
+sessions and their Python processes were confirmed absent before replacement
+runs started. The interrupted logs remain at `final-commit-regressions/windows.log`
+and `wsl.log`; only the completed replacement runs above are final results.
+
+Historical checks, before the final missing-root guard:
+
 | Verification | Result | Log in parent workspace `test-logs/` |
 | --- | --- | --- |
 | WSL full suite before the final missing-root guard | 506 tests, 1043.975 s, OK, zero skips | final-wsl.log |
@@ -48,9 +85,9 @@ native help behavior. Independent followup review found no must-fix issue.
 After the last two-line routing change and its three new regressions, the latest
 code passed all startup/encoding/parser tests on both hosts: Windows 27 tests
 in 0.666 s, WSL 27 tests in 2.198 s (zero skips), logged in parent workspace
-`post-cd-guard/focused-windows.log` and `focused-wsl.log`. Full 506-test counts
-are deliberately separated from these post-guard results. No full suite was
-repeated after that guard; the latest real three-route checks below were repeated.
+`post-cd-guard/focused-windows.log` and `focused-wsl.log`. The historical 506-test
+counts are separate from the final 509-test full runs above. The latest real
+three-route checks below were also repeated after the guard.
 
 The earlier Windows full run (before the final review regressions) also passed:
 500 tests, 1442.890 s, OK with four existing Windows symlink-privilege skips
@@ -141,6 +178,31 @@ The latest post-guard evidence has its own 81-file inventory at
   `test_review_snapshot.py`, `test_dogfood.py`, `v2_support.py`.
 - Documentation: `README.md`, `adapters/local-review.md`,
   `.scratch/windows-wsl-launch/spec.md`, this validation record.
+
+## Delivery and source preservation
+
+The implementation is commit `92912a7068cd0cbb11fb9275fcf8ff5eca5c41db` on
+`fix/windows-wsl-launch-utf8`. This final validation update is a documentation-only
+followup. The tested `scripts/ai-workflow` tree is
+`115a4ae089419e711b2638addcecf5f1fafaa269`; the `.ai/workflow` tree is
+`936b401028c9acf61a1a85184e33ca517bf70393`.
+
+Read-only before/after audits are retained as
+`final-commit-regressions/source-before.json` and `source-after.json` in the parent
+workspace. At 03:19:01 UTC the original checkout still had baseline HEAD on
+`master`, and only the original untracked research note. Its SHA-256 remained
+`878f47c259a4ec38033b44eba620217c70a65b6909f04b65f3cce75d42c7443d`;
+the Git index raw-byte SHA-256 remained
+`9de6f43bdb38872c15b7046bd4ecd04f8323984515f240a8400cac1c8228a717`.
+
+The combined implementation and validation mailbox patch is exported as
+`agent-workflow-windows-wsl-verified.patch` in the parent workspace. The following
+are optional manual adoption commands, provided for review and **not executed**:
+
+```powershell
+git -C D:\Code\agent-workflow switch -c fix/windows-wsl-launch-utf8
+git -C D:\Code\agent-workflow am "C:\Users\Kevin\Documents\Codex\2026-10-10\task\agent-workflow-windows-wsl-verified.patch"
+```
 
 ## Limits and remaining items
 
