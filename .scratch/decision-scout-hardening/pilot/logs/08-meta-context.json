@@ -1,0 +1,74 @@
+{
+  "format_version": 1,
+  "inputs": {
+    ".ai/work/PAIR-01/decision.md": "cb1d8a8292d080483f6aa8f01ebed1d8c08af5f9b354cff1c013057948e64d24",
+    ".ai/work/PAIR-01/evidence-audit.md": "fb8a57356a489791e541712428d8c65c79250b6499438f25ae8f65f42b4dcbf3",
+    ".ai/work/PAIR-01/evidence.md": "afaf035653398dfd96c5afae952e77f37287735b881d697da2f6a62c79599a7d",
+    ".ai/work/PAIR-01/handoff.md": "45ec182908a0ee1dd869920e7acff40bd24800c2fdea151004ea7f70f2b42516",
+    ".ai/work/PAIR-01/progress.md": "e354bc8372da51712a57d456a4324a4666d668e97edd04e602ee6d58c400b2e5",
+    ".ai/work/PAIR-01/state.yaml": "b60c76ab91f3d46a65cefa11319728995db2874354bf7235787b612f4b26738d",
+    "plan.md": "21ebcbefa9a2a05672d72590e588a4d6b5ff0c5c33fd62d7108564701090c684"
+  },
+  "live_manifest": "e6a67ae4a717c382e8abc3df3cd3744b34102026726646e34f84c9db2edac48b",
+  "live_root": "/target",
+  "plan": {
+    "path": "plan.md",
+    "sha256": "21ebcbefa9a2a05672d72590e588a4d6b5ff0c5c33fd62d7108564701090c684"
+  },
+  "reviewed_commit": "2e173aa0d33fca082cbc0dc2da951c24a6c59ed7",
+  "scope": {
+    "excluded_records": [
+      ".ai/work/PAIR-01/handoff.md",
+      ".ai/work/PAIR-01/progress.md",
+      ".ai/work/PAIR-01/review.md",
+      ".ai/work/PAIR-01/state.yaml"
+    ],
+    "generated_exclusions": [],
+    "ignore_rules": [
+      "git:core.excludesFile",
+      "git:.git/info/exclude"
+    ],
+    "paths": {
+      ".agents/skills/checkpoint-handoff/SKILL.md": "file",
+      ".agents/skills/evidence-auditor/SKILL.md": "file",
+      ".agents/skills/executor-plan/SKILL.md": "file",
+      ".agents/skills/repo-scout/SKILL.md": "file",
+      ".agents/skills/reviewer/SKILL.md": "file",
+      ".agents/skills/technical-decision/SKILL.md": "file",
+      ".agents/skills/ticket-executor/SKILL.md": "file",
+      ".agents/skills/workflow-bootstrap/SKILL.md": "file",
+      ".ai/work/.gitattributes": "file",
+      ".ai/work/PAIR-01/decision.md": "file",
+      ".ai/work/PAIR-01/evidence-audit.md": "file",
+      ".ai/work/PAIR-01/evidence.md": "file",
+      ".ai/workflow/ARTIFACTS.md": "file",
+      ".ai/workflow/ESCALATION.md": "file",
+      ".ai/workflow/MIGRATION.md": "file",
+      ".ai/workflow/PROTOCOL.md": "file",
+      ".ai/workflow/ROLES.md": "file",
+      ".ai/workflow/STATE_SCHEMA.md": "file",
+      ".ai/workflow/examples/scout-bug.md": "file",
+      ".ai/workflow/examples/scout-feature.md": "file",
+      ".ai/workflow/examples/scout-fixture/demo.py": "file",
+      ".ai/workflow/examples/scout-fixture/service.py": "file",
+      ".ai/workflow/templates/decision.md": "file",
+      ".ai/workflow/templates/evidence-audit.md": "file",
+      ".ai/workflow/templates/evidence.md": "file",
+      ".ai/workflow/templates/handoff.md": "file",
+      ".ai/workflow/templates/plan.md": "file",
+      ".ai/workflow/templates/progress.md": "file",
+      ".ai/workflow/templates/review.md": "file",
+      ".ai/workflow/templates/state.yaml": "file",
+      ".ai/workflow/templates/work.gitattributes": "file",
+      "AGENTS.md": "file",
+      "cache.py": "file",
+      "config.py": "file",
+      "plan.md": "file",
+      "task.md": "file",
+      "test_behavior.py": "file"
+    }
+  },
+  "snapshot_manifest": "e6a67ae4a717c382e8abc3df3cd3744b34102026726646e34f84c9db2edac48b",
+  "state_sha256": "b60c76ab91f3d46a65cefa11319728995db2874354bf7235787b612f4b26738d",
+  "ticket_id": "PAIR-01"
+}

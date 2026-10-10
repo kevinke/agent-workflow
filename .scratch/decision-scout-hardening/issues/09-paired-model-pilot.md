@@ -2,7 +2,7 @@
 
 Ticket ID: HARDEN-009
 Type: task
-Status: open; live pilot stopped at Scout permission failure (2026-10-10)
+Status: done; actual distinct-model paired pilot accepted (2026-10-10)
 Blocked by: 01, 02, 03, 04, 05, 06, 07, 08, 10, 11
 Parent: [supplemental spec](../spec.md#c9--distinct-model-paired-pilot-harden-009)
 Source findings: O1: actual model pairing gap; [disposition](../review-disposition.md)
@@ -26,12 +26,12 @@ session authorization, budget increase or change to historical pilot acceptance.
 
 ## Acceptance criteria
 
-- [ ] Prepare a disposable task with frozen behavior/DQs, exact receiving inputs, session cap and stop criteria before launch.
-- [ ] Actual Scout and senior decision model identities differ; at least one Scout-to-decision transfer crosses Harnesses into fresh context with resume first.
-- [ ] Independent review has fresh context and uses persisted artifacts; behavior acceptance and both identity/traceability checks are recorded.
-- [ ] Record targeted rereads versus repeated broad exploration, rework, artifact changes and telemetry provenance; missing measurements stay UNKNOWN.
-- [ ] A live run needs newly authorized available budget; original SCOUT-008 completion and its exhausted allocation remain unchanged.
-- [ ] Publish actual outcome/logs even on failure; acceptance checkboxes close only from live evidence, not simulated CLI runs or a prepared runbook.
+- [x] Prepare a disposable task with frozen behavior/DQs, exact receiving inputs, session cap and stop criteria before launch.
+- [x] Actual Scout and senior decision model identities differ; at least one Scout-to-decision transfer crosses Harnesses into fresh context with resume first.
+- [x] Independent review has fresh context and uses persisted artifacts; behavior acceptance and both identity/traceability checks are recorded.
+- [x] Record targeted rereads versus repeated broad exploration, rework, artifact changes and telemetry provenance; missing measurements stay UNKNOWN.
+- [x] A live run needs newly authorized available budget; original SCOUT-008 completion and its exhausted allocation remain unchanged.
+- [x] Publish actual outcome/logs even on failure; acceptance checkboxes close only from live evidence, not simulated CLI runs or a prepared runbook.
 
 ## Verification
 
@@ -57,3 +57,16 @@ If implementation requires changing v2 digest semantics, completed task history,
   Evidence write was permission-denied; it was stopped without a senior handoff.
   Candidate and failures are retained in [pilot/report.md](../pilot/report.md).
   HARDEN-009 is not accepted; no live Review, implementation or archive exists.
+
+- 2026-10-10 — User authorized additional attempts as needed, superseding the
+  six-attempt cap without resetting history or enabling purchases/API billing.
+  Actual fresh Qoder/Qwen3.8-Flash Scout → Codex/gpt-5.6-sol audit/decision/Plan
+  transfer resumed first; independent Qoder executor changed only `config.py`.
+  Fresh confined Codex Reviewer requested real enforced baseline and independent
+  probe runs; both passed. Guarded publication preserved exact candidate bytes,
+  PAIR-01 reached done, and verified export plus matching target history are
+  retained in [pilot/report.md](../pilot/report.md). Eight pilot starts include
+  all diagnostics/failures. Two harmless optional-command refusals were followed
+  by model continuation despite stop instructions; this remains a documented
+  operational limitation, not an obedience claim. No production code or old
+  SCOUT-008 evidence changed. Final branch review is tracked separately.

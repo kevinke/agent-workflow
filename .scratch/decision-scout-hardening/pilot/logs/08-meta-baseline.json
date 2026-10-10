@@ -1,0 +1,9 @@
+{
+  "format_version": 1,
+  "kind": "baseline",
+  "previous_run_id": null,
+  "profile": "linux-bwrap-v1",
+  "recorded_at": "2026-10-10T03:13:30.799210+00:00",
+  "run_id": "ac12fced1d1e4affb8387351985f4195",
+  "snapshot_identity": "48af45adf875a3a4a5bb893a7ec2fa888d7a6fbdedff3caf871760dc111da0c0"
+}

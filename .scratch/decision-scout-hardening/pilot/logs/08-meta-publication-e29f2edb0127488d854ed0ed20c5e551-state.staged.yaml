@@ -1,0 +1,58 @@
+schema_version: 1
+workflow_version: 2
+ticket:
+  id: PAIR-01
+  title: ""
+phase: review
+status: active
+repository:
+  base_commit: null
+  branch: null
+source_artifacts:
+  spec:
+    path: task.md
+  ticket:
+    path: null
+  plan:
+    path: plan.md
+    sha256: 21ebcbefa9a2a05672d72590e588a4d6b5ff0c5c33fd62d7108564701090c684
+artifacts:
+  evidence: evidence.md
+  evidence_audit: evidence-audit.md
+  decision: decision.md
+  progress: progress.md
+  handoff: handoff.md
+  review: review.md
+evidence:
+  round: 1
+  gate: sufficient
+  report_sha256: afaf035653398dfd96c5afae952e77f37287735b881d697da2f6a62c79599a7d
+  audit_sha256: fb8a57356a489791e541712428d8c65c79250b6499438f25ae8f65f42b4dcbf3
+implementation:
+  current_task: 1
+  total_tasks: 1
+  completed_tasks:
+    - 1
+  task_hashes:
+    - aaf1fe9bcbefa551d9546cffe691ca5218eb550c30bd2e7414cb9586a03cd99b
+escalation:
+  required: false
+  scope: machine
+  reason: null
+claim:
+  harness: codex-cli
+  model: gpt-5.6-sol
+  claimed_at: "2026-10-10T03:12:07+00:00"
+next_action:
+  role: reviewer
+  action: review and hand off
+  task: null
+review:
+  verdict: pass
+  artifact_sha256: 07d6b69d9a1166f903299afd2a8ee31c4baeb188bca9128d58774d82fbc9981a
+  reviewed_commit: 2e173aa0d33fca082cbc0dc2da951c24a6c59ed7
+  plan_sha256: 21ebcbefa9a2a05672d72590e588a4d6b5ff0c5c33fd62d7108564701090c684
+provenance:
+  last_harness: codex-cli
+  last_model: gpt-5.6-sol
+updated_at: "2026-10-10T03:16:42+00:00"

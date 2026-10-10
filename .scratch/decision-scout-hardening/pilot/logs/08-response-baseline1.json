@@ -1,0 +1,126 @@
+{
+  "request": {
+    "id": "baseline1",
+    "kind": "baseline",
+    "argv": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      ".",
+      "-p",
+      "test_behavior.py",
+      "-v"
+    ]
+  },
+  "coordinator_public_command_exit": 0,
+  "coordinator_stdout": "run-review: kind=baseline exit=0 changed=0 added=0 removed=0 boundary=enforced; receipt <review-context>/meta/runs/ac12fced1d1e4affb8387351985f4195.json\n",
+  "coordinator_stderr": "",
+  "recorded_utc": "2026-10-10T03:13:30.811253+00:00",
+  "receipts": [
+    {
+      "receipt": {
+        "added_paths": [],
+        "argv": [
+          "python3",
+          "-B",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          ".",
+          "-p",
+          "test_behavior.py",
+          "-v"
+        ],
+        "blocker": null,
+        "boundary": {
+          "blocker": null,
+          "bwrap_version": "bubblewrap 0.9.0",
+          "denial_errnos": [
+            18,
+            30
+          ],
+          "denials_attempted": 29,
+          "distro": null,
+          "enforced": true,
+          "env_keys": [
+            "HOME",
+            "LC_CTYPE",
+            "PATH",
+            "PWD"
+          ],
+          "launcher": "bwrap (same host)",
+          "live_git_unavailable": true,
+          "mount_roots": {
+            "meta": {
+              "host": "<review-context>/meta",
+              "sandbox_source": "<review-context>/meta"
+            },
+            "repo": {
+              "host": "<review-context>/repo",
+              "sandbox_source": "<review-context>/repo"
+            },
+            "scratch": {
+              "host": "<review-context>/scratch",
+              "sandbox_source": "<review-context>/scratch"
+            }
+          },
+          "network_denial_errno": 101,
+          "network_denied": true,
+          "not_visible": {
+            "/home": true,
+            "/target": true,
+            "/target/.git": true,
+            "<review-context>": true,
+            "<review-context>/meta": true,
+            "/init": true,
+            "/meta": true,
+            "/mnt": true,
+            "/mnt/c": true,
+            "/run": true,
+            "/tmp/.X11-unix": true
+          },
+          "preflight": "meta/preflight.json",
+          "preflight_sha256": "547f92b3a4b5a9599f8806baf6c35c2ac9c73b61de3555a5972f58627cb2f391",
+          "profile": "linux-bwrap-v1",
+          "rename_errno": 18,
+          "sandbox_host": "Linux 6.6.87.2-microsoft-standard-WSL2",
+          "sentinel_removed": true,
+          "supervisor_host": "Linux 6.6.87.2-microsoft-standard-WSL2 (x86_64)",
+          "writable": {
+            "$HOME": true,
+            "/scratch": true,
+            "/snapshot": true,
+            "/tmp": true
+          }
+        },
+        "changed_paths": [],
+        "cwd": "/snapshot",
+        "exit_code": 0,
+        "finished_at": "2026-10-10T03:13:30.729866+00:00",
+        "host": "Linux 6.6.87.2-microsoft-standard-WSL2 (x86_64)",
+        "kind": "baseline",
+        "profile": "linux-bwrap-v1",
+        "removed_paths": [],
+        "run_id": "ac12fced1d1e4affb8387351985f4195",
+        "snapshot_after": "48af45adf875a3a4a5bb893a7ec2fa888d7a6fbdedff3caf871760dc111da0c0",
+        "snapshot_before": "48af45adf875a3a4a5bb893a7ec2fa888d7a6fbdedff3caf871760dc111da0c0",
+        "started_at": "2026-10-10T03:13:30.631148+00:00",
+        "stderr_path": "meta/runs/ac12fced1d1e4affb8387351985f4195.stderr",
+        "stderr_sha256": "9e8ded45a5612f0e62542e0ba8bc84e693feee78936ed9811fd328bd2f534f5a",
+        "stdout_path": "meta/runs/ac12fced1d1e4affb8387351985f4195.stdout",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "receipt_raw_sha256": "c9aa9c566d32375f5852ae6957af7732fe7f5e2ad2c7eb5b5ef1f89e7775ebb8",
+      "stdout": "",
+      "stderr": "test_bad_reload_preserves_previous (test_behavior.ConfigBehaviorTest.test_bad_reload_preserves_previous)\nPartial parsing must not change any value after malformed input. ... ok\ntest_cached_until_reload (test_behavior.ConfigBehaviorTest.test_cached_until_reload)\nReading disk on every get would expose an unrequested update. ... ok\ntest_instances_isolated (test_behavior.ConfigBehaviorTest.test_instances_isolated)\nA cache shared by file path would overwrite an existing instance. ... ok\ntest_reads_initial (test_behavior.ConfigBehaviorTest.test_reads_initial)\nIgnoring blank/comment lines must not discard configuration values. ... ok\ntest_reload_valid (test_behavior.ConfigBehaviorTest.test_reload_valid)\nReload must replace values for this instance without updating another. ... ok\n\n----------------------------------------------------------------------\nRan 5 tests in 0.002s\n\nOK\n"
+    }
+  ],
+  "meta_raw_hashes": {
+    "context.json": "075ec69efde26c7b8bdfb33de275c6752cb90a7640a44f4079957e8c30f33ed3",
+    "preflight.json": "547f92b3a4b5a9599f8806baf6c35c2ac9c73b61de3555a5972f58627cb2f391"
+  }
+}

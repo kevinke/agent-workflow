@@ -1,0 +1,32 @@
+{
+  "conflict": [],
+  "context_sha256": "075ec69efde26c7b8bdfb33de275c6752cb90a7640a44f4079957e8c30f33ed3",
+  "created_at": "2026-10-10T03:16:42.811021+00:00",
+  "format_version": 1,
+  "live_head": "2e173aa0d33fca082cbc0dc2da951c24a6c59ed7",
+  "preflight_sha256": "547f92b3a4b5a9599f8806baf6c35c2ac9c73b61de3555a5972f58627cb2f391",
+  "profile": "linux-bwrap-v1",
+  "records": [
+    {
+      "old_sha256": "45ec182908a0ee1dd869920e7acff40bd24800c2fdea151004ea7f70f2b42516",
+      "path": ".ai/work/PAIR-01/handoff.md",
+      "published_sha256": "89776749ed03c5e65bfec2702cd7a25c936f950a3aa02fb8108777aeffaa7eba",
+      "record": "handoff"
+    },
+    {
+      "old_sha256": null,
+      "path": ".ai/work/PAIR-01/review.md",
+      "published_sha256": "07d6b69d9a1166f903299afd2a8ee31c4baeb188bca9128d58774d82fbc9981a",
+      "record": "review"
+    },
+    {
+      "old_sha256": "b60c76ab91f3d46a65cefa11319728995db2874354bf7235787b612f4b26738d",
+      "path": ".ai/work/PAIR-01/state.yaml",
+      "published_sha256": "8fae5394d18f6f509fdafc0b53b47adf53cd71aaff408d5486fe8e0dd1d49e7b",
+      "record": "state"
+    }
+  ],
+  "reviewed_commit": "2e173aa0d33fca082cbc0dc2da951c24a6c59ed7",
+  "ticket_id": "PAIR-01",
+  "verdict": "pass"
+}

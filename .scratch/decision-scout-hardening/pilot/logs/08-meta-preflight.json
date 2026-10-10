@@ -1,0 +1,323 @@
+{
+  "absent_probe_paths": [
+    "/meta",
+    "/mnt",
+    "/mnt/c",
+    "/run",
+    "/home",
+    "/init",
+    "/tmp/.X11-unix",
+    "<review-context>/meta",
+    "<review-context>",
+    "/target",
+    "/target/.git"
+  ],
+  "blocker": null,
+  "bwrap_version": "bubblewrap 0.9.0",
+  "created_at": "2026-10-10T03:13:30.558795+00:00",
+  "cwd": "/snapshot",
+  "denials": {
+    "append-_git_index": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/.git/index",
+      "syscall": "open-append"
+    },
+    "append-config_toml": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/config.toml",
+      "syscall": "open-append"
+    },
+    "append-fixture_json": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/fixture.json",
+      "syscall": "open-append"
+    },
+    "append-source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/source.py",
+      "syscall": "open-append"
+    },
+    "append-test_source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/test_source.py",
+      "syscall": "open-append"
+    },
+    "chmod-sentinel": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/source.py",
+      "syscall": "chmod"
+    },
+    "create-new-file": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/injected-source.py",
+      "syscall": "open-write"
+    },
+    "hardlink-into-scratch": {
+      "allowed": false,
+      "errno": 18,
+      "path": "/live/source.py",
+      "syscall": "link"
+    },
+    "makedirs-live": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/injected-dir/deep",
+      "syscall": "mkdir"
+    },
+    "mkdir-live": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/injected-dir",
+      "syscall": "mkdir"
+    },
+    "overwrite-_git_index": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/.git/index",
+      "syscall": "open-write"
+    },
+    "overwrite-config_toml": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/config.toml",
+      "syscall": "open-write"
+    },
+    "overwrite-fixture_json": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/fixture.json",
+      "syscall": "open-write"
+    },
+    "overwrite-source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/source.py",
+      "syscall": "open-write"
+    },
+    "overwrite-test_source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/test_source.py",
+      "syscall": "open-write"
+    },
+    "rename-into-scratch": {
+      "allowed": false,
+      "errno": 18,
+      "path": "/live/test_source.py",
+      "syscall": "rename"
+    },
+    "rename-into-snapshot": {
+      "allowed": false,
+      "errno": 18,
+      "path": "/live/source.py",
+      "syscall": "rename"
+    },
+    "rename-into-tmp": {
+      "allowed": false,
+      "errno": 18,
+      "path": "/live/fixture.json",
+      "syscall": "rename"
+    },
+    "symlink-into-snapshot": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/escape",
+      "syscall": "symlink"
+    },
+    "truncate-_git_index": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/.git/index",
+      "syscall": "open-truncate"
+    },
+    "truncate-config_toml": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/config.toml",
+      "syscall": "open-truncate"
+    },
+    "truncate-fixture_json": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/fixture.json",
+      "syscall": "open-truncate"
+    },
+    "truncate-source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/source.py",
+      "syscall": "open-truncate"
+    },
+    "truncate-test_source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/test_source.py",
+      "syscall": "open-truncate"
+    },
+    "unlink-_git_index": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/.git/index",
+      "syscall": "unlink"
+    },
+    "unlink-config_toml": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/config.toml",
+      "syscall": "unlink"
+    },
+    "unlink-fixture_json": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/fixture.json",
+      "syscall": "unlink"
+    },
+    "unlink-source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/source.py",
+      "syscall": "unlink"
+    },
+    "unlink-test_source_py": {
+      "allowed": false,
+      "errno": 30,
+      "path": "/live/test_source.py",
+      "syscall": "unlink"
+    }
+  },
+  "distro": null,
+  "enforced": true,
+  "env_keys": [
+    "HOME",
+    "LC_CTYPE",
+    "PATH",
+    "PWD"
+  ],
+  "format_version": 1,
+  "launcher": "bwrap (same host)",
+  "launcher_prefix": [],
+  "live_git_unavailable": true,
+  "live_root": "/target",
+  "meta_mounted": false,
+  "mount_roots": {
+    "meta": {
+      "host": "<review-context>/meta",
+      "sandbox_source": "<review-context>/meta"
+    },
+    "repo": {
+      "host": "<review-context>/repo",
+      "sandbox_source": "<review-context>/repo"
+    },
+    "scratch": {
+      "host": "<review-context>/scratch",
+      "sandbox_source": "<review-context>/scratch"
+    }
+  },
+  "network": [
+    {
+      "allowed": false,
+      "errno": -3,
+      "error": "gaierror: [Errno -3] Temporary failure in name resolution",
+      "name": "dns"
+    },
+    {
+      "allowed": false,
+      "errno": 101,
+      "error": "OSError: [Errno 101] Network is unreachable",
+      "name": "connect"
+    }
+  ],
+  "network_denial_errno": 101,
+  "network_denied": true,
+  "not_visible": {
+    "/home": true,
+    "/target": true,
+    "/target/.git": true,
+    "<review-context>": true,
+    "<review-context>/meta": true,
+    "/init": true,
+    "/meta": true,
+    "/mnt": true,
+    "/mnt/c": true,
+    "/run": true,
+    "/tmp/.X11-unix": true
+  },
+  "profile": "linux-bwrap-v1",
+  "rename_errno": 18,
+  "sandbox_host": "Linux 6.6.87.2-microsoft-standard-WSL2",
+  "sandbox_uid": 1000,
+  "sentinel": {
+    "files": {
+      ".git/index": {
+        "mode_after": 420,
+        "mode_before": 420,
+        "sha256_after": "052bd2534c714e7b2479bf2bdc0c3e1c9ad02edadf64ba35738670c0f5eaca02",
+        "sha256_before": "052bd2534c714e7b2479bf2bdc0c3e1c9ad02edadf64ba35738670c0f5eaca02",
+        "size_after": 42,
+        "size_before": 42
+      },
+      "config.toml": {
+        "mode_after": 420,
+        "mode_before": 420,
+        "sha256_after": "9fe8ee68f30b3083d52c3cc9497dd13e9961136dcee22639a4948d4a3da46eca",
+        "sha256_before": "9fe8ee68f30b3083d52c3cc9497dd13e9961136dcee22639a4948d4a3da46eca",
+        "size_after": 26,
+        "size_before": 26
+      },
+      "fixture.json": {
+        "mode_after": 420,
+        "mode_before": 420,
+        "sha256_after": "842713d298b42092d56587f2a05994b4f5e26fc0c33b8292b47abed6f438b067",
+        "sha256_before": "842713d298b42092d56587f2a05994b4f5e26fc0c33b8292b47abed6f438b067",
+        "size_after": 38,
+        "size_before": 38
+      },
+      "source.py": {
+        "mode_after": 420,
+        "mode_before": 420,
+        "sha256_after": "0ab0f69c9ca428ae76f57e9fd2376ac1b61dd621b38cd665dd943deaefaae4c4",
+        "sha256_before": "0ab0f69c9ca428ae76f57e9fd2376ac1b61dd621b38cd665dd943deaefaae4c4",
+        "size_after": 30,
+        "size_before": 30
+      },
+      "test_source.py": {
+        "mode_after": 420,
+        "mode_before": 420,
+        "sha256_after": "424165e85e1dae51f2eab4c67c77f22b1101cf52391e448c841c977cb5e9691e",
+        "sha256_before": "424165e85e1dae51f2eab4c67c77f22b1101cf52391e448c841c977cb5e9691e",
+        "size_after": 49,
+        "size_before": 49
+      }
+    },
+    "paths_after": [
+      ".git/index",
+      "config.toml",
+      "fixture.json",
+      "source.py",
+      "test_source.py"
+    ],
+    "paths_before": [
+      ".git/index",
+      "config.toml",
+      "fixture.json",
+      "source.py",
+      "test_source.py"
+    ],
+    "removed": true,
+    "root": "<review-context>/meta/preflight-sentinel"
+  },
+  "supervisor_host": "Linux 6.6.87.2-microsoft-standard-WSL2 (x86_64)",
+  "writable": {
+    "$HOME": true,
+    "/scratch": true,
+    "/snapshot": true,
+    "/tmp": true
+  }
+}

@@ -1,6 +1,6 @@
 # HARDEN-009 paired-Harness pilot runbook
 
-Status: prepared; live launch pending prerequisites
+Status: actual pilot completed; PAIR-01 done with current guarded pass
 Prepared: 2026-10-10
 Authority: [development plan](../../../../docs/superpowers/plans/2026-10-08-harden-09.md),
 [issue](../issues/09-paired-model-pilot.md), supplemental spec C9, and the installed
@@ -41,17 +41,15 @@ leg or an acceptance verdict. A rejected launch stops without automatic retry.
 | Executor | Selected inexpensive Harness/model | Separate bounded session | Implement registered task, verify, update Progress/Handoff |
 | Reviewer | Codex CLI / explicitly selected senior model | Independent new context over prepared snapshot | Technical candidate Review/Handoff; no live writes or publication |
 
-Authorized cap: **six total model-launch attempts**, with four core legs and at
-most two additional attempts for smoke, failure or rework. All policy-blocked
-launches count. If one extra attempt is used for a smoke, only one extra remains.
-Count free/promotional model launches too; neither free pricing nor existing
-subscription quota removes the attempt cap. No automatic retry or renewal.
-
-Authorized billing constraint: use available subscription/promotional quota only;
-no purchase, top-up or separate API billing. The user granted this cap in the
-current session; the wording and recording time are preserved in report.md.
-Set and record a per-leg wall-time limit (proposed 15 minutes), available
-turn/token limits and the launch argv; exceeding a limit stops that attempt.
+The original authorization was six total model-launch attempts. After three
+recorded attempts the user explicitly authorized additional attempts as needed:
+“你可以重置下额度试试，或者根据你的需要追加，不用限那么死。你再看看怎么解决”.
+The original cap is superseded; cumulative history is retained, never reset.
+This does not authorize purchases, top-ups or additional API billing, nor reset
+provider quota. Each launch is recorded before starting, bounded to 15 minutes,
+and never automatically relaunched. Diagnose a failed attempt before a correction.
+Use only existing subscription and available quota. Stop for actual quota exhaustion
+or an unresolved isolation/protocol blocker.
 
 ## Prepare the disposable target
 
@@ -152,11 +150,11 @@ Keep compound global-Git/config inspection denied; use separate scoped Git
 identity/status commands. No `Bash(*)`, bypass flag, global settings change or
 extra API billing belongs to the correction.
 
-These changes are proposed and **not live-verified**. Prepare a fresh disposable
+Those corrections were subsequently live-verified in attempt 5 (see the actual
+route below). For reproduction prepare a fresh disposable
 target/config root with the same frozen file hashes; keep the three original
-attempts and their logs. A complete new run requires four new role attempts;
-remaining authorized attempts alone are insufficient. Never infer a larger cap
-from this runbook. See [Qoder permissions](https://docs.qoder.com/cli/permissions)
+attempts and their logs. A complete new run requires four fresh role attempts. The latest user
+authorization allows these and needed diagnostics, with cumulative accounting. See [Qoder permissions](https://docs.qoder.com/cli/permissions)
 for the file rule semantics; the installed build's actual result remains decisive.
 
 - Stop on absent exact models/auth/quota/budget, ineffective live-write denial,
@@ -178,3 +176,54 @@ for the file rule semantics; the installed build's actual result remains decisiv
   log redaction and retain the distinction between originals and publishable copies.
 - Update HARDEN-009 acceptance/status and ticket index only from actual live
   evidence. Historical SCOUT-008 artifacts and completed status remain unchanged.
+
+## Completed route observed on 2026-10-10
+
+Qoder 1.1.67 with exact Qwen3.8-Flash performed the fresh Scout and independent
+executor legs; fresh Codex CLI 0.162.0-alpha.2 with explicit gpt-5.6-sol performed
+audit/decision/Plan and independent Review. All four role sessions resumed first.
+Only persisted workflow artifacts, frozen task/fixture and installed public
+contracts transferred. The failed attempt-3 candidate stayed unapplied.
+
+The final rules used exact absolute filesystem-rooted `Edit(...)` entries for
+Scout Evidence and Handoff, then executor `config.py`, Progress and Handoff.
+The registered Plan protected `cache.py`, narrowing the executor permission set
+below the original frozen-task upper bound. The unchanged frozen unittest
+command had an exact Bash allow rule; compound commands stayed denied. Fresh
+auth copies must copy `.auth` as a DIRECTORY, not skip it as a non-file.
+
+The entire Reviewer client ran inside the reproducible private container in
+`logs/reviewer-client-container.py`; it had read-only tools, independent snapshot,
+RO readback/runtime and a separate model-client home. Its actual live/meta paths
+were absent. Six sentinel shell writes were denied with EROFS and the model
+reported the expected file-tool denial. Host rechecks showed unchanged protected
+bytes/modes and actual live tree. The networked client is explicitly distinct
+from unchanged `linux-bwrap-v1` verifier commands, whose native-WSL supervisor
+receipts prove no network/credentials/live/meta reachability.
+
+Reviewer-authored requests were manually extracted from completed shell stdout.
+The actual marker and JSON were two consecutive lines rather than the proposed
+single line; the private one-request parser accepted that framing without
+changing any command or supplying probe logic. The coordinator invoked public
+`run-review` with the exact kind/argv, exposed true receipts/meta copies read-only,
+and did not dispatch a service or change production rules. Both baseline and
+meaningful independent probe passed with no residual snapshot changes.
+
+The Reviewer supplied final JSON strings containing the complete Review and
+Handoff. The coordinator encoded only those strings as UTF-8 candidate files,
+then guarded `set-review` published exact bytes. Public validation/currentness,
+review→done and `archive-artifacts` succeeded. Retain `artifacts.zip` together
+with `logs/pair01-history.bundle`; the preparation fixture intentionally has no
+reload. Clone with core.autocrlf=false to preserve the unpinned root Plan bytes.
+
+Operational deviations remain in the report: Scout and executor each continued
+after one harmless optional-command refusal despite the stop instruction. Those
+actions did not run and permissions were not weakened. Accepted role artifacts
+were audited/reviewed independently; this is no evidence of reliable model
+obedience to a rejection-stop instruction. Future launches keep the explicit
+stop guard and require operator detection as well as model instructions.
+
+Actual identities, eight pilot attempts, all failures, targeted receiving reads,
+telemetry gaps, receipts, raw bindings and the original/redacted log distinction
+are recorded in `report.md` and `logs/`. The verified support scope is this
+CLI/build/WSL host and these measured two boundaries only.

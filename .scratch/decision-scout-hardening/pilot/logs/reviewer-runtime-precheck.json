@@ -1,0 +1,5 @@
+{
+  "runtime_checks": "Four real no-model commands returned 0 inside whole-process enclosure",
+  "model_launch": false,
+  "new_mounts": "/client-home auth-only client root separate from verifier scratch; /readback RO true receipt copies; /opt/kit and /opt/bin RO public CLI"
+}

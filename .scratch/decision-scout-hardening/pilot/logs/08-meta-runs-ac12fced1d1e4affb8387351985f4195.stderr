@@ -1,0 +1,15 @@
+test_bad_reload_preserves_previous (test_behavior.ConfigBehaviorTest.test_bad_reload_preserves_previous)
+Partial parsing must not change any value after malformed input. ... ok
+test_cached_until_reload (test_behavior.ConfigBehaviorTest.test_cached_until_reload)
+Reading disk on every get would expose an unrequested update. ... ok
+test_instances_isolated (test_behavior.ConfigBehaviorTest.test_instances_isolated)
+A cache shared by file path would overwrite an existing instance. ... ok
+test_reads_initial (test_behavior.ConfigBehaviorTest.test_reads_initial)
+Ignoring blank/comment lines must not discard configuration values. ... ok
+test_reload_valid (test_behavior.ConfigBehaviorTest.test_reload_valid)
+Reload must replace values for this instance without updating another. ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.002s
+
+OK

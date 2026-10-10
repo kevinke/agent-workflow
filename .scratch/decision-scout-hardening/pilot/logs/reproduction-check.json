@@ -1,0 +1,59 @@
+{
+  "bundle_clone_verified": true,
+  "reproduction_commit": "a2f82c7b7dae60e8f9560edee503f826cd5177aa",
+  "archive_snapshot_head": "a2f82c7b7dae60e8f9560edee503f826cd5177aa",
+  "archive_members_verified_against_manifest_and_clone": 8,
+  "artifact_zip_sha256": "fda90d745b4ebceef768aead208834f14c61f15a5c4cc7edc01ac2a290f8b378",
+  "history_bundle_sha256": "1094491cd053fedeb5c0284000223204903c9d63c9403652bce081da00a8e8c0",
+  "commands": [
+    {
+      "command": [
+        "git clone <bundle> <fresh-repo>"
+      ],
+      "exit": 0,
+      "output": "Cloning into '<fresh-reproduction>/repo'...\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        ".",
+        "-p",
+        "test_behavior.py",
+        "-v"
+      ],
+      "exit": 0,
+      "output": "test_bad_reload_preserves_previous (test_behavior.ConfigBehaviorTest.test_bad_reload_preserves_previous)\nPartial parsing must not change any value after malformed input. ... ok\ntest_cached_until_reload (test_behavior.ConfigBehaviorTest.test_cached_until_reload)\nReading disk on every get would expose an unrequested update. ... ok\ntest_instances_isolated (test_behavior.ConfigBehaviorTest.test_instances_isolated)\nA cache shared by file path would overwrite an existing instance. ... ok\ntest_reads_initial (test_behavior.ConfigBehaviorTest.test_reads_initial)\nIgnoring blank/comment lines must not discard configuration values. ... ok\ntest_reload_valid (test_behavior.ConfigBehaviorTest.test_reload_valid)\nReload must replace values for this instance without updating another. ... ok\n\n----------------------------------------------------------------------\nRan 5 tests in 0.005s\n\nOK\n"
+    },
+    {
+      "command": [
+        "/tmp/harden009-setup/bin/ai-workflow",
+        "validate",
+        "PAIR-01"
+      ],
+      "exit": 0,
+      "output": "WARN  [PAIR-01] transport: plan.md: no explicit text attribute (core.autocrlf decides); raw-byte artifact bindings may not survive a clone/checkout (pin the path with a '-text' attribute)\nvalidate: OK (no ERROR findings).\n"
+    },
+    {
+      "command": [
+        "/tmp/harden009-setup/bin/ai-workflow",
+        "resume",
+        "PAIR-01"
+      ],
+      "exit": 0,
+      "output": "## Ticket\n  id    : PAIR-01\n## State\n  phase      : done\n  status     : active\n  gate       : sufficient (round 1)\n  escalation : none\n  workflow   : v2 (strict contracts: registered Plan, Review verdict, bound Evidence)\n## Next action\n  role    : \u2014\n  action  : \u2014\n  task    : \u2014 (no executable task)\n  reminder: record handoff.md before stopping (the checkpoint-handoff role owns the handoff discipline)\n## Repository\n  branch : pilot\n  head   : a2f82c7b7dae\n  dirty  : none\n## Artifacts\n  evidence.md        sha256=afaf035653398dfd96c5afae952e77f37287735b881d697da2f6a62c79599a7d  (observed_commit=f507bfa10b39 round=1)\n  evidence-audit.md  sha256=fb8a57356a489791e541712428d8c65c79250b6499438f25ae8f65f42b4dcbf3\n  decision.md        sha256=cb1d8a8292d080483f6aa8f01ebed1d8c08af5f9b354cff1c013057948e64d24\n  handoff.md         sha256=737eab0cf4b7d3f248761b17857156eaa3004fa954747cc29b7f01788173f890\n  review.md          sha256=07d6b69d9a1166f903299afd2a8ee31c4baeb188bca9128d58774d82fbc9981a\n  plan               plan.md sha256=21ebcbefa9a2a05672d72590e588a4d6b5ff0c5c33fd62d7108564701090c684 (registered)\n  evidence           observed_commit f507bfa10b39 differs from HEAD a2f82c7b7dae; anchor relevance assessment required (recorded facts are not automatically discarded)\n  evidence           changed since the observed commit: .ai/work/PAIR-01/decision.md, .ai/work/PAIR-01/evidence-audit.md, .ai/work/PAIR-01/evidence.md, .ai/work/PAIR-01/handoff.md, .ai/work/PAIR-01/progress.md, .ai/work/PAIR-01/review.md, .ai/work/PAIR-01/state.yaml, config.py, plan.md\n  evidence           F-01 anchor config.py:7-8 changed; assess whether this pivotal anchor still supports the recorded fact\n  evidence           F-01 anchor config.py:10-11 changed; assess whether this pivotal anchor still supports the recorded fact\n  evidence           F-03 anchor config.py:8 changed; assess whether this pivotal anchor still supports the recorded fact\n  transport          transport: plan.md: no explicit text attribute (core.autocrlf decides); raw-byte artifact bindings may not survive a clone/checkout (pin the path with a '-text' attribute)\n## Checks\n  WARN  [PAIR-01] transport: plan.md: no explicit text attribute (core.autocrlf decides); raw-byte artifact bindings may not survive a clone/checkout (pin the path with a '-text' attribute)\n"
+    },
+    {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit": 0,
+      "output": "a2f82c7b7dae60e8f9560edee503f826cd5177aa\n"
+    }
+  ]
+}

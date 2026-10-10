@@ -1,0 +1,87 @@
+{
+  "added_paths": [],
+  "argv": [
+    "python3",
+    "-B",
+    "-c",
+    "import tempfile; from pathlib import Path; from config import Config; d=tempfile.TemporaryDirectory(); p=Path(d.name)/\"settings.conf\"; p.write_text(\"a=old\\nb=kept\\n\", encoding=\"utf-8\"); c=Config(str(p)); old=c._cache; p.write_text(\"a=partial\\nbad line\\nb=lost\\n\", encoding=\"utf-8\");\ntry: c.reload()\nexcept ValueError as e: assert str(e)==\"expected key=value\"\nelse: raise AssertionError(\"malformed reload did not raise\")\nassert c._cache is old; assert c.get(\"a\")==\"old\" and c.get(\"b\")==\"kept\"; p.write_text(\"a=new\\nb=fresh\\n\", encoding=\"utf-8\"); assert c.reload() is None; assert c._cache is not old; assert c.get(\"a\")==\"new\" and c.get(\"b\")==\"fresh\"; print(\"atomic identity preservation and successful replacement verified\")"
+  ],
+  "blocker": null,
+  "boundary": {
+    "blocker": null,
+    "bwrap_version": "bubblewrap 0.9.0",
+    "denial_errnos": [
+      18,
+      30
+    ],
+    "denials_attempted": 29,
+    "distro": null,
+    "enforced": true,
+    "env_keys": [
+      "HOME",
+      "LC_CTYPE",
+      "PATH",
+      "PWD"
+    ],
+    "launcher": "bwrap (same host)",
+    "live_git_unavailable": true,
+    "mount_roots": {
+      "meta": {
+        "host": "<review-context>/meta",
+        "sandbox_source": "<review-context>/meta"
+      },
+      "repo": {
+        "host": "<review-context>/repo",
+        "sandbox_source": "<review-context>/repo"
+      },
+      "scratch": {
+        "host": "<review-context>/scratch",
+        "sandbox_source": "<review-context>/scratch"
+      }
+    },
+    "network_denial_errno": 101,
+    "network_denied": true,
+    "not_visible": {
+      "/home": true,
+      "/target": true,
+      "/target/.git": true,
+      "<review-context>": true,
+      "<review-context>/meta": true,
+      "/init": true,
+      "/meta": true,
+      "/mnt": true,
+      "/mnt/c": true,
+      "/run": true,
+      "/tmp/.X11-unix": true
+    },
+    "preflight": "meta/preflight.json",
+    "preflight_sha256": "547f92b3a4b5a9599f8806baf6c35c2ac9c73b61de3555a5972f58627cb2f391",
+    "profile": "linux-bwrap-v1",
+    "rename_errno": 18,
+    "sandbox_host": "Linux 6.6.87.2-microsoft-standard-WSL2",
+    "sentinel_removed": true,
+    "supervisor_host": "Linux 6.6.87.2-microsoft-standard-WSL2 (x86_64)",
+    "writable": {
+      "$HOME": true,
+      "/scratch": true,
+      "/snapshot": true,
+      "/tmp": true
+    }
+  },
+  "changed_paths": [],
+  "cwd": "/snapshot",
+  "exit_code": 0,
+  "finished_at": "2026-10-10T03:14:08.119807+00:00",
+  "host": "Linux 6.6.87.2-microsoft-standard-WSL2 (x86_64)",
+  "kind": "probe",
+  "profile": "linux-bwrap-v1",
+  "removed_paths": [],
+  "run_id": "fcce795c20a44900978fc6cfe3d23d4e",
+  "snapshot_after": "48af45adf875a3a4a5bb893a7ec2fa888d7a6fbdedff3caf871760dc111da0c0",
+  "snapshot_before": "48af45adf875a3a4a5bb893a7ec2fa888d7a6fbdedff3caf871760dc111da0c0",
+  "started_at": "2026-10-10T03:14:08.069180+00:00",
+  "stderr_path": "meta/runs/fcce795c20a44900978fc6cfe3d23d4e.stderr",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_path": "meta/runs/fcce795c20a44900978fc6cfe3d23d4e.stdout",
+  "stdout_sha256": "75f9aa0561d7d97b740bc80e95c7017989b5fe1c30a425306feb1d63b2caab72"
+}

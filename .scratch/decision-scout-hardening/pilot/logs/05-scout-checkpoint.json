@@ -1,0 +1,7 @@
+{
+  "phase": "evidence_audit",
+  "commit": "0410682d29751c0a73ed599f27b50ba8cd803215",
+  "inputs_unchanged": true,
+  "evidence_sha256": "afaf035653398dfd96c5afae952e77f37287735b881d697da2f6a62c79599a7d",
+  "handoff_sha256": "69008e6cf3172fc61fdf2d431dd550cf0b3336fd752f5466f332812c47bf3223"
+}

@@ -1,21 +1,30 @@
 {
-  "attempts_authorized": 6,
-  "attempts_started": 3,
-  "attempts_remaining": 3,
-  "extra_attempts_consumed": 2,
-  "future_core_legs": [
-    "fresh Scout",
-    "senior audit/decision/Plan",
-    "bounded executor",
-    "independent isolated Reviewer"
-  ],
-  "policy": "No purchase/top-up/additional API billing, automatic launch retry, permission weakening or renewal.",
+  "attempts_authorized": null,
+  "attempts_started": 8,
+  "attempts_remaining": null,
+  "future_core_legs": [],
+  "policy": "Existing subscription/quota only; no purchases/top-up/additional API billing. Each attempt bounded 900 seconds, no automatic relaunch; diagnose before another attempt.",
   "launch_accounting_source": [
     "01-smoke-launch.json",
     "02-smoke-launch.json",
-    "03-scout-launch.json"
+    "03-scout-launch.json",
+    "04-scout-launch.json",
+    "05-scout-launch.json",
+    "06-senior-launch.json",
+    "07-executor-launch.json",
+    "08-reviewer-launch.json"
   ],
-  "stop_reason": "Required Scout artifact Write denied; four fresh roles cannot fit remaining three attempts",
+  "stop_reason": null,
   "automatic_relaunch": false,
-  "additional_authorization_needed_for_minimal_restart": 1
+  "additional_authorization_needed_for_minimal_restart": 0,
+  "authorization_mode": "User authorized needed additional attempts; cumulative accounting retained, no provider quota reset",
+  "latest_authorization": "你可以重置下额度试试，或者根据你的需要追加，不用限那么死。你再看看怎么解决",
+  "authorization_recorded_utc": "2026-10-10T02:55:41.675028+00:00",
+  "diagnosis_attempt_4": "Coordinator copied auth directory as a file; no auth contents copied. Runtime authentication_failed, zero model tokens, no repository tool calls. Directory copy repaired privately before next launch.",
+  "pilot_completed": true,
+  "pilot_attempts_started": 8,
+  "model_stop_instruction_deviations": [
+    "attempt5 optional validate --show refusal then continuation",
+    "attempt7 optional redirected test-log refusal then continuation"
+  ]
 }
