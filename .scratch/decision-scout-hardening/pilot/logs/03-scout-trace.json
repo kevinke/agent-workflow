@@ -1,0 +1,101 @@
+{
+  "model": "Qwen3.8-Flash",
+  "session_id": "88fc2984-88fd-4be4-a66d-61ee41ab30a5",
+  "first_tool": {
+    "type": "tool_use",
+    "id": "call_340449eea5f44c409d383c40",
+    "name": "Bash",
+    "input": {
+      "command": "ai-workflow resume PAIR-01",
+      "description": "Resume workflow state for PAIR-01"
+    }
+  },
+  "denied_actions": [
+    {
+      "id": "call_be3730dedb6f4cf1ba8b72f8",
+      "name": "Bash",
+      "input": {
+        "command": "git rev-parse HEAD && git status --porcelain=v1 && git config --list --show-origin | grep -iE 'filter|autocrlf|eol' ; true",
+        "description": "Capture HEAD, dirty paths, and content-filter config"
+      }
+    },
+    {
+      "id": "call_ab16ad304821490384c56cae",
+      "name": "Bash",
+      "input": {
+        "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s . -p 'test_behavior.py' -v",
+        "description": "Run frozen acceptance suite to observe red baseline"
+      }
+    },
+    {
+      "id": "call_c854f596f9584d8fbeda5644",
+      "name": "Write",
+      "input": {
+        "file_path": "/target/.ai/work/PAIR-01/evidence.md"
+      },
+      "candidate_sha256": "8b6eb23319fd5ab7f22ec2ad739e5352d464fc781f376915789e619d5e4e9864",
+      "candidate_bytes": 11538
+    }
+  ],
+  "source_and_contract_reads": [
+    {
+      "file_path": "/target/.ai/work/PAIR-01/state.yaml"
+    },
+    {
+      "file_path": "/target/.agents/skills/repo-scout/SKILL.md"
+    },
+    {
+      "file_path": "/target/.ai/work/PAIR-01/task.md"
+    },
+    {
+      "pattern": "**/task.md"
+    },
+    {
+      "file_path": "/target/.ai/workflow/ARTIFACTS.md"
+    },
+    {
+      "file_path": "/target/task.md"
+    },
+    {
+      "file_path": "/target/.ai/workflow/ROLES.md"
+    },
+    {
+      "file_path": "/target/.ai/workflow/PROTOCOL.md"
+    },
+    {
+      "file_path": "/target/config.py"
+    },
+    {
+      "file_path": "/target/cache.py"
+    },
+    {
+      "file_path": "/target/test_behavior.py"
+    },
+    {
+      "file_path": "/target/.ai/work/PAIR-01/evidence.md"
+    },
+    {
+      "-i": true,
+      "glob": "*.py",
+      "output_mode": "content",
+      "path": "/target",
+      "pattern": "reload"
+    },
+    {
+      "-n": true,
+      "glob": "{config.py,cache.py}",
+      "output_mode": "content",
+      "path": "/target",
+      "pattern": "_values|_cache|_path"
+    },
+    {
+      "file_path": "/target/.ai/work/PAIR-01/handoff.md"
+    }
+  ],
+  "normal_finish_observed": true,
+  "candidate_materialization": "None: denied Write retained as candidate log only; not installed in live State/Evidence",
+  "budget_started": 3,
+  "budget_remaining": 3,
+  "four_core_relaunches_needed": 4,
+  "target_phase": "evidence_collection; official evidence and handoff scaffolds unchanged"
+}

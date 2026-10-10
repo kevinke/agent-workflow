@@ -2,7 +2,7 @@
 
 Status: historical 01–08 complete; 10 integrated (cc9be8f); 11 integrated (cba2497,
 488 tests `OK (skipped=4)` on the merged result); 12 published and
-fresh-checkout verified; 09 pending safety prerequisites and budget
+fresh-checkout verified; 09 open after an actual Scout permission stop
 Parent: [spec](spec.md)
 Disposition: [review mapping](review-disposition.md)
 Plan: [development plan and shared interfaces](../../docs/superpowers/plans/2026-10-08-scout-hardening.md)
@@ -11,7 +11,8 @@ Tickets 01–08 are implemented and independently reviewed on branch
 `decision-scout-hardening`; acceptance evidence is recorded in each issue and in
 the [disposition](review-disposition.md), backed by the green full-suite run of
 record at 483a423 (399 tests, `OK (skipped=2)`). 09 is
-not started and stays pending until its live prerequisites are met. Original
+started preparation/diagnostics but has no accepted live handoff; see
+[pilot report](pilot/report.md) for the actual permission stop. Original
 SCOUT-001–008 delivery and pilot history remain separate. Each issue is
 independently reviewable; the index does not replace its file.
 
@@ -25,7 +26,7 @@ independently reviewable; the index does not replace its file.
 | [06 — Durable v2 artifact transport and archives](issues/06-durable-artifact-transport.md) | 01 | Complete (automated) | Another checkout or an explicit archive preserves the exact v2 bound bytes, including mixed line endings and external Plans. |
 | [07 — Phase-aware Handoff readiness](issues/07-phase-aware-handoff.md) | 03 | Complete (automated) | A model taking over review or completion gets a concrete handoff while early workflow drafts remain usable. |
 | [08 — Thin role entries and Windows launch diagnostics](issues/08-thin-roles-windows-runbook.md) | None | Complete (automated) | Each Harness follows one authoritative rule set, and a Windows policy failure has a bounded documented diagnostic path. |
-| [09 — Distinct Scout-to-senior model and Harness pilot](issues/09-paired-model-pilot.md) | 01, 02, 03, 04, 05, 06, 07, 08, 10, 11 | Pending fixes and live budget | A documented real experiment shows a cheap Scout handing structured facts to a different senior decision model across Harnesses on a bounded nontrivial task. |
+| [09 — Distinct Scout-to-senior model and Harness pilot](issues/09-paired-model-pilot.md) | 01, 02, 03, 04, 05, 06, 07, 08, 10, 11 | Open; Scout write denied, no accepted handoff | Frozen task, real model identity and CLI denial evidence retained; complete paired acceptance remains unproved. |
 | [10 — Review drift independent of index hints](issues/10-index-flag-independent-review.md) | None | Complete (automated); integrated at cc9be8f | Flagged dirty/deleted code cannot obtain or retain either Review verdict; real index and racy-stat detection are preserved. |
 | [11 — Isolated reviewer verification and publication](issues/11-isolated-reviewer-publication.md) | 10 | Complete (automated + real-host boundary); integrated at cba2497 | Verifier writes stay inside a restricted snapshot; only a current, identified review is published to live workflow records. |
 | [12 — LF-stable installer template](issues/12-lf-stable-installer-template.md) | None | Published (86a823c); fresh-checkout verified | The protection template and installed output remain LF across six checkout scenarios; 400 tests pass. |

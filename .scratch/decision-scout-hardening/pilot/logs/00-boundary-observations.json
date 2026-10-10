@@ -1,0 +1,65 @@
+{
+  "profile": "experimental Codex CLI whole-process smoke on this host; not linux-bwrap-v1",
+  "bwrap_version": "bubblewrap 0.9.0",
+  "runtime_sha256": {
+    "codex": "3b1015a94344ae22f8556b22ab86f22a2d66a436a36f493a1583088e0831efe1",
+    "codex-code-mode-host": "382d17755b1a8905b8653fc4fe8754e57819656da0bb49232cc4619f925be0dc"
+  },
+  "protected_host_recheck_manifest": {
+    "protected": {
+      ".git/index": {
+        "sha256": "3a4400cc861bb4aa074e4baccea640bf8e3b36944c8c623230aef94a2eb10ff1",
+        "mode": 420
+      },
+      "config/settings.conf": {
+        "sha256": "3a4400cc861bb4aa074e4baccea640bf8e3b36944c8c623230aef94a2eb10ff1",
+        "mode": 420
+      },
+      "fixtures/input.txt": {
+        "sha256": "3a4400cc861bb4aa074e4baccea640bf8e3b36944c8c623230aef94a2eb10ff1",
+        "mode": 420
+      },
+      "source.py": {
+        "sha256": "3a4400cc861bb4aa074e4baccea640bf8e3b36944c8c623230aef94a2eb10ff1",
+        "mode": 420
+      },
+      "test_behavior.py": {
+        "sha256": "3a4400cc861bb4aa074e4baccea640bf8e3b36944c8c623230aef94a2eb10ff1",
+        "mode": 420
+      }
+    },
+    "supervisor": {
+      "receipt.json": {
+        "sha256": "6557ff6ff92d37e63c7e9f04722cdf97afdbf067ea034ce1c185e08c3c0a7245",
+        "mode": 420
+      }
+    }
+  },
+  "outer_mounts": {
+    "read_only": [
+      "/usr",
+      "/etc (copied DNS/hosts/nsswitch)",
+      "/etc/ssl/certs",
+      "/opt/codex",
+      "/opt/codex-code-mode-host",
+      "/live (dummy smoke sentinel only)",
+      "/protected-meta (dummy smoke sentinel only)"
+    ],
+    "writable": [
+      "/snapshot",
+      "/scratch",
+      "/tmp"
+    ],
+    "hidden": [
+      "/mnt",
+      "/run",
+      "/home",
+      "/init",
+      "/meta"
+    ]
+  },
+  "network": "shared for authenticated model client; inner Codex shell remains read-only sandboxed",
+  "runtime_config": "no daemon; ignore user config/rules; ephemeral; memories/apps/plugins/hooks/browser/computer/multi-agent disabled",
+  "private_credentials": "Existing ChatGPT login copied to an isolated private CODEX_HOME; never included in logs/package",
+  "reproduction": "Provide a private root directory containing snapshot, scratch, runtime binaries, protected sentinels, supervisor dummy and copied etc files. See boundary-container.py argv(); no live host directories are mounted. Full CLI launch argv and prompts are in each attempt metadata."
+}

@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "redaction_policy": "Attempt 3 host paths/email redacted; original stream byte hashes in launch metadata, originals private. Diagnostic logs contain no redactions.",
+  "sha256": {
+    "00-account-model-list.txt": "aa7d113a0266bcdd586e0b48006400931697ac83737313f46fd1f5345596b5e8",
+    "00-boundary-observations.json": "ac12d988a922c72732cd36f6e08fd8582c152e48812d2e7001de47be137eabb5",
+    "00-frozen-inputs.json": "f722c090ff091347b0c88d8d404c11a3c21ecc043292a2c70c13b05ce414072c",
+    "01-smoke-events.jsonl": "d990a97392f7f20927a8a2b05dec8476b60f4823368fa551f4e7f3cbf7027098",
+    "01-smoke-final.md": "a94b532dee5f75ca4a52c80a5a1565111cd2fad6c3761a2e73c0478f133cbd10",
+    "01-smoke-launch.json": "587705d858a38c5932496d1284aecf3d99c7f2b5f0664441008d621592466157",
+    "01-smoke-prompt.txt": "aa3dc449869e969bad0d17550b1e2b911306a3a0a4c83c121215ec6ec06b486b",
+    "01-smoke-stderr.txt": "8cac896d3315cb4f7a67e99356b2aece060b4e43861e00771c88ca92d94ad8e1",
+    "02-smoke-events.jsonl": "6a2c379a409421589975dcaa312a37d431519191e502ba76664933fb80078cf8",
+    "02-smoke-final.md": "e21d1e28a03435a33cfe8ea3881878f84a7a063d3955817e2141bbd86afcdf3a",
+    "02-smoke-launch.json": "a1e156c22fee4efe9d2659fea5ad72d09ec5b94efd1cfe51bc2bcab785b90609",
+    "02-smoke-prompt.txt": "aa3dc449869e969bad0d17550b1e2b911306a3a0a4c83c121215ec6ec06b486b",
+    "02-smoke-stderr.txt": "108f99a2e0b3557390783a0e222f5b5e161efdef0653e76701b717fe241caabb",
+    "03-scout-events.jsonl": "fff74983b0b1de1de49bb047a92ebcc7c33235b17f4f73543e5a9e3c2464cb10",
+    "03-scout-evidence-unapplied.md": "8b6eb23319fd5ab7f22ec2ad739e5352d464fc781f376915789e619d5e4e9864",
+    "03-scout-launch.json": "21338a6dd439937f7b6233a907b72f80165e3afbe769247f47686e61bc99a655",
+    "03-scout-prompt.txt": "f44baf879c321f985a3d895f0ca6f37883f4e33b8cc3f512460065ac28d917a4",
+    "03-scout-stderr.txt": "d558593c20540e61d5084c2bdf8aacd5a6d004487032e6060b43846b12c83173",
+    "03-scout-trace.json": "880061868b662859a127804254691fed90550e96950bd3150546051b4a87ec0c",
+    "03-stopped-target-validation.txt": "59a07206b02d9ea207a4fbe4adbc140598cc2e58a01b1ed3fff2dfcf096e2861",
+    "boundary-container.py": "c3ed99637149adc23247b66eb1c1aba05b5943f65b4e280e96688b37fabd4ade",
+    "budget-ledger.json": "7db275ff1e437da3411c187c912d444088d5f43b94d01d295573d51d6059b623",
+    "model-probe.py": "e0c6ac5b5dd5a59cfd27a335c57f61855f77bde9b3e53b7491da7d727ca7ca99"
+  }
+}

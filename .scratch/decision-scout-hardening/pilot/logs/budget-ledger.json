@@ -1,0 +1,21 @@
+{
+  "attempts_authorized": 6,
+  "attempts_started": 3,
+  "attempts_remaining": 3,
+  "extra_attempts_consumed": 2,
+  "future_core_legs": [
+    "fresh Scout",
+    "senior audit/decision/Plan",
+    "bounded executor",
+    "independent isolated Reviewer"
+  ],
+  "policy": "No purchase/top-up/additional API billing, automatic launch retry, permission weakening or renewal.",
+  "launch_accounting_source": [
+    "01-smoke-launch.json",
+    "02-smoke-launch.json",
+    "03-scout-launch.json"
+  ],
+  "stop_reason": "Required Scout artifact Write denied; four fresh roles cannot fit remaining three attempts",
+  "automatic_relaunch": false,
+  "additional_authorization_needed_for_minimal_restart": 1
+}

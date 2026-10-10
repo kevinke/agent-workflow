@@ -2,7 +2,7 @@
 
 Ticket ID: HARDEN-009
 Type: task
-Status: pending safety fixes and live budget
+Status: open; live pilot stopped at Scout permission failure (2026-10-10)
 Blocked by: 01, 02, 03, 04, 05, 06, 07, 08, 10, 11
 Parent: [supplemental spec](../spec.md#c9--distinct-model-paired-pilot-harden-009)
 Source findings: O1: actual model pairing gap; [disposition](../review-disposition.md)
@@ -47,3 +47,13 @@ If implementation requires changing v2 digest semantics, completed task history,
 
 - 2026-10-09 — Added 10/11 as safety prerequisites for the actual live run.
   No sessions launched and no budget inferred from this documentation request.
+
+- 2026-10-10 — Actual preparation and diagnostics are on `codex/harden-009-pilot`:
+  Qoder CLI installed and authenticated; exact account/runtime model is
+  Qwen3.8-Flash. The user authorized six counted attempts, existing quota only.
+  Two Codex CLI isolation diagnostics were counted (first missing a runtime
+  companion, second observed shell EROFS and file-tool policy denial with host
+  recheck). The third, actual Scout session resumed first but its required
+  Evidence write was permission-denied; it was stopped without a senior handoff.
+  Candidate and failures are retained in [pilot/report.md](../pilot/report.md).
+  HARDEN-009 is not accepted; no live Review, implementation or archive exists.

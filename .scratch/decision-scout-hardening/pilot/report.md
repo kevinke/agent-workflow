@@ -1,9 +1,9 @@
 # HARDEN-009 / PAIR-01 pilot report
 
-Status: pending live prerequisites; preparation only
+Status: live attempt stopped at Scout permission failure; HARDEN-009 remains open
 Prepared: 2026-10-10
 Kit base: `3aa9fc6700ad89485cdde1a7d8f993ac3754bcf2`
-Live model launches: **2 of 6** (two isolation diagnostics; four core legs remain)
+Model launches consumed: **3 of 6** (two isolation diagnostics and one failed Scout)
 New model-session budget: **authorized: at most 6 total launch attempts**
 
 The user authorized the proposed cap in this session: “授权，按上述 6 次和现有额度执行”.
@@ -92,27 +92,60 @@ receipts, candidate artifacts and guarded publication.
 
 | Leg | Actual Harness/model | Identity source | Fresh context / resume-first | Result |
 | --- | --- | --- | --- | --- |
-| Scout | UNKNOWN; not launched | UNKNOWN | UNKNOWN | Pending |
+| Scout | Qoder CLI 1.1.67 / Qwen3.8-Flash | Account model list, explicit argv and runtime `system.init.model` | New session; first tool exactly workflow resume | Stopped: required Evidence write denied |
 | Audit/decision/Plan | UNKNOWN; not launched | UNKNOWN | UNKNOWN | Pending |
 | Executor | UNKNOWN; not launched | UNKNOWN | UNKNOWN | Pending |
 | Independent Reviewer | UNKNOWN; not launched | UNKNOWN | UNKNOWN | Pending |
 
-Authorization wording/time, additional billing limit, actual attempts consumed,
-per-leg time limits, thread identities, prompts/logs, target revision manifests,
-rereads, rework and technical outcomes: pending live execution.
+Attempt 3: runtime session `88fc2984-88fd-4be4-a66d-61ee41ab30a5`,
+291.831 seconds, stopped after three permission refusals, exit 1. These were a
+compound Git/config query, an unallowlisted test command and the required
+Evidence write. No denied action executed. Frozen source/tests/task/Protocol
+and role-file byte manifests remained unchanged; only the public Scout claim
+changed State. Formal Evidence and Handoff remained their starting scaffolds.
+The denied tool's model-authored [Evidence candidate](logs/03-scout-evidence-unapplied.md)
+is preserved **unapplied**, not registered or supplied to a senior as official
+Evidence. [Trace](logs/03-scout-trace.json), [events](logs/03-scout-events.jsonl),
+and [launch metadata](logs/03-scout-launch.json) preserve the actual refusal.
+No senior, implementation or PAIR-01 Reviewer session was launched.
+
+The Scout made 22 tool attempts. Its logged reads include State, Scout skill,
+artifact/Protocol docs, frozen task and three source/test files. It first tried
+an incorrect ticket-local task path, then located root `task.md`. Targeted Grep
+queries reread reload references and cache fields. These are logged Scout reads,
+not measured receiving-model savings: no senior receiver exists yet.
+
+Root cause: this invocation used unrooted path-scoped edit/write rules, while
+Qoder's documented file-write checker uses `Edit(...)` and gitignore path roots.
+The required path did not gain permission in `dont_ask`; the report does not
+claim the proposed correction has passed a real tool check. The test command
+also lacked an allow rule. Do not switch to bypass mode, globally allow Bash or
+silently retry. The runbook contains the concrete bounded correction proposal.
+
+Remaining budget is three attempts; a fresh four-leg pilot cannot fit. Record
+any preparation review in the same conservative accounting and require a new
+explicit cap before a full fresh restart. Prior failed attempts are never erased.
 
 ## Acceptance status
 
-- [ ] Frozen disposable target, receiving inputs, authorized cap and stop criteria.
+- [x] Frozen disposable target, receiving inputs, authorized cap and stop criteria.
 - [ ] Actual Scout/decision models differ; fresh cross-Harness transfer resumes first.
 - [ ] Fresh independent isolated Review and five-case passing behavior acceptance.
-- [ ] Log-backed rereads, artifact changes, rework and telemetry provenance.
+- [x] Available reads, changes, rework and telemetry provenance recorded; absent receiver metrics remain UNKNOWN.
 - [x] New explicit available session budget; historical allocation untouched.
-- [ ] Actual success/failure outcome and available logs/artifacts published.
+- [x] Actual failure outcome and available logs/candidate artifacts retained locally; no remote publication requested.
 
 ## Measurement and limitations
 
-Live elapsed time: UNKNOWN. Live token counts: UNKNOWN. Live cost: UNKNOWN.
+Attempt elapsed times: 17.820s, 18.489s, 291.831s; aggregate model-process time
+328.140s. Whole-project comparable elapsed time: UNKNOWN.
+Codex diagnostic token usage comes from each JSONL `turn.completed.usage`:
+attempt 1 input 35,782, cached input 33,664, output 302; attempt 2 input 36,258,
+cached input 33,920, output 435. They are process diagnostics, not paired-leg
+measurements. Qoder final token/cost telemetry: UNKNOWN, because the blocked
+session stopped without a normal result event. Live monetary cost: UNKNOWN;
+only existing authenticated subscriptions/quota were used.
 Comparable baseline: unavailable. Savings percentage: not claimed.
 No real paired-model handoff, Review verdict or passing archive has been produced.
-The host's previously measured verifier boundary proves no current model session.
+The new real CLI smoke establishes its observed shell/file-tool restrictions;
+it supplies neither PAIR-01 verification receipts nor a guarded technical verdict.

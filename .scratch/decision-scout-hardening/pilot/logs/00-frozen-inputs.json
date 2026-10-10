@@ -1,0 +1,18 @@
+{
+  "kit_commit": "3aa9fc6700ad89485cdde1a7d8f993ac3754bcf2",
+  "target_initial_commit": "7e40f2b9de4bbdb4007b07a2578da1b68a708fcb",
+  "target_initial_branch": "pilot",
+  "target_initial_dirty": "none",
+  "sha256": {
+    "config.py": "e38a09f2d615a1e654c50385cdb507a61694532fc343248cb0ef5f6415ae22b7",
+    "cache.py": "6ccb607293f23a2d0f3fe334c381f35ddf69d1a965c4b55e6cee11e76ee8ca2d",
+    "test_behavior.py": "c98953315dd288d69b0bf87ccc5713754f277a192099892c3179c10881eb2d9d",
+    "task.md": "a4c7b10ad3d71ddc045047017d1381c745957f5573962e48fa947de376929ed2"
+  },
+  "path_policy": "Disposable target lives outside kit; host path omitted from publishable metadata.",
+  "observations": [
+    "init --with-skills; start PAIR-01 --spec task.md; advance to evidence_collection via public CLI",
+    "resume returns scout; template draft warnings are expected before first Scout authors artifacts",
+    "initial acceptance: 5 cases; 2 pass, 3 missing-reload errors"
+  ]
+}

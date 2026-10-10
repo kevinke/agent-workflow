@@ -134,6 +134,31 @@ not evidence that the real Reviewer session has passed.
 
 ## Results, stop criteria and transport
 
+### Observed stop and correction proposal (2026-10-10)
+
+Attempts 1-2 consumed the two diagnostic/rework slots; attempt 3's Scout could
+resume and read but its required Evidence write was denied. It was stopped,
+and the candidate stays unapplied. Formal PAIR-01 Evidence/Handoff are still
+scaffolds. Do not carry that candidate forward as an accepted handoff.
+
+For a newly authorized fresh attempt, retain `dont_ask`, empty strict MCP,
+auth-only private configuration and no memory/session persistence. Correct only
+the role-owned file permission: use an explicit absolute `Edit(//<disposable
+target>/.ai/work/PAIR-01/**)` rule (the actual argument is built as one string,
+without whitespace placeholders). Qoder documents `Edit(...)` as covering Edit,
+Write and NotebookEdit checks; `//` anchors at the filesystem root. Add an exact
+allow rule for the frozen test command if runtime verification is requested.
+Keep compound global-Git/config inspection denied; use separate scoped Git
+identity/status commands. No `Bash(*)`, bypass flag, global settings change or
+extra API billing belongs to the correction.
+
+These changes are proposed and **not live-verified**. Prepare a fresh disposable
+target/config root with the same frozen file hashes; keep the three original
+attempts and their logs. A complete new run requires four new role attempts;
+remaining authorized attempts alone are insufficient. Never infer a larger cap
+from this runbook. See [Qoder permissions](https://docs.qoder.com/cli/permissions)
+for the file rule semantics; the installed build's actual result remains decisive.
+
 - Stop on absent exact models/auth/quota/budget, ineffective live-write denial,
   launch/policy rejection, unexpected live/meta write, missing receiver fresh
   context, exhausted time/attempt limit, or a deviation requiring a new decision.
