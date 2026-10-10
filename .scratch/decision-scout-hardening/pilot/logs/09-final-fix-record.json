@@ -1,0 +1,16 @@
+{
+  "finding_severity": "Important",
+  "finding": "Current index falsely reports HARDEN-009 open and no accepted handoff",
+  "fixes": [
+    "Current index header and overview match accepted run",
+    "Current frontier matches completed prerequisites and pilot",
+    "Old frontier explicitly marked historical",
+    "Matching current issue scope no longer says pending implementation"
+  ],
+  "verification": {
+    "before": "RED: AssertionError index current status contradicts accepted pilot",
+    "after": "GREEN: Current index/issue/report status consistency: PASS"
+  },
+  "second_review": false,
+  "minor_deferred": []
+}

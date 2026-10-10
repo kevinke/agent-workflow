@@ -17,8 +17,16 @@ Only existing Codex subscription and available Qoder quota were used, with no
 purchase, top-up or additional API billing. Each live role was limited to 900
 seconds, and each launch was recorded before starting; no automatic relaunch.
 The conservative ledger is [budget-ledger.json](logs/budget-ledger.json).
-The final whole-branch documentation/evidence review is accounted separately
-from the four PAIR-01 roles when dispatched.
+A ninth launch is the final whole-branch documentation/evidence review,
+accounted separately from the four PAIR-01 roles: fresh read-only Codex app
+subagent with explicit gpt-5.6-sol over fixed base/head. It is not another formal
+PAIR-01 review or pilot rerun. See `logs/09-final-review-launch.json`. The independent branch review reproduced
+the bundle, five cases and raw archive bindings, and found one Important stale
+index-status contradiction (no Critical/Minor findings). The coordinator fixed
+the current index/issue descriptions in one pass; a cross-document consistency
+check failed before the correction and passed afterwards. No second model
+review was launched. The original response is [final review](logs/09-final-review.md);
+all coordinator rulings and their limits are [recorded](logs/09-coordinator-rulings.md).
 
 ## Actual models and transfer
 

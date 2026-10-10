@@ -1,0 +1,21 @@
+{
+  "attempt": 9,
+  "kind": "whole-branch read-only final code/evidence review, separate from PAIR-01 roles",
+  "harness": "Codex app collaboration subagent",
+  "model_requested": "gpt-5.6-sol",
+  "model_identity_source": "Explicit spawn_agent model selection, fork_turns none; no backend attestation",
+  "agent": "/root/harden009_final_review",
+  "start_recorded_utc": "2026-10-10T03:25:30.918747+00:00",
+  "review_base": "3aa9fc6700ad89485cdde1a7d8f993ac3754bcf2",
+  "review_head": "7780cd32c9da2e7ddf8941f2d30de2fa5c295039",
+  "pending": false,
+  "automatic_relaunch": false,
+  "budget_cap": null,
+  "wall_limit_seconds": 900,
+  "token_cost_telemetry": "UNKNOWN; no comparable baseline",
+  "authorization": "Latest user grant allows needed additional attempts, existing subscription only, historical counts retained",
+  "end_observed_utc": "2026-10-10T03:37:46Z",
+  "result": "One Important index-status contradiction; no Critical or Minor; fixed once by coordinator with status consistency RED→GREEN; no second model review",
+  "review_response": "09-final-review.md",
+  "usage": "UNKNOWN; subagent usage telemetry unavailable"
+}

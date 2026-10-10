@@ -14,7 +14,7 @@ A documented real experiment shows a cheap Scout handing structured facts to a d
 
 ## Scope and ownership
 
-Own the complete C9 outcome from contract/documentation through public-command behavior and its regression or manual evidence. Exact files and interfaces are frozen in the linked plan. Honor its write set; other work may share mutation/validation files, so do not revert unrelated changes and schedule one writer for overlapping files. This issue is pending implementation; original SCOUT tickets stay historical.
+Own the complete C9 outcome from contract/documentation through public-command behavior and its regression or manual evidence. Exact files and interfaces are frozen in the linked plan. Honor its write set; other work may share mutation/validation files, so do not revert unrelated changes and schedule one writer for overlapping files. This issue is completed with the actual pilot evidence recorded below; original SCOUT tickets stay historical.
 
 ## Additional launch prerequisites (2026-10-09)
 

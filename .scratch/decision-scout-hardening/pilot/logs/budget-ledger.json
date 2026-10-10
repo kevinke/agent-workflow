@@ -1,6 +1,6 @@
 {
   "attempts_authorized": null,
-  "attempts_started": 8,
+  "attempts_started": 9,
   "attempts_remaining": null,
   "future_core_legs": [],
   "policy": "Existing subscription/quota only; no purchases/top-up/additional API billing. Each attempt bounded 900 seconds, no automatic relaunch; diagnose before another attempt.",
@@ -12,9 +12,10 @@
     "05-scout-launch.json",
     "06-senior-launch.json",
     "07-executor-launch.json",
-    "08-reviewer-launch.json"
+    "08-reviewer-launch.json",
+    "09-final-review-launch.json"
   ],
-  "stop_reason": null,
+  "stop_reason": "Completed actual pilot and final branch review; no further launches needed",
   "automatic_relaunch": false,
   "additional_authorization_needed_for_minimal_restart": 0,
   "authorization_mode": "User authorized needed additional attempts; cumulative accounting retained, no provider quota reset",
@@ -26,5 +27,7 @@
   "model_stop_instruction_deviations": [
     "attempt5 optional validate --show refusal then continuation",
     "attempt7 optional redirected test-log refusal then continuation"
-  ]
+  ],
+  "whole_branch_review_attempts": 1,
+  "whole_branch_review_completed": true
 }

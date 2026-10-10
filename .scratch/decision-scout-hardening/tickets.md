@@ -2,7 +2,7 @@
 
 Status: historical 01–08 complete; 10 integrated (cc9be8f); 11 integrated (cba2497,
 488 tests `OK (skipped=4)` on the merged result); 12 published and
-fresh-checkout verified; 09 open after an actual Scout permission stop
+fresh-checkout verified; 09 complete; actual paired pilot accepted (2026-10-10)
 Parent: [spec](spec.md)
 Disposition: [review mapping](review-disposition.md)
 Plan: [development plan and shared interfaces](../../docs/superpowers/plans/2026-10-08-scout-hardening.md)
@@ -10,9 +10,11 @@ Plan: [development plan and shared interfaces](../../docs/superpowers/plans/2026
 Tickets 01–08 are implemented and independently reviewed on branch
 `decision-scout-hardening`; acceptance evidence is recorded in each issue and in
 the [disposition](review-disposition.md), backed by the green full-suite run of
-record at 483a423 (399 tests, `OK (skipped=2)`). 09 is
-started preparation/diagnostics but has no accepted live handoff; see
-[pilot report](pilot/report.md) for the actual permission stop. Original
+record at 483a423 (399 tests, `OK (skipped=2)`). 09 completed an actual
+Qoder/Qwen3.8-Flash → fresh Codex/gpt-5.6-sol handoff, five behavior cases,
+isolated independent Review and verified export. All eight pilot starts,
+including failures, remain in the [pilot report](pilot/report.md); the separate
+final branch review is counted as startup nine. Original
 SCOUT-001–008 delivery and pilot history remain separate. Each issue is
 independently reviewable; the index does not replace its file.
 
@@ -31,33 +33,39 @@ independently reviewable; the index does not replace its file.
 | [11 — Isolated reviewer verification and publication](issues/11-isolated-reviewer-publication.md) | 10 | Complete (automated + real-host boundary); integrated at cba2497 | Verifier writes stay inside a restricted snapshot; only a current, identified review is published to live workflow records. |
 | [12 — LF-stable installer template](issues/12-lf-stable-installer-template.md) | None | Published (86a823c); fresh-checkout verified | The protection template and installed output remain LF across six checkout scenarios; 400 tests pass. |
 
-## Current follow-up frontier (2026-10-09)
+## Current follow-up frontier (2026-10-10)
 
-Review the [follow-up master plan](../../docs/superpowers/plans/2026-10-09-review-safety-followup.md)
+The [follow-up master plan](../../docs/superpowers/plans/2026-10-09-review-safety-followup.md)
 and per-ticket [10](../../docs/superpowers/plans/2026-10-09-harden-10.md),
 [11](../../docs/superpowers/plans/2026-10-09-harden-11.md),
-[12](../../docs/superpowers/plans/2026-10-09-harden-12.md) plans; select execution
-method before implementing 10, then 11 with actual host-boundary evidence.
-These planned Tickets are not registered execution contracts.
+[12](../../docs/superpowers/plans/2026-10-09-harden-12.md) plans record the
+completed safety prerequisites. These development plans are not registered
+execution contracts.
 Shared Review/protocol files require serial writes. 12 is published at 86a823c
 with its six-case matrix and fresh-checkout verification recorded; it needs no
 further implementation round, and the LF attribute rule it supplies was
 published before HARDEN-010's integration run, as that run required.
 
-10 is integrated at cc9be8f, so 09 waits only for 11 plus its separately
-authorized available budget. Those prerequisites are recorded in the original
-pilot plan; do not reuse the original exhausted allocation. The original
-01–08 acceptance stays historical
-and does not claim these new follow-ups were tested. The earlier frontier below
-records the original delivery order rather than today's outstanding work.
+10 and 11 are integrated, and 09 used a newly authorized budget, extended
+explicitly by the user while retaining the failed starts. PAIR-01 reached
+`done` with a current `pass` Review and verified export on 2026-10-10. The 009
+delivery is on local branch `codex/harden-009-pilot`; repository integration
+and remote publication await the user's choice. The original 01–08 acceptance
+stays historical and does not claim these new follow-ups were tested. The
+earlier frontier below records the original delivery order rather than today's
+outstanding work.
 
-## Original frontier and suggested order
+## Original frontier and suggested order (historical, superseded)
 
 01, 02, 04, 05 and 08 have no behavioral blockers. Prioritize 01 and 02 because they protect completion. Then 03/04/06, 05/07/08, and finally the live 09 run (now also gated by 10/11 above). 06 consumes 01's shared current-Review checks; 07 consumes 03's shared retained-phase checks. 09 verifies the corrected workflow and originally consumed all eight predecessors; its new safety prerequisites are recorded above.
 
 Shared files require serial writes or explicit coordination; independence in the table does not authorize parallel writers. No Work Packet workflow is enabled by this index. Each plan can be executed in a fresh context with the parent spec and shared-interface plan.
 
-09's documentation is ready; its live execution additionally requires available models/Harnesses and a new explicit session budget. Budget is an execution prerequisite, not an invented ticket dependency or an assumed extension of SCOUT-008.
+At that original frontier, 09's documentation was ready; its live execution
+required available models/Harnesses and a new explicit session budget. Budget
+was an execution prerequisite, not an invented ticket dependency or an assumed
+extension of SCOUT-008. The accepted 2026-10-10 result above supersedes this
+historical launch frontier.
 
 ## Comments
 
