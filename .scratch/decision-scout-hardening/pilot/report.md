@@ -115,10 +115,11 @@ an incorrect ticket-local task path, then located root `task.md`. Targeted Grep
 queries reread reload references and cache fields. These are logged Scout reads,
 not measured receiving-model savings: no senior receiver exists yet.
 
-Root cause: this invocation used unrooted path-scoped edit/write rules, while
+Configuration mismatch is the current diagnosis: this invocation used unrooted path-scoped edit/write rules, while
 Qoder's documented file-write checker uses `Edit(...)` and gitignore path roots.
 The required path did not gain permission in `dont_ask`; the report does not
-claim the proposed correction has passed a real tool check. The test command
+claim a live-verified root cause or that the proposed correction has passed a
+real tool check. The test command
 also lacked an allow rule. Do not switch to bypass mode, globally allow Bash or
 silently retry. The runbook contains the concrete bounded correction proposal.
 
