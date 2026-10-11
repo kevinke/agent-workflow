@@ -95,6 +95,15 @@ The recipe has **not been run** in an imported distro here; package candidate ve
 
 ## Reuse boundary
 
+Actual implementation finding from CI run 38112185528 on 2026-10-11: APT 2.7.14
+supports the snapshot options, but `update --snapshot` with live archive URIs
+reads both live and selected snapshot indexes. Package installation used the
+snapshot. To remove the unnecessary live inputs entirely, the implementation
+now configures only `https://snapshot.ubuntu.com/ubuntu/20261001T000000Z/`
+as the URI for noble, noble-updates and noble-security, with the same Ubuntu
+archive Signed-By keyring and normal signature/date/expiry checks. No Snapshot
+field or command-line option is needed for this directly dated repository.
+
 Implementation recommendation: commit the URL/digest, snapshot, package list and provisioning script; derive the cache key from this environment definition; build a clean distro with no checkout/credentials inside it; export before test execution; import the same clean tar on cache hits. Rebuild on cache loss using the exact definition. Changing a definition requires a new cache key.
 
 The rootfs and snapshot pin Linux userland inputs. They do not pin the Windows host, WSL executable, WSL kernel or runner image; record all of those alongside each run. This boundary is a design inference from the separation between the filesystem tar and the WSL host, not a claim of complete machine reproducibility.

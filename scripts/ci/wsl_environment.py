@@ -81,6 +81,7 @@ def scan_archive(path):
                 name = name[2:]
             empty_mount_point = (entry.isdir() and PurePosixPath(name).parts[:1] == ('mnt',)
                                  and len(PurePosixPath(name).parts) <= 2)
+            empty_mount_point |= entry.isdir() and name == 'tmp/.X11-unix'
             if name.startswith('/') or (forbidden_path(name) and not empty_mount_point):
                 raise ValueError('rootfs contains a workspace, credential or unsafe path: ' + name)
             if entry.issym() or entry.islnk():

@@ -20,6 +20,17 @@ also passed with WSL Linux Python. Existing Ubuntu-24.04 on WSL2 passes real
 review_boundary.preflight from Windows Python. Local bootstrap refuses before
 any WSL mutation outside an ephemeral GitHub job. No local software was installed.
 
-Remaining verification: full local Windows suite; real hosted cold build,
+Local full suite completed: 518 collected cases, 0 failures/errors, 4 existing
+Windows symlink skips. Final additions were checked separately on both runtimes.
+
+First hosted run: master b51a2bd, run 38112185528. Ubuntu passed 521 cases with
+its existing 4 bwrap skips. Windows successfully imported WSL2 and installed
+packages, then failed cleaning the readonly WSLg X11 mount. The repair preserves
+that mount and allows only its empty directory in the cache; 13 focused cases
+pass on both runtimes and a real readonly-mount cleanup regression passes.
+Targeted independent review found no important issue. Package sources now use
+the direct dated snapshot URL so update cannot also read live archive indexes.
+
+Remaining verification: real hosted cold build,
 non-root import, boundary, full suite and clean cache restore. User authorized
 normal master push and CI on 2026-10-11. Preserve existing source changes.

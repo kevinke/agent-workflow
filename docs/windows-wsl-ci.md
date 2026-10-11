@@ -8,7 +8,7 @@ with [bootstrap-wsl.sh](../scripts/ci/bootstrap-wsl.sh) and
 
 The dated Canonical AMD64 Ubuntu 24.04 rootfs is checked against a committed
 SHA256 before import. Signed packages resolve against the fixed
-20261001T000000Z Ubuntu snapshot. Package signature/date verification remains
+20261001T000000Z Ubuntu snapshot URL, with no live archive sources. Package signature/date verification remains
 enabled. The bootstrap creates a non-root `ci` user and never replaces an
 existing distro or changes the host's default distro. Refresh the digest only
 after verifying Canonical's signed checksum listing; the research record is
@@ -24,6 +24,8 @@ workspace or private credentials are copied into the Linux rootfs.
 The official base contains an empty `/root/.ssh`; bootstrap removes it using
 `rmdir`, which fails if any content appears. Normal system links and the exact
 WSL-generated resolver symlink are allowed, without caching mounted contents.
+Cleanup preserves WSLg's read-only X11 mount; only its empty mount directory
+can be cached, and any socket/file beneath it is refused.
 
 Each job still receives a new hosted Windows VM. `windows-2025` fixes its OS
 family, not the complete runner image. WSL is updated on that disposable runner

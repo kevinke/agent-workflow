@@ -88,6 +88,16 @@ class CIEnvironmentTest(unittest.TestCase):
                 archive.addfile(entry)
         self.env.seal_cache(self.cache, 'key', {})
 
+    def test_exported_empty_wslg_mount_is_allowed_but_socket_is_refused(self):
+        with tarfile.open(self.cache / 'rootfs.tar', 'w') as archive:
+            entry = tarfile.TarInfo('tmp/.X11-unix')
+            entry.type = tarfile.DIRTYPE
+            archive.addfile(entry)
+        self.env.seal_cache(self.cache, 'key', {})
+        self.archive(['tmp/.X11-unix/X0'])
+        with self.assertRaises(ValueError):
+            self.env.seal_cache(self.cache, 'key', {})
+
     def test_only_wsl_generated_resolver_link_can_point_into_mnt(self):
         for target, allowed in [('/mnt/wsl/resolv.conf', True),
                                 ('/mnt/c/credentials', False),
