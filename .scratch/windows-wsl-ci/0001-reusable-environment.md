@@ -34,3 +34,8 @@ the direct dated snapshot URL so update cannot also read live archive indexes.
 Remaining verification: real hosted cold build,
 non-root import, boundary, full suite and clean cache restore. User authorized
 normal master push and CI on 2026-10-11. Preserve existing source changes.
+
+Second hosted run: 8b926c1, run 38112969117. Windows failed before import because
+the optional WSL web update returned HTTP 403; the runner already supplies WSL
+2.7.14. The bootstrap now uses that installed runtime, with the same WSL2/non-root
+validation and exact production preflight. Actual hosted validation is pending.

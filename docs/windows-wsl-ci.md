@@ -28,8 +28,8 @@ Cleanup preserves WSLg's read-only X11 mount; only its empty mount directory
 can be cached, and any socket/file beneath it is refused.
 
 Each job still receives a new hosted Windows VM. `windows-2025` fixes its OS
-family, not the complete runner image. WSL is updated on that disposable runner
-and its actual version and kernel are recorded. The tar fixes Linux userland
+family, not the complete runner image. The runner's installed WSL is used without
+an online update dependency; its actual version and kernel are recorded. The tar fixes Linux userland
 inputs, not the Windows/WSL/kernel. Cache eviction causes a rebuild from the
 same pinned inputs. GitHub caches and Ubuntu snapshots are not permanent
 archives; a removed upstream pin produces a clear failure, never a live-archive

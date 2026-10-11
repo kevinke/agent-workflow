@@ -184,10 +184,10 @@ def bootstrap(definition, key, cache, record):
     existing = command(['wsl.exe', '--list', '--quiet'], record, control=True)
     if distro.casefold() in [name.strip().casefold() for name in existing.splitlines()]:
         raise RuntimeError('refusing to replace an existing distro: ' + distro)
-    record['wsl_version_before_update'] = command(['wsl.exe', '--version'], record, control=True)
-    # Update only the disposable hosted runner's WSL components. Do not enable
-    # Windows features, alter security policy, or touch developer distros.
-    command(['wsl.exe', '--update', '--web-download'], record, control=True, timeout=600)
+    # Use the runner's existing WSL. A mandatory online update can fail before
+    # import (403), even on a host with a working WSL2 runtime. The real
+    # non-root production preflight below remains the capability gate.
+    record['wsl_version_at_bootstrap'] = command(['wsl.exe', '--version'], record, control=True)
     cache.mkdir(parents=True, exist_ok=True)
     restored = False
     try:
