@@ -36,4 +36,10 @@ find /var/tmp -xdev -mindepth 1 -delete
 rm -f /root/.bash_history /home/ci/.bash_history
 # The reviewed official base has an empty root/.ssh directory. Remove only
 # that empty directory: any unexpected credential content stops the build.
-if [ -d /root/.ssh ]; then rmdir /root/.ssh; fi
+if [ -d /root/.ssh ] && ! rmdir /root/.ssh; then
+  # Metadata only, never credential contents. Keep the export refused while
+  # diagnosing files created between the verified base and cold bootstrap.
+  find /root/.ssh -xdev -maxdepth 2 -printf '%P type=%y bytes=%s uid=%U gid=%G\n' >&2
+  findmnt --target /root/.ssh --noheadings --output TARGET,FSTYPE,OPTIONS >&2
+  exit 1
+fi

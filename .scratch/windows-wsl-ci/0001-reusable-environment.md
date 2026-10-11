@@ -39,3 +39,9 @@ Second hosted run: 8b926c1, run 38112969117. Windows failed before import becaus
 the optional WSL web update returned HTTP 403; the runner already supplies WSL
 2.7.14. The bootstrap now uses that installed runtime, with the same WSL2/non-root
 validation and exact production preflight. Actual hosted validation is pending.
+
+Third hosted run: 6bf267f, run 38113266924. Installed WSL 2.7.14 successfully
+imported WSL2. Signed APT update and installation used only the direct fixed
+snapshot URL. Cleanup refused a nonempty /root/.ssh before export. Add only
+directory/mount metadata to that failure, preserving refusal and never reading
+credential contents; investigate its source before considering any cleanup.
