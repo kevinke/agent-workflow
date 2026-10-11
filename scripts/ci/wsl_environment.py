@@ -5,15 +5,14 @@ jobs and a new, dedicated distro; probe can inspect an existing local distro.
 Cache tar bytes are hashed, never decoded or extracted on the Windows host.
 """
 import argparse
-import gzip
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
 import posixpath
 import re
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -56,6 +55,26 @@ def owned_path(path, root):
 def sha256(path):
     with Path(path).open('rb') as file:
         return hashlib.file_digest(file, 'sha256').hexdigest()
+
+
+def prepare_base(download, archive):
+    # The pinned public WSL image enables systemd/cloud-init. Configure this
+    # owned CI distro before its first boot, rather than racing first-boot
+    # provisioning and trying to remove whatever it writes afterwards.
+    overrides = {'etc/wsl.conf': b'[boot]\nsystemd=false\n',
+                 'etc/cloud/cloud-init.disabled': b''}
+    with tarfile.open(download, 'r|gz') as source, tarfile.open(archive, 'w') as target:
+        for entry in source:
+            name = entry.name
+            while name.startswith('./'):
+                name = name[2:]
+            if name not in overrides:
+                target.addfile(entry, source.extractfile(entry) if entry.isfile() else None)
+        for name, raw in overrides.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(raw)
+            entry.mode = 0o644
+            target.addfile(entry, io.BytesIO(raw))
 
 
 def forbidden_path(name):
@@ -206,10 +225,11 @@ def bootstrap(definition, key, cache, record):
             archive = owned_path(runner_temp / 'agent-workflow-base.tar', runner_temp)
             download = archive.with_suffix('.tar.gz')
             urllib.request.urlretrieve(definition['rootfs_url'], download)
-            if sha256(download) != definition['rootfs_sha256']:
+            record['official_base_sha256'] = sha256(download)
+            if record['official_base_sha256'] != definition['rootfs_sha256']:
                 raise ValueError('official rootfs SHA256 mismatch; import refused')
-            with gzip.open(download, 'rb') as source, archive.open('wb') as target:
-                shutil.copyfileobj(source, target)
+            prepare_base(download, archive)
+            record['prepared_base_sha256'] = sha256(archive)
         command(['wsl.exe', '--import', distro, str(install), str(archive), '--version', '2'], record, control=True, timeout=600)
         created = True
         if not restored:

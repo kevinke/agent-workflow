@@ -8,6 +8,10 @@ the Ubuntu 24.04 userland using a dated Canonical rootfs with a reviewed SHA256,
 one signed APT snapshot, an explicit package list, and a bootstrap recipe.
 Import a new dedicated WSL2 distro and use its non-root default user.
 
+Prepare systemd=false and the cloud-init disabled marker before the first
+guest boot, after original gzip hash verification. Keep opaque file payloads
+and all other base entries unchanged; record the derived import tar hash.
+
 Reuse only its clean export, captured before tests. Cache key includes every
 environment-building input; validate definition, raw tar hash and sensitive
 paths before import. Cache misses rebuild; missing upstream pins fail closed.

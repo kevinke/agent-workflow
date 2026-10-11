@@ -168,6 +168,40 @@ class CIEnvironmentTest(unittest.TestCase):
         self.assertIn('python', evidence['host'])
         self.assertFalse(evidence.get('commands'), 'refusal must happen before WSL is invoked')
 
+    def test_first_boot_configuration_preserves_opaque_base_payloads(self):
+        download = self.cache / 'base.tar.gz'
+        payload = b'\xff\x00opaque\r\n\xfe'
+        with tarfile.open(download, 'w:gz') as archive:
+            for name, raw in [('./etc/wsl.conf', b'[boot]\nsystemd=true\n'),
+                              ('usr/share/opaque', payload)]:
+                entry = tarfile.TarInfo(name)
+                entry.size = len(raw)
+                entry.mode = 0o640
+                archive.addfile(entry, io.BytesIO(raw))
+            directory = tarfile.TarInfo('root/.ssh')
+            directory.type = tarfile.DIRTYPE
+            archive.addfile(directory)
+            link = tarfile.TarInfo('bin')
+            link.type = tarfile.SYMTYPE
+            link.linkname = 'usr/bin'
+            archive.addfile(link)
+        original = download.read_bytes()
+        prepared = self.cache / 'prepared.tar'
+        self.env.prepare_base(download, prepared)
+        self.assertEqual(download.read_bytes(), original)
+        with tarfile.open(prepared, 'r:') as archive:
+            self.assertEqual(archive.getnames().count('etc/wsl.conf'), 1)
+            self.assertEqual(archive.extractfile('etc/wsl.conf').read(),
+                             b'[boot]\nsystemd=false\n')
+            marker = archive.getmember('etc/cloud/cloud-init.disabled')
+            self.assertTrue(marker.isfile())
+            self.assertEqual(marker.size, 0)
+            self.assertEqual(archive.extractfile('usr/share/opaque').read(), payload)
+            self.assertEqual(archive.getmember('usr/share/opaque').mode, 0o640)
+            self.assertTrue(archive.getmember('root/.ssh').isdir())
+            self.assertTrue(archive.getmember('bin').issym())
+            self.assertEqual(archive.getmember('bin').linkname, 'usr/bin')
+
 
 if __name__ == '__main__':
     unittest.main()

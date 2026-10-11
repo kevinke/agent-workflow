@@ -1,6 +1,7 @@
 # 0001: Reuse a pinned clean WSL2 environment in Windows CI
 
-Status: implemented locally; local full suite and hosted validation pending.
+Status: implementation reviewed and locally validated; hosted isolation and
+cache restore validation pending.
 
 Acceptance: Windows Python remains the full-suite coordinator, a new dedicated
 WSL2 Ubuntu runtime passes production isolation preflight, cold bootstrap and
@@ -45,3 +46,21 @@ imported WSL2. Signed APT update and installation used only the direct fixed
 snapshot URL. Cleanup refused a nonempty /root/.ssh before export. Add only
 directory/mount metadata to that failure, preserving refusal and never reading
 credential contents; investigate its source before considering any cleanup.
+
+Metadata-only diagnostic run 38113686896 attempt 1 stopped earlier on fixed
+snapshot HTTP503/timeouts; Windows-only retry is running. Official base research
+confirmed systemd=true with cloud-init enabled. The prior configuration write
+occurred after first boot. Prepare systemd=false and cloud-init.disabled in a
+derived tar before initial import; retain all credential refusal rules and do
+not delete unknown SSH files. A new raw-payload preservation regression failed
+before implementation. Full hosted validation remains pending.
+
+Diagnostic attempt 2 reached cleanup and reported only one child:
+authorized_keys, ordinary file, 0 bytes, root:root on the distro ext4 filesystem.
+This matches the cloud-init empty-file mechanism; creator identity was not
+logged. Prevent initial cloud-init boot rather than accepting or deleting SSH
+contents. Original nonempty-directory refusal remains unchanged.
+
+First-boot repair: 14 focused cases pass in Windows and WSL. Actual public base
+transformation preserved all 49,037 other entries and 35,657 file payloads, with
+no local import. Targeted independent review found no important issue.

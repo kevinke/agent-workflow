@@ -14,6 +14,15 @@ existing distro or changes the host's default distro. Refresh the digest only
 after verifying Canonical's signed checksum listing; the research record is
 [here](../.scratch/windows-wsl-ci/research-rootfs.md).
 
+After checking the original gzip digest, the helper prepares a derived import
+tar with `systemd=false` and an empty `/etc/cloud/cloud-init.disabled` marker
+already present before the first boot. The public base enables systemd; writing
+the configuration after APT would allow first-boot cloud-init side effects.
+Only these two known configuration files are replaced; other file payloads,
+links and metadata are preserved. Both original and derived digests are recorded.
+This affects only the new CI guest. Production isolation and credential-path
+refusal remain unchanged.
+
 An exact cache key hashes the definition and both provisioning scripts. Only
 the dedicated distro's pre-test export and provenance JSON enter the cache.
 Before importing a hit, the helper checks the definition, raw tar digest, and

@@ -107,3 +107,21 @@ field or command-line option is needed for this directly dated repository.
 Implementation recommendation: commit the URL/digest, snapshot, package list and provisioning script; derive the cache key from this environment definition; build a clean distro with no checkout/credentials inside it; export before test execution; import the same clean tar on cache hits. Rebuild on cache loss using the exact definition. Changing a definition requires a new cache key.
 
 The rootfs and snapshot pin Linux userland inputs. They do not pin the Windows host, WSL executable, WSL kernel or runner image; record all of those alongside each run. This boundary is a design inference from the separation between the filesystem tar and the WSL host, not a claim of complete machine reproducibility.
+
+## First-boot configuration finding
+
+The exact pinned gzip was downloaded again and its SHA verified on 2026-10-11.
+Its public `/etc/wsl.conf` enables systemd, cloud-init is not disabled, and
+`99_wsl.cfg` sets `[WSL, None]`. The actual ds-identify and SSH module source
+inside this base supports creating an empty root authorized_keys file. Hosted
+diagnostic run 38113686896 attempt 2 showed exactly that zero-byte ordinary file
+on the guest ext4 filesystem; the actual writer was not traced.
+
+The implementation previously wrote systemd=false only after APT. Preparing
+this configuration before import removes that first-boot timing gap. The empty
+`/etc/cloud/cloud-init.disabled` marker prevents automatic cloud-init discovery
+and initialization; it is supported by both ds-identify and systemd conditions.
+See [cloud-init disabling](https://docs.cloud-init.io/en/24.1/howto/disable_cloud_init.html)
+and [WSL configuration and restart requirements](https://learn.microsoft.com/en-us/windows/wsl/wsl-config).
+Only these two explicit configuration entries change in the derived tar; all
+other raw payloads remain intact. Credential/path guards are not relaxed.
