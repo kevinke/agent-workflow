@@ -38,7 +38,7 @@ Before any tests, the job executes `review_boundary.preflight` from Windows
 Python against the selected WSL2 distro. Its actual production profile must
 prove filesystem restrictions and network denial; fixture supervisors or
 capability-only smoke tests cannot pass this gate. The `windows-wsl-evidence`
-artifact includes environment diagnostics, actual package versions, cache
+artifact (suffixed with the run attempt) includes environment diagnostics, actual package versions, cache
 status, preflight evidence and full Windows suite output. The separate Ubuntu
 job retains its existing behavior and existing skips.
 
