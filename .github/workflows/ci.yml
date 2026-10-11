@@ -1,5 +1,5 @@
 # CI for the agent-workflow kit — runs the full regression suite.
-# Zero-dependency promise (ADR-0002) means no install step: just run unittest.
+# The kit remains Python stdlib only. Windows isolation requires a WSL2 host.
 name: ci
 
 on:
@@ -7,12 +7,12 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  ubuntu:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,3 +21,59 @@ jobs:
       - name: Run the ai-workflow test suite
         run: python -m unittest discover -s tests -v
         working-directory: scripts/ai-workflow
+
+  windows-wsl:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13.5"
+      - name: Compute the versioned WSL environment key
+        id: environment
+        run: python scripts/ci/wsl_environment.py key
+      - name: Restore clean WSL rootfs
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ runner.temp }}/agent-workflow-rootfs-cache/rootfs.tar
+            ${{ runner.temp }}/agent-workflow-rootfs-cache/provenance.json
+          key: ${{ steps.environment.outputs.key }}
+      - name: Import or rebuild WSL2 and prove the production boundary
+        run: >-
+          python scripts/ci/wsl_environment.py bootstrap
+          --cache "${{ runner.temp }}/agent-workflow-rootfs-cache"
+          --diagnostics "${{ runner.temp }}/wsl-evidence/environment.json"
+      # Save before any test touches WSL. PRs may restore a trusted base but
+      # never publish a distro populated by untrusted test/checkout contents.
+      - name: Cache the clean pre-test rootfs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ runner.temp }}/agent-workflow-rootfs-cache/rootfs.tar
+            ${{ runner.temp }}/agent-workflow-rootfs-cache/provenance.json
+          key: ${{ steps.environment.outputs.key }}
+      - name: Run the full suite from Windows Python through WSL2
+        run: >-
+          python -m unittest discover -s scripts/ai-workflow/tests -v
+          > "${{ runner.temp }}/wsl-evidence/tests.log" 2>&1
+      - name: Show the Windows test result
+        if: always()
+        run: |
+          $log = "${{ runner.temp }}/wsl-evidence/tests.log"
+          if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 80 }
+      - name: Upload environment and test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-wsl-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-evidence
+          if-no-files-found: warn
