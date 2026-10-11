@@ -141,7 +141,7 @@ class CIEnvironmentTest(unittest.TestCase):
     def test_paths_outside_owned_runner_temp_are_rejected(self):
         parent = self.cache / 'runner-temp'
         parent.mkdir()
-        self.assertEqual(self.env.owned_path(parent / 'wsl', parent), parent / 'wsl')
+        self.assertEqual(self.env.owned_path(parent / 'wsl', parent), (parent / 'wsl').resolve())
         for path in [parent, self.cache / 'user-distro', parent / '..' / 'escape']:
             with self.subTest(path=path), self.assertRaises(ValueError):
                 self.env.owned_path(path, parent)
