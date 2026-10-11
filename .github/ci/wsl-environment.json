@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "revision": 1,
+  "distro": "AgentWorkflow-CI-Ubuntu2404",
+  "architecture": "amd64",
+  "ubuntu_version": "24.04",
+  "linux_python": "3.12",
+  "windows_python": "3.13.5",
+  "rootfs_url": "https://cloud-images.ubuntu.com/wsl/releases/noble/20240423/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz",
+  "rootfs_sha256": "8251e27ffff381a4af5f41dcb94d867de3e0d9774a9241908ab34555d99315ea",
+  "apt_snapshot": "20261001T000000Z",
+  "packages": ["python3", "git", "bubblewrap", "ca-certificates"]
+}
