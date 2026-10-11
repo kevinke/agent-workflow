@@ -31,6 +31,8 @@ import os
 import re
 import sys
 
+import host_runtime
+
 import adopt
 import artifact_archive
 import contracts
@@ -52,6 +54,11 @@ COMMANDS = {"init", "status", "validate", "start", "adopt", "advance", "claim",
             "install-skills", "upgrade", "upgrade-ticket"}
 
 USAGE = """ai-workflow — repo-native agent workflow protocol (subset)
+
+usage: ai-workflow [--repo <repository>] <command> [options]
+  --repo <repository>  select a root without first opening it in Windows;
+                       WSL UNC roots delegate the whole CLI to that distro.
+  stdout/stderr text is UTF-8; pipe callers must decode UTF-8 explicitly.
 
 commands:
   init [target] [--with-skills]  install protocol + templates + AGENTS.md managed block
@@ -618,7 +625,33 @@ def cmd_escalate(args, root):
 
 
 def main(argv=None):
+    host_runtime.configure_stdio()
     argv = argv if argv is not None else sys.argv[1:]
+    selected_root = os.getcwd()
+    explicit_root = bool(argv and argv[0] == "--repo")
+    if explicit_root:
+        if len(argv) < 3 or argv[1].startswith("--"):
+            sys.stderr.write("usage: ai-workflow --repo <repository> <command> [options]\n")
+            return 2
+        selected_root = argv[1]
+        argv = argv[2:]
+    try:
+        host_runtime.validate_host_path(selected_root)
+        selected_root = os.path.abspath(selected_root)
+        forwarded = host_runtime.forward_if_needed(argv, os.path.abspath(__file__),
+                                                   selected_root)
+    except contracts.ContractError as exc:
+        sys.stderr.write("ai-workflow: %s\n" % exc)
+        return 1
+    if forwarded is not None:
+        return forwarded
+    if explicit_root:
+        try:
+            os.chdir(selected_root)
+        except OSError as exc:
+            sys.stderr.write("ai-workflow: cannot open repository %r: %s\n" %
+                             (selected_root, exc))
+            return 1
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(USAGE)
         return 0

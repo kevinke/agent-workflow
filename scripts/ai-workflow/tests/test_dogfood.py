@@ -72,7 +72,7 @@ class DogfoodE2ETest(unittest.TestCase):
     def _cli(self, *args):
         proc = subprocess.run(
             [sys.executable, KIT_CLI] + list(args),
-            capture_output=True, text=True, cwd=self.root)
+            capture_output=True, text=True, encoding="utf-8", cwd=self.root)
         return proc.returncode, proc.stdout, proc.stderr
 
     def _validate(self):

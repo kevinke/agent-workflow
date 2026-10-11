@@ -37,6 +37,18 @@ class MainTest(unittest.TestCase):
         self.assertEqual(main.main(["start"]), 2)
         self.assertEqual(main.main(["start", "--title", "x"]), 2)
 
+    def test_drive_relative_repo_is_rejected_before_chdir(self):
+        code, err = self._run_capturing_stderr(["--repo", "C:repo", "status"])
+        self.assertEqual(code, 1)
+        self.assertIn("startup-environment-unsupported", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_repo_option_requires_root_and_command(self):
+        for args in (["--repo"], ["--repo", "somewhere"],
+                     ["--repo", "--help", "status"]):
+            code, err = self._run_capturing_stderr(args)
+            self.assertEqual(code, 2, err)
+
     def test_upgrade_without_installed_protocol_is_usage_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(main.cmd_upgrade(["upgrade"], tmp), 2)
